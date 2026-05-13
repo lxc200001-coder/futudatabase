@@ -1,0 +1,16 @@
+# 市场数据
+data/
+
+# 回测输出
+trades/
+
+# 扫描结果
+results/
+
+# IDE
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
