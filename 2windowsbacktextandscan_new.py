@@ -56,10 +56,6 @@ def calc_heikin_ashi(df):
 # =========================================================
 def calc_signal(df, ma_len):
     df = df.copy()
-
-    ha_close, _ = calc_heikin_ashi(df)
-
-    df["ha_close"] = ha_close
     df["ma"] = df["ha_close"].rolling(ma_len, min_periods=ma_len).mean()
 
     df["dir"] = np.where(df["ma"] > df["ma"].shift(1), 1, -1)
@@ -128,6 +124,56 @@ def get_last_signal_info(df):
 # =========================================================
 # 交易回测
 # =========================================================
+def _make_trade_record(code_val, ma_len, entry_price, position, entry_time, entry_index,
+                       exit_price, exit_time, exit_index,
+                       cash_before_open, cash_after_open,
+                       cash_before_close, cash_after_close,
+                       status, backtest_period):
+    buy_fee = entry_price * position * FEE_RATE
+    sell_value = exit_price * position
+    sell_fee = sell_value * FEE_RATE
+    total_fee = buy_fee + sell_fee
+    pnl = (exit_price - entry_price) * position - total_fee
+    cost_basis = entry_price * position + buy_fee
+    return_pct = pnl / cost_basis * 100 if cost_basis > 0 else 0
+    hold_kbars = exit_index - entry_index
+    hold_days = int((exit_time - entry_time) / np.timedelta64(1, 'D'))
+
+    return {
+        "股票代码": code_val,
+        "K线周期": BAR_INTERVAL,
+        "均线周期": ma_len,
+
+        "开仓时间": entry_time,
+        "开仓价格": round(float(entry_price), 2),
+        "买入股数": position,
+
+        "平仓时间": exit_time,
+        "平仓价格": round(float(exit_price), 2),
+        "卖出股数": position,
+
+        "交易状态": status,
+        "订单盈亏类型": "盈利" if pnl > 0 else "亏损",
+
+        "收益金额": round(pnl, 4),
+        "收益率(%)": round(float(return_pct), 4),
+
+        "买入手续费": round(buy_fee, 4),
+        "卖出手续费": round(sell_fee, 4),
+        "总手续费": round(total_fee, 4),
+
+        "开仓前可用现金": round(cash_before_open, 2) if cash_before_open is not None else None,
+        "开仓后可用现金": round(cash_after_open, 2) if cash_after_open is not None else None,
+        "平仓前可用现金": round(cash_before_close, 2) if cash_before_close is not None else None,
+        "平仓后可用现金": round(cash_after_close, 2) if cash_after_close is not None else None,
+
+        "持仓K线数": hold_kbars,
+        "持仓天数": hold_days,
+
+        "回测周期": backtest_period
+    }
+
+
 def build_trades(df, ma_len):
 
     df = df.copy()
@@ -185,57 +231,17 @@ def build_trades(df, ma_len):
         elif sell_arr[i] and position > 0:
 
             cash_before_sell = available_cash
-
             sell_value = position * price
             sell_fee = sell_value * FEE_RATE
-
-            buy_fee = entry_price * position * FEE_RATE
-            total_fee = buy_fee + sell_fee
-
-            pnl = (price - entry_price) * position - total_fee
-
             available_cash += (sell_value - sell_fee)
             cash_after_sell = available_cash
 
-            cost_basis = entry_price * position + buy_fee
-            return_pct = pnl / cost_basis * 100 if cost_basis > 0 else 0
-
-            hold_kbars = i - entry_index
-            hold_days = int((time - entry_time) / np.timedelta64(1, 'D'))
-
-            trades.append({
-                "股票代码": code_val,
-                "K线周期": BAR_INTERVAL,
-                "均线周期": ma_len,
-
-                "开仓时间": entry_time,
-                "开仓价格": entry_price,
-                "买入股数": position,
-
-                "平仓时间": time,
-                "平仓价格": price,
-                "卖出股数": position,
-
-                "交易状态": "已平仓",
-                "订单盈亏类型": "盈利" if pnl > 0 else "亏损",
-
-                "收益金额": round(pnl, 4),
-                "收益率(%)": round(return_pct, 4),
-
-                "买入手续费": round(buy_fee, 4),
-                "卖出手续费": round(sell_fee, 4),
-                "总手续费": round(total_fee, 4),
-
-                "开仓前可用现金": round(cash_before_buy, 2),
-                "开仓后可用现金": round(cash_after_buy, 2),
-                "平仓前可用现金": round(cash_before_sell, 2),
-                "平仓后可用现金": round(cash_after_sell, 2),
-
-                "持仓K线数": hold_kbars,
-                "持仓天数": hold_days,
-
-                "回测周期": backtest_period
-            })
+            trades.append(_make_trade_record(
+                code_val, ma_len, entry_price, position, entry_time, entry_index,
+                price, time, i,
+                cash_before_buy, cash_after_buy, cash_before_sell, cash_after_sell,
+                "已平仓", backtest_period
+            ))
 
             position = 0
 
@@ -245,57 +251,17 @@ def build_trades(df, ma_len):
         time = datetime_arr[-1]
 
         cash_before_sell = available_cash
-
         sell_value = position * price
         sell_fee = sell_value * FEE_RATE
-
-        buy_fee = entry_price * position * FEE_RATE
-        total_fee = buy_fee + sell_fee
-
-        pnl = (price - entry_price) * position - total_fee
-
         available_cash += (sell_value - sell_fee)
         cash_after_sell = available_cash
 
-        cost_basis = entry_price * position + buy_fee
-        return_pct = pnl / cost_basis * 100 if cost_basis > 0 else 0
-
-        hold_kbars = len(df) - entry_index
-        hold_days = int((time - entry_time) / np.timedelta64(1, 'D'))
-
-        trades.append({
-            "股票代码": code_val,
-            "K线周期": BAR_INTERVAL,
-            "均线周期": ma_len,
-
-            "开仓时间": entry_time,
-            "开仓价格": entry_price,
-            "买入股数": position,
-
-            "平仓时间": time,
-            "平仓价格": price,
-            "卖出股数": position,
-
-            "交易状态": "未平仓(强制结算)",
-            "订单盈亏类型": "盈利" if pnl > 0 else "亏损",
-
-            "收益金额": round(pnl, 4),
-            "收益率(%)": round(return_pct, 4),
-
-            "买入手续费": round(buy_fee, 4),
-            "卖出手续费": round(sell_fee, 4),
-            "总手续费": round(total_fee, 4),
-
-            "开仓前可用现金": None,
-            "开仓后可用现金": None,
-            "平仓前可用现金": round(cash_before_sell, 2),
-            "平仓后可用现金": round(cash_after_sell, 2),
-
-            "持仓K线数": hold_kbars,
-            "持仓天数": hold_days,
-
-            "回测周期": backtest_period
-        })
+        trades.append(_make_trade_record(
+            code_val, ma_len, entry_price, position, entry_time, entry_index,
+            price, time, len(df) - 1,
+            None, None, cash_before_sell, cash_after_sell,
+            "未平仓(强制结算)", backtest_period
+        ))
 
     return pd.DataFrame(trades)
 
@@ -732,9 +698,14 @@ def run_trade():
                 full_eff_end = pd.to_datetime(df["datetime"]).max()
                 full_effective_range = f"{full_eff_start.date()}~{full_eff_end.date()}"
 
+                # Pre-compute HA once for all MA periods
+                ha_close_full, _ = calc_heikin_ashi(df)
+                df_with_ha = df.copy()
+                df_with_ha["ha_close"] = ha_close_full
+
                 for ma in MA_LIST:
 
-                    d = calc_signal(df, ma)
+                    d = calc_signal(df_with_ha, ma)
                     trades = build_trades(d, ma)
                     if not trades.empty:
                         trades["窗口"] = "FULL"
@@ -802,8 +773,13 @@ def run_trade():
                     eff_end = pd.to_datetime(df_w["datetime"]).max()
                     effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
+                    # Pre-compute HA once for this window
+                    ha_close_w, _ = calc_heikin_ashi(df_w)
+                    df_w_ha = df_w.copy()
+                    df_w_ha["ha_close"] = ha_close_w
+
                     for ma in MA_LIST:
-                        d = calc_signal(df_w, ma)
+                        d = calc_signal(df_w_ha, ma)
                         trades = build_trades(d, ma)
 
                         if not trades.empty:
