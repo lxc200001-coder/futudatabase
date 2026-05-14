@@ -572,11 +572,18 @@ def calc_param_stability(summary_rows):
     # 按均线周期汇总
     stats = df.groupby("均线周期").agg(
         窗口数量=("窗口", "nunique"),
+        盈利窗口数量=("年化收益率", lambda x: (x > 0).sum()),
         综合评分排名平均值=("窗口内排名", "mean"),
         综合评分排名第一次数=("窗口内排名", lambda x: (x == 1).sum()),
         综合评分排名Top3占比=("窗口内排名", lambda x: round((x <= 3).sum() / max(len(x), 1) * 100, 1)),
-        综合评分排名标准差=("窗口内排名", "std")
+        综合评分排名标准差=("窗口内排名", "std"),
+        年化收益率平均值=("年化收益率", "mean"),
+        年化收益率标准差=("年化收益率", "std")
     ).reset_index()
+
+    stats["盈利窗口占比"] = (stats["盈利窗口数量"] / stats["窗口数量"] * 100).round(1)
+    stats["年化收益率平均值"] = stats["年化收益率平均值"].round(2)
+    stats["年化收益率标准差"] = stats["年化收益率标准差"].fillna(0).round(2)
 
     stats["综合评分排名平均值"] = stats["综合评分排名平均值"].round(2)
     stats["综合评分排名标准差"] = stats["综合评分排名标准差"].fillna(0).round(4)
@@ -595,16 +602,21 @@ def calc_param_stability(summary_rows):
     avg_rank_n = _norm(stats["综合评分排名平均值"], higher_is_better=False)
     top3_n = _norm(stats["综合评分排名Top3占比"], higher_is_better=True)
     std_n = _norm(stats["综合评分排名标准差"], higher_is_better=False)
-    win_n = _norm(stats["综合评分排名第一次数"], higher_is_better=True)
+    cagr_n = _norm(stats["年化收益率平均值"], higher_is_better=True)
+    win_rate_n = _norm(stats["盈利窗口占比"], higher_is_better=True)
+    cagr_std_n = _norm(stats["年化收益率标准差"], higher_is_better=False)
 
     stats["参数稳定性综合评分"] = (
-        0.30 * avg_rank_n + 0.30 * top3_n + 0.25 * std_n + 0.15 * win_n
+        0.20 * avg_rank_n + 0.10 * top3_n + 0.15 * std_n +
+        0.25 * cagr_n + 0.20 * win_rate_n + 0.10 * cagr_std_n
     ).round(4)
 
     # 排序后重排列顺序
     col_order = ["股票代码", "K线周期", "均线周期", "窗口数量",
-                 "综合评分排名平均值", "综合评分排名第一次数",
-                 "综合评分排名Top3占比", "综合评分排名标准差",
+                 "盈利窗口数量", "盈利窗口占比",
+                 "年化收益率平均值", "年化收益率标准差",
+                 "综合评分排名Top3占比", "综合评分排名平均值",
+                 "综合评分排名标准差", "综合评分排名第一次数",
                  "参数稳定性综合评分"]
     stats.insert(0, "K线周期", bar_val)
     stats.insert(0, "股票代码", code_val)
@@ -970,7 +982,7 @@ def run_trade():
                     def _weighted_score(score, stability):
                         if pd.isna(score) or pd.isna(stability):
                             return None
-                        return round(0.4 * (score / 100) + 0.6 * stability, 4)
+                        return round(0.6 * (score / 100) + 0.4 * stability, 4)
 
                     compare["全量参数两项评分加权得分"] = compare.apply(
                         lambda r: _weighted_score(
@@ -1111,24 +1123,24 @@ def run_trade():
                 win_df.to_excel(writer, sheet_name="窗口回测明细", index=False)
 
             # 7
-            if stab_best is not None and not stab_best.empty:
-                stab_best.to_excel(writer, sheet_name="窗口回测个股评分最优参数", index=False)
-
-                # 窗口回测个股评分最优参数回测结果汇总
-                if not win_best_full_result.empty:
-                    win_best_full_result.to_excel(writer, sheet_name="窗口回测个股评分最优参数回测结果汇总", index=False)
-
-            # 8
             if not score_all.empty:
                 score_all.to_excel(writer, sheet_name="窗口回测综合评分明细", index=False)
 
-            # 9
+            # 8
             if not rank_all.empty:
                 rank_all.to_excel(writer, sheet_name="窗口回测综合评分排名", index=False)
 
-            # 10
+            # 9
             if all_stability is not None and not all_stability.empty:
                 all_stability.to_excel(writer, sheet_name="窗口回测参数稳定性分析", index=False)
+
+            # 10
+            if stab_best is not None and not stab_best.empty:
+                stab_best.to_excel(writer, sheet_name="窗口回测个股评分最优参数", index=False)
+
+                # 11
+                if not win_best_full_result.empty:
+                    win_best_full_result.to_excel(writer, sheet_name="窗口回测个股评分最优参数回测结果汇总", index=False)
 
             # =========================================================
             # 统计逻辑（Sheet说明 + 字段说明合并）
@@ -1147,16 +1159,16 @@ def run_trade():
                  "统计逻辑": "每只股票从全量回测明细中取综合评分最高的一条，跨股票按综合评分降序排列"},
                 {"类型": "Sheet说明", "名称": "窗口回测明细",
                  "统计逻辑": "所有股票所有窗口所有MA的窗口回测汇总结果（含综合评分、窗口标签、有效数据日期等）"},
-                {"类型": "Sheet说明", "名称": "窗口回测个股评分最优参数",
-                 "统计逻辑": "从各股票参数稳定性分析中取参数稳定性综合评分最高的均线周期，并列时取标准差最小的"},
-                {"类型": "Sheet说明", "名称": "窗口回测个股评分最优参数回测结果汇总",
-                 "统计逻辑": "拿窗口稳定性最优参数选出的均线周期，去全量回测明细中匹配同股票+同均线的完整回测结果"},
                 {"类型": "Sheet说明", "名称": "窗口回测综合评分明细",
                  "统计逻辑": "透视表，行=股票代码+K线周期+均线周期，列=窗口时间区间，值=综合评分"},
                 {"类型": "Sheet说明", "名称": "窗口回测综合评分排名",
                  "统计逻辑": "透视表，同上结构，值改为窗口内排名（每窗口每股票内的参数间排名，同分取最小排名）"},
                 {"类型": "Sheet说明", "名称": "窗口回测参数稳定性分析",
                  "统计逻辑": "按均线周期聚合：窗口数量、综合评分排名平均值/第一次数/Top3占比/标准差、参数稳定性综合评分（加权归一化）"},
+                {"类型": "Sheet说明", "名称": "窗口回测个股评分最优参数",
+                 "统计逻辑": "从各股票参数稳定性分析中取参数稳定性综合评分最高的均线周期，并列时取标准差最小的"},
+                {"类型": "Sheet说明", "名称": "窗口回测个股评分最优参数回测结果汇总",
+                 "统计逻辑": "拿窗口稳定性最优参数选出的均线周期，去全量回测明细中匹配同股票+同均线的完整回测结果"},
 
                 # ==================== 字段级说明 ====================
                 {"类型": "", "名称": "", "统计逻辑": ""},
@@ -1230,6 +1242,17 @@ def run_trade():
 
                 {"类型": "评分模型", "名称": "综合评分",
                  "统计逻辑": "Score = 0.30*CAGR + 0.25*Sharpe + 0.20*(1-最大回撤) + 0.15*盈利因子 + 0.05*盈利交易率 + 0.05*交易次数；子指标min-max归一化，CAGR:0-30, Sharpe:0-2, 回撤:0-50, 盈利因子:1-3, 盈利率:30-80, 交易次数:10-100，加权求和范围0~100"},
+
+                {"类型": "参数稳定性", "名称": "盈利窗口数量",
+                 "统计逻辑": "该均线周期在各窗口中的年化收益率>0的计数"},
+                {"类型": "参数稳定性", "名称": "盈利窗口占比",
+                 "统计逻辑": "盈利窗口数量 / 窗口数量 × 100%"},
+                {"类型": "参数稳定性", "名称": "年化收益率平均值",
+                 "统计逻辑": "各窗口年化收益率的算术平均值"},
+                {"类型": "参数稳定性", "名称": "年化收益率标准差",
+                 "统计逻辑": "各窗口年化收益率的标准差，衡量收益波动性"},
+                {"类型": "参数稳定性", "名称": "参数稳定性综合评分",
+                 "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定"},
             ]
 
             pd.DataFrame(logic_rows).to_excel(writer, sheet_name="统计逻辑", index=False)
