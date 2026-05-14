@@ -6,6 +6,13 @@ from datetime import datetime
 from tqdm import tqdm
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
+
+def _apply_sheet_format(ws):
+    """Set auto-filter and freeze first row + first column."""
+    if ws.max_row and ws.max_column:
+        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = "B2"
+
 # =========================================================
 # 配置
 # =========================================================
@@ -830,6 +837,13 @@ def run_trade():
                     ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
                     ws_df.to_excel(writer, sheet_name="窗口回测各周期各窗口结果汇总", index=False)
 
+                    # 窗口回测综合评分明细 & 排名
+                    score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
+                    if not score_pivot.empty:
+                        score_pivot.to_excel(writer, sheet_name="窗口回测综合评分明细", index=False)
+                    if not rank_pivot.empty:
+                        rank_pivot.to_excel(writer, sheet_name="窗口回测综合评分排名", index=False)
+
                     # 窗口回测参数稳定性分析
                     stability_df = calc_param_stability(window_summary_rows)
                     if not stability_df.empty:
@@ -859,12 +873,8 @@ def run_trade():
                                 ignore_index=True, sort=False
                             ).to_excel(writer, sheet_name="全量和窗口回测最优参数结果对比", index=False)
 
-                    # 窗口回测综合评分明细 & 排名
-                    score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
-                    if not score_pivot.empty:
-                        score_pivot.to_excel(writer, sheet_name="窗口回测综合评分明细", index=False)
-                    if not rank_pivot.empty:
-                        rank_pivot.to_excel(writer, sheet_name="窗口回测综合评分排名", index=False)
+                for ws in writer.sheets.values():
+                    _apply_sheet_format(ws)
 
             tqdm.write(f"完成: {code}")
 
@@ -1256,6 +1266,9 @@ def run_trade():
             ]
 
             pd.DataFrame(logic_rows).to_excel(writer, sheet_name="统计逻辑", index=False)
+
+            for ws in writer.sheets.values():
+                _apply_sheet_format(ws)
 
         print("全市场完成:", out)
 
