@@ -32,6 +32,7 @@ SYMBOL_FILE = "symbols.csv"
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RESULT_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
+os.makedirs("tradingview", exist_ok=True)
 
 MA_LIST = [5, 10, 20, 30, 60]
 INITIAL_CASH = 10000
@@ -1464,6 +1465,9 @@ def run_trade():
         # 同步信号结果到富途自选股分组
         sync_futu_groups(out)
 
+        # 导出信号结果到TradingView CSV
+        export_tradingview_csvs(out)
+
 # =========================================================
 # 富途自选股分组同步
 # =========================================================
@@ -1586,6 +1590,75 @@ def sync_futu_groups(excel_path):
         quote_ctx.close()
 
     print("分组同步完成")
+
+
+def _to_tv_code(code):
+    """转换股票代码为TradingView兼容格式"""
+    if code.startswith("US."):
+        return code[3:]
+    if code.startswith("HK."):
+        return code[3:]
+    if code.startswith("SH.") or code.startswith("SZ."):
+        return code[3:]
+    return code
+
+
+def export_tradingview_csvs(excel_path):
+    """导出信号结果为TradingView可导入的CSV文件"""
+    print("\n================================================")
+    print("导出信号到TradingView CSV")
+    print("================================================")
+
+    if not os.path.exists(excel_path):
+        print(f"信号文件不存在: {excel_path}")
+        return
+
+    try:
+        signal_df = pd.read_excel(excel_path, sheet_name="信号扫描")
+    except Exception as e:
+        print(f"读取信号文件失败: {e}")
+        return
+
+    if signal_df.empty:
+        print("信号扫描结果为空，跳过")
+        return
+
+    tv_dir = "tradingview"
+    os.makedirs(tv_dir, exist_ok=True)
+
+    signal_df["时间"] = pd.to_datetime(signal_df["时间"])
+    latest_idx = signal_df.groupby("股票代码")["时间"].transform("max") == signal_df["时间"]
+    latest = signal_df[latest_idx]
+
+    # 全部股票
+    all_stocks = set(load_symbols(SYMBOL_FILE))
+
+    # 构建各分组股票集合
+    groups = {"全部股票": all_stocks}
+    for sig_name in ["买入", "卖出", "持有", "观察"]:
+        groups[sig_name] = set(latest[latest["信号"] == sig_name]["股票代码"].unique())
+    # 按均线周期子分组
+    for sig_name in ["买入", "卖出"]:
+        for ma in MA_LIST:
+            mask = (signal_df["信号"] == sig_name) & (signal_df["均线周期"] == ma)
+            codes = set(signal_df[mask]["股票代码"].unique())
+            groups[f"{sig_name}/{ma}"] = codes
+
+    # 导出CSV
+    exported = []
+    for group_name, codes in groups.items():
+        tv_codes = sorted(_to_tv_code(c) for c in codes)
+        if not tv_codes:
+            continue
+        safe_name = group_name.replace("/", "_")
+        file_path = os.path.join(tv_dir, f"{safe_name}.csv")
+        with open(file_path, "w", newline="") as f:
+            for c in tv_codes:
+                f.write(c + "\n")
+        exported.append(f"  {group_name}: {len(tv_codes)} 只 → {safe_name}.csv")
+        print(exported[-1])
+
+    print(f"TradingView CSV 导出完成，共 {len(exported)} 个文件（目录: {tv_dir}/）")
 
 # =========================================================
 if __name__ == "__main__":
