@@ -56,19 +56,6 @@ def apply_cn_mapping(df):
     if "信号" in df.columns:
         df["信号"] = df["信号"].map(SIG_MAP)
 
-def filter_watch(df):
-    """筛选有参考价值的可关注股票条件"""
-    return df[
-        (df["距离买入信号已过天数"].notna()) &
-        (df["距离买入信号已过天数"] < 30) &
-        (df["距离买入信号已过天数"] > 4) &
-        (df["趋势方向"] == 1) &
-        (df["交易次数"] > 10) &
-        (df["盈利交易率"] > 40)
-    ].sort_values(
-        by=["综合评分", "距离买入信号已过天数"],
-        ascending=[False, True]
-    )
 
 BAR_INTERVAL = "1W"
 TRADING_PERIOD = 52
@@ -1120,12 +1107,8 @@ def run_trade():
                 selected_map = compare[["股票代码", "最终选择均线周期", "股性评价"]].rename(
                     columns={"最终选择均线周期": "均线周期"}
                 )
-                watch_df = filter_watch(
-                    full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner")
-                )
                 signal_df = full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner").copy()
             else:
-                watch_df = filter_watch(best_score_strategy.copy())
                 signal_df = full_df.copy()
 
             # 信号排序：多头按距离买入信号天数升序，空头按距离卖出信号天数升序
@@ -1220,7 +1203,7 @@ def run_trade():
             # =========================================================
             # 回测数据均线方向/信号转译为中文
             # =========================================================
-            for _df in [full_df, watch_df, signal_df, all_df, win_df, win_best_full_result]:
+            for _df in [full_df, signal_df, all_df, win_df, win_best_full_result]:
                 apply_cn_mapping(_df)
 
             # =========================================================
