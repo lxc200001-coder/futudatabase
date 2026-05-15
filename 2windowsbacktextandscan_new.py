@@ -829,7 +829,7 @@ def run_trade():
                 window_trades_merged = [t for t in window_trades_merged if not t.empty]
                 if window_trades_merged:
                     with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
+                        warnings.filterwarnings("ignore", category=FutureWarning)
                         pd.concat(window_trades_merged, ignore_index=True, sort=False).to_excel(
                             writer, sheet_name="窗口回测交易日志明细", index=False)
 
