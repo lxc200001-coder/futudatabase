@@ -1090,7 +1090,8 @@ def run_trade():
 
                 signal_df = full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner").copy()
                 signal_df = signal_df.sort_values(
-                    by=["信号", "综合评分"], ascending=[True, False]
+                    by=["趋势方向", "距离买入信号已过天数", "综合评分"],
+                    ascending=[False, True, False]
                 )
             else:
                 watch_df = best_score_strategy.copy()
@@ -1107,6 +1108,27 @@ def run_trade():
                 )
 
                 signal_df = full_df[full_df["信号"] != "NONE"].copy()
+                signal_df = signal_df.sort_values(
+                    by=["趋势方向", "距离买入信号已过天数", "综合评分"],
+                    ascending=[False, True, False]
+                )
+
+            # 信号扫描新增字段：距离买入/卖出信号收盘价涨跌幅
+            signal_df["距离买入信号收盘价涨跌幅"] = signal_df.apply(
+                lambda r: round((r["收盘价"] - r["买入信号收盘价"]) / r["买入信号收盘价"] * 100, 2)
+                if pd.notna(r.get("买入信号收盘价")) and r["买入信号收盘价"] != 0 else None,
+                axis=1
+            )
+            signal_df["距离卖出信号收盘价涨跌幅"] = signal_df.apply(
+                lambda r: round((r["收盘价"] - r["卖出信号收盘价"]) / r["卖出信号收盘价"] * 100, 2)
+                if pd.notna(r.get("卖出信号收盘价")) and r["卖出信号收盘价"] != 0 else None,
+                axis=1
+            )
+            # 插入到对应天数字段后面
+            buy_idx = signal_df.columns.get_loc("距离买入信号已过天数") + 1
+            signal_df.insert(buy_idx, "距离买入信号收盘价涨跌幅", signal_df.pop("距离买入信号收盘价涨跌幅"))
+            sell_idx = signal_df.columns.get_loc("距离卖出信号已过天数") + 1
+            signal_df.insert(sell_idx, "距离卖出信号收盘价涨跌幅", signal_df.pop("距离卖出信号收盘价涨跌幅"))
 
             # =========================================================
             # 按目标顺序写入
@@ -1120,7 +1142,7 @@ def run_trade():
 
             # 3
             if compare is not None and not compare.empty:
-                compare.to_excel(writer, sheet_name="全量和窗口回测最优参数回测结果对比", index=False)
+                compare.to_excel(writer, sheet_name="个股最终选择均线周期", index=False)
 
             # 4
             all_df[all_df["回测类型"] == "全量"].to_excel(writer, sheet_name="全量回测明细", index=False)
@@ -1161,7 +1183,7 @@ def run_trade():
                  "统计逻辑": "用最终选择均线周期筛选全量回测明细，保留有买入信号且距今4~30天、趋势向上、交易次数>10、盈利率>40%的股票；按综合评分降序+距离买入信号天数升序排列"},
                 {"类型": "Sheet说明", "名称": "信号扫描",
                  "统计逻辑": "用最终选择均线周期筛选全量回测明细，保留信号非NONE的行；按信号升序+综合评分降序排列"},
-                {"类型": "Sheet说明", "名称": "全量和窗口回测最优参数回测结果对比",
+                {"类型": "Sheet说明", "名称": "个股最终选择均线周期",
                  "统计逻辑": "合并全量最优均线周期和窗口稳定性最优均线周期，对比两参数的综合评分、稳定性评分，计算加权总分后选择最终均线周期，并输出股性评价"},
                 {"类型": "Sheet说明", "名称": "全量回测明细",
                  "统计逻辑": "所有股票所有MA的全量回测汇总结果（含综合评分、信号状态、收益/风险指标等），回测类型=全量"},
