@@ -14,3 +14,6 @@ results/
 __pycache__/
 *.pyc
 *.pyo
+
+# 旧脚本备份
+back5yearwindow_old.py

@@ -9,22 +9,12 @@ from futu import OpenQuoteContext, KLType, AuType, RET_OK
 from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
 
-# 补丁：openpyxl 3.1.5 DataBar 缺少 gradient 属性，通过 XML 注入实现实体填充
-import openpyxl.formatting.rule as _rule_mod
-_orig_data_bar_tree = _rule_mod.DataBar.to_tree
-def _patched_data_bar_tree(self, tagname=None, namespace=None):
-    el = _orig_data_bar_tree(self, tagname, namespace)
-    if getattr(self, '_gradient', None) is not None:
-        el.set('gradient', '0' if not self._gradient else '1')
-    return el
-_rule_mod.DataBar.to_tree = _patched_data_bar_tree
-
 # 屏蔽pandas concat空列FutureWarning（不影响功能）
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation", category=FutureWarning)
 
 
 def _apply_sheet_format(ws):
-    """Set auto-filter and freeze first row + first column."""
+    """设置自动筛选和冻结首行+首列"""
     if ws.max_row and ws.max_column:
         ws.auto_filter.ref = ws.dimensions
         ws.freeze_panes = "B2"
@@ -1218,12 +1208,10 @@ def run_trade():
             # 综合评分 - 绿色数据条 (自动最小/最大值, 实体填充)
             _sc = get_column_letter(signal_df.columns.get_loc("综合评分") + 1)
             _rule1 = DataBarRule(start_type="min", end_type="max", color="70AD47", showValue=True)
-            _rule1.dataBar._gradient = False
             _ws.conditional_formatting.add(f"{_sc}2:{_sc}{_nr}", _rule1)
             # 预计持仓进度 - 蓝色数据条 (0~1, 实体填充)
             _pc = get_column_letter(signal_df.columns.get_loc("预计持仓进度") + 1)
             _rule2 = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=1, color="5B9BD5", showValue=True)
-            _rule2.dataBar._gradient = False
             _ws.conditional_formatting.add(f"{_pc}2:{_pc}{_nr}", _rule2)
 
             # 3
