@@ -599,17 +599,11 @@ def run_scan():
 # =========================================================
 if __name__ == "__main__":
 
-    import sys
+    # 下载数据
+    run_download()
 
-    if "plate" in sys.argv:
-        # 仅同步板块信息
-        run_plate_sync()
-    else:
-        # 下载数据
-        run_download()
+    # 板块信息同步
+    run_plate_sync()
 
-        # 板块信息同步
-        run_plate_sync()
-
-        # 指标扫描
-        run_scan()
+    # 指标扫描
+    run_scan()
