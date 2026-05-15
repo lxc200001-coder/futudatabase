@@ -6,6 +6,9 @@ from datetime import datetime
 from tqdm import tqdm
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
+# 屏蔽pandas concat空列FutureWarning（不影响功能）
+warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation", category=FutureWarning)
+
 
 def _apply_sheet_format(ws):
     """Set auto-filter and freeze first row + first column."""
@@ -751,7 +754,7 @@ def run_trade():
                 full_trades_merged = [t for t in full_trades_list if not t.empty]
                 if full_trades_merged:
                     with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
+                        warnings.filterwarnings("ignore", category=FutureWarning)
                         pd.concat(full_trades_merged, ignore_index=True, sort=False).to_excel(
                             writer, sheet_name="全量回测交易日志明细", index=False)
 
