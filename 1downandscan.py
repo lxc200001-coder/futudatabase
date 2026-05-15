@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
 # =========================================================
@@ -86,33 +86,10 @@ def load_symbols(path):
 
 
 # =========================================================
-# 增量开始日期
+# 全量开始日期（固定从 2000-01-03 开始）
 # =========================================================
 def get_start_date(code):
-
-    file_path = os.path.join(DATA_DIR, f"{code}_1w.parquet")
-
-    if not os.path.exists(file_path):
-        return datetime(2000, 1, 3)
-
-    try:
-
-        old = pd.read_parquet(file_path)
-
-        if len(old) == 0:
-            return datetime(2000, 1, 3)
-
-        old["datetime"] = pd.to_datetime(old["datetime"])
-
-        last_date = old["datetime"].max()
-
-        return last_date.to_pydatetime() + timedelta(days=1)
-
-    except Exception as e:
-
-        print(code, "读取历史文件失败:", e)
-
-        return datetime(2000, 1, 3)
+    return datetime(2000, 1, 3)
 
 
 # =========================================================
@@ -206,16 +183,7 @@ def save_data(df, code):
 
     df["datetime"] = pd.to_datetime(df["datetime"])
 
-    # 合并旧数据
-    if os.path.exists(file_path):
-
-        old = pd.read_parquet(file_path)
-
-        old["datetime"] = pd.to_datetime(old["datetime"])
-
-        df = pd.concat([old, df], ignore_index=True)
-
-    # 去重排序
+    # 去重排序后直接保存（全量覆盖）
     df = (
         df
         .drop_duplicates(["code", "datetime"])
@@ -531,8 +499,6 @@ def run_scan():
                 "sell_signal_close": sell_close,
                 "sell_signal_days": sell_days
             })
-
-            print(code, "MA", ma, signal)
 
     # DataFrame
 
