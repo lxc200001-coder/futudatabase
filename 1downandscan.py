@@ -233,8 +233,9 @@ def save_data(df, code):
 # 股票名称映射（批量按市场获取）
 # =========================================================
 def fetch_stock_basicinfo_map(symbols, quote_ctx):
-    """获取股票名称，返回 {code: name} 字典"""
+    """获取股票名称，返回 ({code: name} dict, 正股代码列表)"""
     name_map = {}
+    stock_codes = []
     group = {}
     for s in symbols:
         market = s.split(".")[0]
@@ -246,10 +247,13 @@ def fetch_stock_basicinfo_map(symbols, quote_ctx):
         )
         if ret == RET_OK and data is not None:
             for _, row in data.iterrows():
-                name_map[row["code"]] = row.get("name", "")
+                code = row["code"]
+                name_map[code] = row.get("name", "")
+                if row.get("stock_type") == "STOCK":
+                    stock_codes.append(code)
         else:
             print(f"获取名称失败: {market_prefix} {codes}")
-    return name_map
+    return name_map, stock_codes
 
 
 # =========================================================
@@ -258,19 +262,22 @@ def fetch_stock_basicinfo_map(symbols, quote_ctx):
 def fetch_all_stock_plates(symbols, quote_ctx):
     """获取所有股票的板块信息，返回 DataFrame"""
     print("获取股票名称...")
-    name_map = fetch_stock_basicinfo_map(symbols, quote_ctx)
+    name_map, stock_codes = fetch_stock_basicinfo_map(symbols, quote_ctx)
+    print(f"正股 {len(stock_codes)} 只（排除非正股 {len(symbols) - len(stock_codes)} 只）")
 
     all_rows = []
-    for i, code in enumerate(symbols, 1):
-        stock_name = name_map.get(code, "")
-        print(f"板块 [{i}/{len(symbols)}] {code} {stock_name}")
+    batch_size = 200
+    for batch_start in range(0, len(stock_codes), batch_size):
+        batch = stock_codes[batch_start:batch_start + batch_size]
+        print(f"板块批次 [{batch_start + 1}..{min(batch_start + batch_size, len(stock_codes))}/{len(stock_codes)}]")
 
-        ret, data = quote_ctx.get_owner_plate([code])
+        ret, data = quote_ctx.get_owner_plate(batch)
         if ret == RET_OK and data is not None and not data.empty:
             for _, row in data.iterrows():
+                code = row.get("code", "")
                 all_rows.append({
                     "code": code,
-                    "stock_name": stock_name,
+                    "stock_name": name_map.get(code, ""),
                     "plate_code": row.get("plate_code", ""),
                     "plate_name": row.get("plate_name", ""),
                     "plate_type": row.get("plate_type", ""),
@@ -282,7 +289,17 @@ def fetch_all_stock_plates(symbols, quote_ctx):
 
     df = pd.DataFrame(all_rows)
     df = df.drop_duplicates().sort_values(["code", "plate_type"]).reset_index(drop=True)
-    return df
+
+    # 聚合：排除OTHER，每只股票一行，板块名和类型逗号拼接
+    agg = df[df["plate_type"] != "OTHER"] \
+        .groupby(["code", "stock_name"], sort=False).agg(
+            plates=("plate_name", lambda x: ",".join(x)),
+            plate_type_list=("plate_type", lambda x: ",".join(x.unique())),
+            update_time=("update_time", "first")
+        ).reset_index()
+    agg = agg.sort_values("code").reset_index(drop=True)
+
+    return agg
 
 
 # =========================================================
