@@ -1,11 +1,13 @@
 import os
+import time
 import warnings
 import concurrent.futures
 import pandas as pd
 import numpy as np
+from collections import deque
 from datetime import datetime
 from tqdm import tqdm
-from futu import OpenQuoteContext, KLType, AuType, RET_OK
+from futu import OpenQuoteContext, KLType, AuType, RET_OK, ModifyUserSecurityOp
 from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
 
@@ -38,6 +40,61 @@ FEE_RATE = 0.001
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
 SIG_MAP = {"BUY": "买入", "SELL": "卖出", "HOLD": "持有", "WATCH": "观察"}
+
+# =========================================================
+# 富途自选股分组配置
+# =========================================================
+FUTU_GROUPS = ["量化监控", "量化买入B", "量化卖出S", "量化持有", "量化观察"]
+GROUP_SIGNAL_MAP = {
+    "量化买入B": "买入",
+    "量化卖出S": "卖出",
+    "量化持有": "持有",
+    "量化观察": "观察",
+}
+SUB_GROUP_PARENTS = ["量化买入B", "量化卖出S"]  # 会按均线周期自动发现子分组
+
+# 修改自选股限频：10次/30秒
+_group_modify_times = deque()
+# 获取自选股列表限频：10次/30秒
+_group_query_times = deque()
+
+
+def _wait_group_modify():
+    now = time.time()
+    while _group_modify_times and now - _group_modify_times[0] > 30:
+        _group_modify_times.popleft()
+    if len(_group_modify_times) >= 10:
+        sleep_time = max(0, 30 - (now - _group_modify_times[0]) + 0.5)
+        print(f"\n触发分组修改限频，开始倒计时 {sleep_time:.1f} 秒", flush=True)
+        start = time.time()
+        while True:
+            remaining = sleep_time - (time.time() - start)
+            if remaining <= 0:
+                break
+            print(f"\r剩余等待: {remaining:.1f} 秒", end="", flush=True)
+            time.sleep(0.2)
+        print("\r剩余等待: 0.0 秒，继续执行        ")
+
+    _group_modify_times.append(time.time())
+
+
+def _wait_group_query():
+    now = time.time()
+    while _group_query_times and now - _group_query_times[0] > 30:
+        _group_query_times.popleft()
+    if len(_group_query_times) >= 10:
+        sleep_time = max(0, 30 - (now - _group_query_times[0]) + 0.5)
+        print(f"\n触发分组查询限频，开始倒计时 {sleep_time:.1f} 秒", flush=True)
+        start = time.time()
+        while True:
+            remaining = sleep_time - (time.time() - start)
+            if remaining <= 0:
+                break
+            print(f"\r剩余等待: {remaining:.1f} 秒", end="", flush=True)
+            time.sleep(0.2)
+        print("\r剩余等待: 0.0 秒，继续执行        ")
+
+    _group_query_times.append(time.time())
 
 def apply_cn_mapping(df):
     """统一应用趋势方向和信号的中文映射"""
@@ -1403,6 +1460,132 @@ def run_trade():
                 _apply_sheet_format(ws)
 
         print("全市场完成:", out)
+
+        # 同步信号结果到富途自选股分组
+        sync_futu_groups(out)
+
+# =========================================================
+# 富途自选股分组同步
+# =========================================================
+def sync_futu_groups(excel_path):
+    """将信号扫描结果同步到富途自选股分组"""
+    print("\n================================================")
+    print("同步信号到富途自选股分组")
+    print("================================================")
+
+    if not os.path.exists(excel_path):
+        print(f"信号文件不存在: {excel_path}")
+        return
+
+    try:
+        signal_df = pd.read_excel(excel_path, sheet_name="信号扫描")
+    except Exception as e:
+        print(f"读取信号文件失败: {e}")
+        return
+
+    if signal_df.empty:
+        print("信号扫描结果为空，跳过同步")
+        return
+
+    # 每只股票取最新一条信号（用于主分组：去重后的信号归属）
+    signal_df["时间"] = pd.to_datetime(signal_df["时间"])
+    latest_idx = signal_df.groupby("股票代码")["时间"].transform("max") == signal_df["时间"]
+    latest_signals = signal_df[latest_idx].set_index("股票代码")["信号"].to_dict()
+
+    # 全部股票列表
+    all_stocks = set(load_symbols(SYMBOL_FILE))
+
+    # 构建主分组预期股票集合
+    expected_map = {"量化监控": all_stocks}
+    for group_name, sig in GROUP_SIGNAL_MAP.items():
+        expected_map[group_name] = {code for code, s in latest_signals.items() if s == sig}
+
+    # 连接富途
+    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+    try:
+        # 查询现有分组
+        ret, group_data = quote_ctx.get_user_security_group()
+        if ret != RET_OK or group_data is None or group_data.empty:
+            print("获取分组列表失败")
+            return
+
+        existing_groups = set(group_data["group_name"])
+
+        # 检查缺失主分组
+        missing = [g for g in FUTU_GROUPS if g not in existing_groups]
+        if missing:
+            print(f"以下分组不存在，请先在富途App中创建: {missing}")
+            print("仅同步已有的分组...")
+        active_groups = [g for g in FUTU_GROUPS if g in existing_groups]
+
+        # 自动发现子分组并构建预期集合
+        for parent in SUB_GROUP_PARENTS:
+            sig = GROUP_SIGNAL_MAP.get(parent)
+            if not sig:
+                continue
+            for ma in MA_LIST:
+                sub_name = f"{parent}/{ma}"
+                if sub_name in existing_groups:
+                    mask = (signal_df["信号"] == sig) & (signal_df["均线周期"] == ma)
+                    expected_map[sub_name] = set(signal_df[mask]["股票代码"].unique())
+                    active_groups.append(sub_name)
+
+        # 逐组同步
+        for group_name in active_groups:
+            expected = expected_map.get(group_name, set())
+
+            # 查询分组当前股票列表（带限频+重试）
+            cur_data = None
+            for _ in range(3):
+                _wait_group_query()
+                ret, cur_data = quote_ctx.get_user_security(group_name)
+                if ret == RET_OK:
+                    break
+                time.sleep(2)
+            if ret != RET_OK:
+                print(f"  {group_name}: 获取列表失败")
+                continue
+
+            current = set(cur_data["code"]) if cur_data is not None and not cur_data.empty else set()
+
+            to_add = expected - current
+            to_del = current - expected
+
+            if not to_add and not to_del:
+                print(f"  {group_name}: {len(current)} 只，无变化")
+                continue
+
+            msg = f"  {group_name}: {len(current)}→{len(expected)} 只"
+            if to_add:
+                msg += f" +{len(to_add)}"
+            if to_del:
+                msg += f" -{len(to_del)}"
+            print(msg)
+
+            if to_add:
+                _wait_group_modify()
+                ret_a, _ = quote_ctx.modify_user_security(
+                    group_name, ModifyUserSecurityOp.ADD, list(to_add)
+                )
+                if ret_a == RET_OK:
+                    print(f"    新增 {len(to_add)} 只成功")
+                else:
+                    print(f"    新增 {len(to_add)} 只失败")
+
+            if to_del:
+                _wait_group_modify()
+                ret_d, _ = quote_ctx.modify_user_security(
+                    group_name, ModifyUserSecurityOp.DEL, list(to_del)
+                )
+                if ret_d == RET_OK:
+                    print(f"    删除 {len(to_del)} 只成功")
+                else:
+                    print(f"    删除 {len(to_del)} 只失败")
+
+    finally:
+        quote_ctx.close()
+
+    print("分组同步完成")
 
 # =========================================================
 if __name__ == "__main__":
