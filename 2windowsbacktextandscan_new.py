@@ -550,15 +550,17 @@ def build_summary(trades_df, ma_len, df):
 # 列排序
 # =========================================================
 COLUMN_ORDER = [
-    "股票代码", "K线周期", "均线周期", "回测周期",
-    "综合评分", "回测类型", "窗口"
+    "股票代码", "K线周期", "均线周期", "综合评分"
 ]
+
+END_COLUMNS = ["回测周期", "回测类型", "窗口", "窗口内有效数据日期"]
 
 def reorder_columns(df):
     cols = df.columns.tolist()
     ordered = [c for c in COLUMN_ORDER if c in cols]
-    rest = [c for c in cols if c not in COLUMN_ORDER]
-    return df[ordered + rest]
+    rest = [c for c in cols if c not in COLUMN_ORDER and c not in END_COLUMNS]
+    end = [c for c in END_COLUMNS if c in cols]
+    return df[ordered + rest + end]
 
 # =========================================================
 # 参数稳定性分析
@@ -1163,6 +1165,25 @@ def run_trade():
             signal_df["均线趋势共振方向"] = _confluence.iloc[:, 0]
             signal_df["共振均线数量"] = _confluence.iloc[:, 1]
             signal_df["共振均线列表"] = _confluence.iloc[:, 2]
+
+            # 信号扫描列重排
+            _signal_cols = [
+                "股票代码", "K线周期", "均线周期",
+                "时间", "收盘价", "HA收盘价", "HA均线值",
+                "趋势方向", "信号",
+                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数", "距离买入信号收盘价涨跌幅",
+                "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数", "距离卖出信号收盘价涨跌幅",
+                "综合评分", "股性评价",
+                "均线趋势共振方向", "共振均线数量", "共振均线列表",
+                "收益率", "年化收益率", "买入持有收益率", "超额收益率",
+                "最大回撤", "Sharpe", "Calmar Ratio",
+                "交易次数", "盈利交易率", "盈利因子", "盈亏比",
+                "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
+                "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
+                "初始资金", "最终资金",
+                "回测周期", "回测类型", "窗口", "窗口内有效数据日期"
+            ]
+            signal_df = signal_df[[c for c in _signal_cols if c in signal_df.columns]]
 
             # =========================================================
             # 回测数据均线方向转译为中文
