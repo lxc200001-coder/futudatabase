@@ -1,5 +1,6 @@
 import os
 import warnings
+import concurrent.futures
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -676,6 +677,191 @@ def build_score_matrix(summary_rows):
 # =========================================================
 # 主程序
 # =========================================================
+def _process_one_stock(code):
+    """Process a single stock. Returns (all_rows, window_rows, stability_dfs)."""
+    path = os.path.join(DATA_DIR, f"{code}_1w.parquet")
+    if not os.path.exists(path):
+        return [], [], []
+    df = pd.read_parquet(path)
+    df = df.sort_values("datetime")
+    df["code"] = code
+    out_file = os.path.join(TRADE_DIR, f"{code}_trades.xlsx")
+    stock_all_rows = []
+    stock_window_rows = []
+    stock_stability_dfs = []
+
+    with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+
+        # =============================================
+        # 全量回测
+        # =============================================
+        full_trades_list = []
+        full_summary_rows = []
+        window_trades_by_ma = {ma: [] for ma in MA_LIST}
+        window_summary_rows = []
+
+        # 全量数据的有效日期范围（用于 窗口内有效数据日期）
+        full_eff_start = pd.to_datetime(df["datetime"]).min()
+        full_eff_end = pd.to_datetime(df["datetime"]).max()
+        full_effective_range = f"{full_eff_start.date()}~{full_eff_end.date()}"
+
+        # Pre-compute HA once for all MA periods
+        ha_close_full, _ = calc_heikin_ashi(df)
+        df_with_ha = df.copy()
+        df_with_ha["ha_close"] = ha_close_full
+
+        for ma in MA_LIST:
+
+            d = calc_signal(df_with_ha, ma)
+            trades = build_trades(d, ma)
+            if not trades.empty:
+                trades["窗口"] = "FULL"
+                trades["窗口内有效数据日期"] = full_effective_range
+            full_trades_list.append(trades)
+
+            summary = build_summary(trades, ma, df)
+
+            signal_info = get_last_signal_info(d)
+
+            summary.update(signal_info)
+
+            summary["综合评分"] = calc_score_row(summary)
+            summary["回测类型"] = "全量"
+            summary["窗口"] = "FULL"
+
+            full_summary_rows.append(summary)
+            stock_all_rows.append(summary)
+
+        # =============================================
+        # 全量回测交易日志明细（合并所有MA）
+        # =============================================
+        full_trades_merged = [t for t in full_trades_list if not t.empty]
+        if full_trades_merged:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                pd.concat(full_trades_merged, ignore_index=True, sort=False).to_excel(
+                    writer, sheet_name="全量回测交易日志明细", index=False)
+
+        # =============================================
+        # 全量回测各周期结果汇总
+        # =============================================
+        full_summary_df = reorder_columns(pd.DataFrame(full_summary_rows))
+        if "趋势方向" in full_summary_df.columns:
+            full_summary_df["趋势方向"] = full_summary_df["趋势方向"].map({1: "多头", -1: "空头"})
+        full_summary_df.to_excel(writer, sheet_name="全量回测各周期结果汇总", index=False)
+
+        # =============================================
+        # 全量回测最优参数结果（综合评分最高）
+        # =============================================
+        best_full_result = full_summary_df.loc[[full_summary_df["综合评分"].idxmax()]].copy()
+        best_full_result.to_excel(writer, sheet_name="全量回测最优参数结果", index=False)
+
+        # =============================================
+        # 5年窗口回测
+        # =============================================
+        windows = generate_windows(df)
+
+        for ws, we in windows:
+
+            df_w = df[
+                (pd.to_datetime(df["datetime"]) >= ws) &
+                (pd.to_datetime(df["datetime"]) < we)
+            ].copy()
+
+            if df_w.empty:
+                continue
+
+            data_years = (df_w["datetime"].max() - df_w["datetime"].min()).days / 365.0
+            if data_years < 2:
+                continue
+
+            window_label = f"{ws.date()}~{we.date()}"
+            eff_start = pd.to_datetime(df_w["datetime"]).min()
+            eff_end = pd.to_datetime(df_w["datetime"]).max()
+            effective_range = f"{eff_start.date()}~{eff_end.date()}"
+
+            ha_close_w, _ = calc_heikin_ashi(df_w)
+            df_w_ha = df_w.copy()
+            df_w_ha["ha_close"] = ha_close_w
+
+            for ma in MA_LIST:
+                d = calc_signal(df_w_ha, ma)
+                trades = build_trades(d, ma)
+
+                if not trades.empty:
+                    trades_w = trades.copy()
+                    trades_w["窗口"] = window_label
+                    trades_w["窗口内有效数据日期"] = effective_range
+                    window_trades_by_ma[ma].append(trades_w)
+
+                summary = build_summary(trades, ma, df_w)
+                summary["回测类型"] = "窗口"
+                summary["窗口"] = window_label
+                summary["窗口内有效数据日期"] = effective_range
+                summary["综合评分"] = calc_score_row(summary)
+
+                window_summary_rows.append(summary)
+                stock_all_rows.append(summary)
+                stock_window_rows.append(summary)
+
+        # =============================================
+        # 窗口回测交易日志明细（合并所有MA窗口）
+        # =============================================
+        window_trades_merged = []
+        for ma in MA_LIST:
+            window_trades_merged.extend(window_trades_by_ma[ma])
+        window_trades_merged = [t for t in window_trades_merged if not t.empty]
+        if window_trades_merged:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                pd.concat(window_trades_merged, ignore_index=True, sort=False).to_excel(
+                    writer, sheet_name="窗口回测交易日志明细", index=False)
+
+        # =============================================
+        # 窗口回测汇总分析
+        # =============================================
+        if window_summary_rows:
+            ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
+            if "趋势方向" in ws_df.columns:
+                ws_df["趋势方向"] = ws_df["趋势方向"].map({1: "多头", -1: "空头"})
+            ws_df.to_excel(writer, sheet_name="窗口回测各周期各窗口结果汇总", index=False)
+
+            score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
+            if not score_pivot.empty:
+                score_pivot.to_excel(writer, sheet_name="窗口回测综合评分明细", index=False)
+            if not rank_pivot.empty:
+                rank_pivot.to_excel(writer, sheet_name="窗口回测综合评分排名", index=False)
+
+            stability_df = calc_param_stability(window_summary_rows)
+            if not stability_df.empty:
+                stability_df.to_excel(writer, sheet_name="窗口回测参数稳定性分析", index=False)
+                stock_stability_dfs.append(stability_df)
+
+                best_stab_ma = (
+                    stability_df
+                    .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
+                    .iloc[0]["均线周期"]
+                )
+                window_best_result = full_summary_df[full_summary_df["均线周期"] == best_stab_ma].copy()
+                if not window_best_result.empty:
+                    window_best_result.to_excel(writer, sheet_name="窗口回测最优参数结果", index=False)
+
+                    best_full_tagged = best_full_result.copy()
+                    best_full_tagged["最优参数来源"] = "全量评分最优"
+                    window_best_tagged = window_best_result.copy()
+                    window_best_tagged["最优参数来源"] = "窗口稳定性最优"
+
+                    pd.concat(
+                        [best_full_tagged, window_best_tagged],
+                        ignore_index=True, sort=False
+                    ).to_excel(writer, sheet_name="全量和窗口回测最优参数结果对比", index=False)
+
+        for ws in writer.sheets.values():
+            _apply_sheet_format(ws)
+
+    return stock_all_rows, stock_window_rows, stock_stability_dfs
+
+
 def run_trade():
 
     symbols = load_symbols(SYMBOL_FILE)
@@ -683,212 +869,26 @@ def run_trade():
     # 过滤出有数据文件的股票，用于进度条总计数
     available = [s for s in symbols if os.path.exists(os.path.join(DATA_DIR, f"{s}_1w.parquet"))]
 
+
     all_rows = []
-    scan_rows = []
     window_rows = []
     stability_dfs = []
 
-    for code in (pbar := tqdm(available, desc="回测进度", unit="stock")):
-        pbar.set_postfix({"当前": code})
-
-        try:
-
-            path = os.path.join(DATA_DIR, f"{code}_1w.parquet")
-
-            if not os.path.exists(path):
-                continue
-
-            df = pd.read_parquet(path)
-
-            df = df.sort_values("datetime")
-            df["code"] = code
-
-            out_file = os.path.join(TRADE_DIR, f"{code}_trades.xlsx")
-
-            with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
-
-                # =============================================
-                # 全量回测
-                # =============================================
-                full_trades_list = []
-                full_summary_rows = []
-                window_trades_by_ma = {ma: [] for ma in MA_LIST}
-                window_summary_rows = []
-
-                # 全量数据的有效日期范围（用于 窗口内有效数据日期）
-                full_eff_start = pd.to_datetime(df["datetime"]).min()
-                full_eff_end = pd.to_datetime(df["datetime"]).max()
-                full_effective_range = f"{full_eff_start.date()}~{full_eff_end.date()}"
-
-                # Pre-compute HA once for all MA periods
-                ha_close_full, _ = calc_heikin_ashi(df)
-                df_with_ha = df.copy()
-                df_with_ha["ha_close"] = ha_close_full
-
-                for ma in MA_LIST:
-
-                    d = calc_signal(df_with_ha, ma)
-                    trades = build_trades(d, ma)
-                    if not trades.empty:
-                        trades["窗口"] = "FULL"
-                        trades["窗口内有效数据日期"] = full_effective_range
-                    full_trades_list.append(trades)
-
-                    summary = build_summary(trades, ma, df)
-
-                    signal_info = get_last_signal_info(d)
-
-                    summary.update(signal_info)
-
-                    summary["综合评分"] = calc_score_row(summary)
-                    summary["回测类型"] = "全量"
-                    summary["窗口"] = "FULL"
-
-                    full_summary_rows.append(summary)
-                    all_rows.append(summary)
-                    scan_rows.append(summary)
-
-                # =============================================
-                # 全量回测交易日志明细（合并所有MA）
-                # =============================================
-                full_trades_merged = [t for t in full_trades_list if not t.empty]
-                if full_trades_merged:
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=FutureWarning)
-                        pd.concat(full_trades_merged, ignore_index=True, sort=False).to_excel(
-                            writer, sheet_name="全量回测交易日志明细", index=False)
-
-                # =============================================
-                # 全量回测各周期结果汇总
-                # =============================================
-                full_summary_df = reorder_columns(pd.DataFrame(full_summary_rows))
-                # 均线方向转译为中文
-                if "趋势方向" in full_summary_df.columns:
-                    full_summary_df["趋势方向"] = full_summary_df["趋势方向"].map({1: "多头", -1: "空头"})
-                full_summary_df.to_excel(writer, sheet_name="全量回测各周期结果汇总", index=False)
-
-                # =============================================
-                # 全量回测最优参数结果（综合评分最高）
-                # =============================================
-                best_full_result = full_summary_df.loc[[full_summary_df["综合评分"].idxmax()]].copy()
-                best_full_result.to_excel(writer, sheet_name="全量回测最优参数结果", index=False)
-
-                # =============================================
-                # 5年窗口回测
-                # =============================================
-                windows = generate_windows(df)
-
-                for ws, we in windows:
-
-                    df_w = df[
-                        (pd.to_datetime(df["datetime"]) >= ws) &
-                        (pd.to_datetime(df["datetime"]) < we)
-                    ].copy()
-
-                    if df_w.empty:
-                        continue
-
-                    # 窗口内数据不足2年则丢弃
-                    data_years = (df_w["datetime"].max() - df_w["datetime"].min()).days / 365.0
-                    if data_years < 2:
-                        continue
-
-                    window_label = f"{ws.date()}~{we.date()}"
-                    eff_start = pd.to_datetime(df_w["datetime"]).min()
-                    eff_end = pd.to_datetime(df_w["datetime"]).max()
-                    effective_range = f"{eff_start.date()}~{eff_end.date()}"
-
-                    # Pre-compute HA once for this window
-                    ha_close_w, _ = calc_heikin_ashi(df_w)
-                    df_w_ha = df_w.copy()
-                    df_w_ha["ha_close"] = ha_close_w
-
-                    for ma in MA_LIST:
-                        d = calc_signal(df_w_ha, ma)
-                        trades = build_trades(d, ma)
-
-                        if not trades.empty:
-                            trades_w = trades.copy()
-                            trades_w["窗口"] = window_label
-                            trades_w["窗口内有效数据日期"] = effective_range
-                            window_trades_by_ma[ma].append(trades_w)
-
-                        summary = build_summary(trades, ma, df_w)
-                        summary["回测类型"] = "窗口"
-                        summary["窗口"] = window_label
-                        summary["窗口内有效数据日期"] = effective_range
-                        summary["综合评分"] = calc_score_row(summary)
-
-                        window_summary_rows.append(summary)
-                        all_rows.append(summary)
-                        window_rows.append(summary)
-
-                # =============================================
-                # 窗口回测交易日志明细（合并所有MA窗口）
-                # =============================================
-                window_trades_merged = []
-                for ma in MA_LIST:
-                    window_trades_merged.extend(window_trades_by_ma[ma])
-                window_trades_merged = [t for t in window_trades_merged if not t.empty]
-                if window_trades_merged:
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=FutureWarning)
-                        pd.concat(window_trades_merged, ignore_index=True, sort=False).to_excel(
-                            writer, sheet_name="窗口回测交易日志明细", index=False)
-
-                # =============================================
-                # 窗口回测汇总分析
-                # =============================================
-                if window_summary_rows:
-                    ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
-                    # 均线方向转译为中文
-                    if "趋势方向" in ws_df.columns:
-                        ws_df["趋势方向"] = ws_df["趋势方向"].map({1: "多头", -1: "空头"})
-                    ws_df.to_excel(writer, sheet_name="窗口回测各周期各窗口结果汇总", index=False)
-
-                    # 窗口回测综合评分明细 & 排名
-                    score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
-                    if not score_pivot.empty:
-                        score_pivot.to_excel(writer, sheet_name="窗口回测综合评分明细", index=False)
-                    if not rank_pivot.empty:
-                        rank_pivot.to_excel(writer, sheet_name="窗口回测综合评分排名", index=False)
-
-                    # 窗口回测参数稳定性分析
-                    stability_df = calc_param_stability(window_summary_rows)
-                    if not stability_df.empty:
-                        stability_df.to_excel(writer, sheet_name="窗口回测参数稳定性分析", index=False)
-                        stability_dfs.append(stability_df)
-
-                        # 窗口回测最优参数结果
-                        # 从稳定性分析中取参数稳定性综合评分最高的均线周期
-                        # 在全量回测各周期结果汇总中索引该均线的数据
-                        best_stab_ma = (
-                            stability_df
-                            .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
-                            .iloc[0]["均线周期"]
-                        )
-                        window_best_result = full_summary_df[full_summary_df["均线周期"] == best_stab_ma].copy()
-                        if not window_best_result.empty:
-                            window_best_result.to_excel(writer, sheet_name="窗口回测最优参数结果", index=False)
-
-                            # 全量和窗口回测最优参数结果对比
-                            best_full_tagged = best_full_result.copy()
-                            best_full_tagged["最优参数来源"] = "全量评分最优"
-                            window_best_tagged = window_best_result.copy()
-                            window_best_tagged["最优参数来源"] = "窗口稳定性最优"
-
-                            pd.concat(
-                                [best_full_tagged, window_best_tagged],
-                                ignore_index=True, sort=False
-                            ).to_excel(writer, sheet_name="全量和窗口回测最优参数结果对比", index=False)
-
-                for ws in writer.sheets.values():
-                    _apply_sheet_format(ws)
-
-            tqdm.write(f"完成: {code}")
-
-        except Exception as e:
-            tqdm.write(f"失败: {code} {e}")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        future_to_code = {executor.submit(_process_one_stock, code): code for code in available}
+        with tqdm(total=len(available), desc="回测进度", unit="stock") as pbar:
+            for future in concurrent.futures.as_completed(future_to_code):
+                code = future_to_code[future]
+                try:
+                    s_all, s_win, s_stab = future.result()
+                    all_rows.extend(s_all)
+                    window_rows.extend(s_win)
+                    stability_dfs.extend(s_stab)
+                    tqdm.write(f"完成: {code}")
+                except Exception as e:
+                    tqdm.write(f"失败: {code} {e}")
+                finally:
+                    pbar.update(1)
 
     if all_rows:
 
