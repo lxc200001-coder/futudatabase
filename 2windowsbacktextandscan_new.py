@@ -1586,6 +1586,24 @@ def sync_futu_groups(excel_path):
                 else:
                     print(f"    删除 {len(to_del)} 只失败")
 
+            # 验证：重新查询确认分组内容与预期一致
+            if to_add or to_del:
+                _wait_group_query()
+                ret_v, verify_data = quote_ctx.get_user_security(group_name)
+                if ret_v == RET_OK:
+                    actual = set(verify_data["code"]) if verify_data is not None and not verify_data.empty else set()
+                    still_missing = expected - actual
+                    still_extra = actual - expected
+                    if not still_missing and not still_extra:
+                        print(f"    验证通过：{len(actual)} 只与预期一致")
+                    else:
+                        if still_missing:
+                            print(f"    验证失败：缺少 {len(still_missing)} 只")
+                        if still_extra:
+                            print(f"    验证失败：多余 {len(still_extra)} 只")
+                else:
+                    print(f"    验证查询失败")
+
     finally:
         quote_ctx.close()
 
