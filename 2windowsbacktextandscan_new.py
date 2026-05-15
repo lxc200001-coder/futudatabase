@@ -1680,5 +1680,15 @@ def export_tradingview_txts(excel_path):
 
 # =========================================================
 if __name__ == "__main__":
-    init_symbols_file(SYMBOL_FILE)
-    run_trade()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "sync":
+        # 仅运行富途自选股分组同步（从最新的 all_summary.xlsx 读取信号）
+        out = os.path.join(TRADE_DIR, "all_summary.xlsx")
+        if not os.path.exists(out):
+            print(f"未找到信号文件: {out}，请先运行完整回测生成 all_summary.xlsx")
+            sys.exit(1)
+        sync_futu_groups(out)
+        export_tradingview_txts(out)
+    else:
+        init_symbols_file(SYMBOL_FILE)
+        run_trade()
