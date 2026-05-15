@@ -1465,8 +1465,8 @@ def run_trade():
         # 同步信号结果到富途自选股分组
         sync_futu_groups(out)
 
-        # 导出信号结果到TradingView CSV
-        export_tradingview_csvs(out)
+        # 导出信号结果到TradingView txt
+        export_tradingview_txts(out)
 
 # =========================================================
 # 富途自选股分组同步
@@ -1603,10 +1603,10 @@ def _to_tv_code(code):
     return code
 
 
-def export_tradingview_csvs(excel_path):
-    """导出信号结果为TradingView可导入的CSV文件"""
+def export_tradingview_txts(excel_path):
+    """导出信号结果为TradingView可导入的txt文件"""
     print("\n================================================")
-    print("导出信号到TradingView CSV")
+    print("导出信号到TradingView TXT")
     print("================================================")
 
     if not os.path.exists(excel_path):
@@ -1644,21 +1644,21 @@ def export_tradingview_csvs(excel_path):
             codes = set(signal_df[mask]["股票代码"].unique())
             groups[f"{sig_name}/{ma}"] = codes
 
-    # 导出CSV
+    # 导出txt
     exported = []
     for group_name, codes in groups.items():
         tv_codes = sorted(_to_tv_code(c) for c in codes)
         if not tv_codes:
             continue
         safe_name = group_name.replace("/", "_")
-        file_path = os.path.join(tv_dir, f"{safe_name}.csv")
+        file_path = os.path.join(tv_dir, f"{safe_name}.txt")
         with open(file_path, "w", newline="") as f:
             for c in tv_codes:
                 f.write(c + "\n")
-        exported.append(f"  {group_name}: {len(tv_codes)} 只 → {safe_name}.csv")
+        exported.append(f"  {group_name}: {len(tv_codes)} 只 → {safe_name}.txt")
         print(exported[-1])
 
-    print(f"TradingView CSV 导出完成，共 {len(exported)} 个文件（目录: {tv_dir}/）")
+    print(f"TradingView txt 导出完成，共 {len(exported)} 个文件（目录: {tv_dir}/）")
 
 # =========================================================
 if __name__ == "__main__":
