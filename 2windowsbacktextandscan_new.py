@@ -423,7 +423,7 @@ def normalize(x, min_v, max_v):
 def calc_score_row(row):
 
     cagr_score = normalize(row.get("年化收益率", 0), 0, 30) * 100
-    sharpe_score = normalize(row.get("Sharpe", 0), 0, 2) * 100
+    sharpe_score = normalize(row.get("夏普比率", 0), 0, 2) * 100
     dd_score = (1 - normalize(row.get("最大回撤", 0), 0, 50)) * 100
     pf_score = normalize(row.get("盈利因子", 0), 1, 3) * 100
     win_score = normalize(row.get("盈利交易率", 0), 30, 80) * 100
@@ -484,8 +484,8 @@ def build_summary(trades_df, ma_len, df):
             "超额收益率": 0,
 
             "最大回撤": 0,
-            "Sharpe": 0,
-            "Calmar Ratio": 0,
+            "夏普比率": 0,
+            "卡尔玛比率": 0,
 
             "交易次数": 0,
             "盈利交易率": 0,
@@ -548,8 +548,8 @@ def build_summary(trades_df, ma_len, df):
         "超额收益率": round(float(alpha), 2),
 
         "最大回撤": round(float(mdd), 2),
-        "Sharpe": round(float(sh), 4),
-        "Calmar Ratio": round(float(calmar), 4),
+        "夏普比率": round(float(sh), 4),
+        "卡尔玛比率": round(float(calmar), 4),
 
         "交易次数": int(len(trades_df)),
         "盈利交易率": round(float(win_rate), 2),
@@ -1191,7 +1191,7 @@ def run_trade():
                 "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数", "距离卖出信号收盘价涨跌幅",
                 "均线趋势共振方向", "共振均线数量", "共振均线列表",
                 "收益率", "年化收益率", "买入持有收益率", "超额收益率",
-                "最大回撤", "Sharpe", "Calmar Ratio",
+                "最大回撤", "夏普比率", "卡尔玛比率",
                 "交易次数", "盈利交易率", "盈利因子", "盈亏比",
                 "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
                 "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
@@ -1340,9 +1340,9 @@ def run_trade():
 
                 {"类型": "风险类", "名称": "最大回撤",
                  "统计逻辑": "(当前权益 - 历史最高权益) / 历史最高权益 的最小值绝对值"},
-                {"类型": "风险类", "名称": "Sharpe",
+                {"类型": "风险类", "名称": "夏普比率",
                  "统计逻辑": "log(资金曲线收益)均值 / 标准差 × sqrt(TRADING_PERIOD)"},
-                {"类型": "风险类", "名称": "Calmar Ratio",
+                {"类型": "风险类", "名称": "卡尔玛比率",
                  "统计逻辑": "年化收益率 / 最大回撤绝对值"},
 
                 {"类型": "交易统计", "名称": "交易次数",
