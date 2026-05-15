@@ -759,6 +759,9 @@ def run_trade():
                 # 全量回测各周期结果汇总
                 # =============================================
                 full_summary_df = reorder_columns(pd.DataFrame(full_summary_rows))
+                # 均线方向转译为中文
+                if "趋势方向" in full_summary_df.columns:
+                    full_summary_df["趋势方向"] = full_summary_df["趋势方向"].map({1: "多头", -1: "空头"})
                 full_summary_df.to_excel(writer, sheet_name="全量回测各周期结果汇总", index=False)
 
                 # =============================================
@@ -835,6 +838,9 @@ def run_trade():
                 # =============================================
                 if window_summary_rows:
                     ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
+                    # 均线方向转译为中文
+                    if "趋势方向" in ws_df.columns:
+                        ws_df["趋势方向"] = ws_df["趋势方向"].map({1: "多头", -1: "空头"})
                     ws_df.to_excel(writer, sheet_name="窗口回测各周期各窗口结果汇总", index=False)
 
                     # 窗口回测综合评分明细 & 排名
@@ -1034,16 +1040,16 @@ def run_trade():
                     def _stock_nature(score):
                         if pd.isna(score):
                             return None
-                        if score >= 60:
-                            return "1强趋势"
-                        elif score >= 45:
-                            return "2活跃"
-                        elif score >= 30:
-                            return "3温和"
-                        elif score >= 15:
-                            return "4弱势"
+                        if score >= 80:
+                            return "1优"
+                        elif score >= 60:
+                            return "2良"
+                        elif score >= 40:
+                            return "3中"
+                        elif score >= 20:
+                            return "4差"
                         else:
-                            return "5不活跃"
+                            return "5劣"
 
                     compare["股性评价"] = compare["最终选择均线周期回测结果综合评分"].apply(_stock_nature)
 
@@ -1089,10 +1095,12 @@ def run_trade():
                 )
 
                 signal_df = full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner").copy()
-                signal_df = signal_df.sort_values(
-                    by=["趋势方向", "距离买入信号已过天数", "综合评分"],
-                    ascending=[False, True, False]
-                )
+                # 多头按距离买入信号天数排序，空头按距离卖出信号天数排序
+                _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
+                    by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
+                _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
+                    by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
+                signal_df = pd.concat([_bull, _bear], ignore_index=True)
             else:
                 watch_df = best_score_strategy.copy()
                 watch_df = watch_df[
@@ -1108,10 +1116,11 @@ def run_trade():
                 )
 
                 signal_df = full_df[full_df["信号"] != "NONE"].copy()
-                signal_df = signal_df.sort_values(
-                    by=["趋势方向", "距离买入信号已过天数", "综合评分"],
-                    ascending=[False, True, False]
-                )
+                _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
+                    by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
+                _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
+                    by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
+                signal_df = pd.concat([_bull, _bear], ignore_index=True)
 
             # 信号扫描新增字段：距离买入/卖出信号收盘价涨跌幅
             signal_df["距离买入信号收盘价涨跌幅"] = signal_df.apply(
@@ -1129,6 +1138,38 @@ def run_trade():
             signal_df.insert(buy_idx, "距离买入信号收盘价涨跌幅", signal_df.pop("距离买入信号收盘价涨跌幅"))
             sell_idx = signal_df.columns.get_loc("距离卖出信号已过天数") + 1
             signal_df.insert(sell_idx, "距离卖出信号收盘价涨跌幅", signal_df.pop("距离卖出信号收盘价涨跌幅"))
+
+            # =========================================================
+            # 均线趋势共振分析
+            # =========================================================
+            trend_lookup = full_df.set_index(["股票代码", "均线周期"])["趋势方向"]
+
+            def _calc_confluence(r):
+                code = r["股票代码"]
+                final_ma = r["均线周期"]
+                mas = [m for m in MA_LIST if m <= final_ma]
+                dirs = [trend_lookup.get((code, m)) for m in mas]
+                dirs = [d for d in dirs if d is not None]
+                if len(dirs) < 2:
+                    return "无", 0, ""
+                if all(d == 1 for d in dirs):
+                    return "多头共振", len(mas), ",".join(str(m) for m in mas)
+                if all(d == -1 for d in dirs):
+                    return "空头共振", len(mas), ",".join(str(m) for m in mas)
+                return "无", 0, ""
+
+            _confluence = signal_df.apply(_calc_confluence, axis=1, result_type="expand")
+            signal_df["均线趋势共振方向"] = _confluence.iloc[:, 0]
+            signal_df["共振均线数量"] = _confluence.iloc[:, 1]
+            signal_df["共振均线列表"] = _confluence.iloc[:, 2]
+
+            # =========================================================
+            # 回测数据均线方向转译为中文
+            # =========================================================
+            dir_map = {1: "多头", -1: "空头"}
+            for _df in [full_df, watch_df, signal_df, all_df, win_df, win_best_full_result]:
+                if "趋势方向" in _df.columns:
+                    _df["趋势方向"] = _df["趋势方向"].map(dir_map)
 
             # =========================================================
             # 按目标顺序写入
@@ -1182,7 +1223,7 @@ def run_trade():
                 {"类型": "Sheet说明", "名称": "最近可关注股票",
                  "统计逻辑": "用最终选择均线周期筛选全量回测明细，保留有买入信号且距今4~30天、趋势向上、交易次数>10、盈利率>40%的股票；按综合评分降序+距离买入信号天数升序排列"},
                 {"类型": "Sheet说明", "名称": "信号扫描",
-                 "统计逻辑": "用最终选择均线周期筛选全量回测明细，保留信号非NONE的行；按趋势方向降序+距离买入信号已过天数升序+综合评分降序排列；并计算距离买入/卖出信号收盘价涨跌幅"},
+                 "统计逻辑": "用最终选择均线周期筛选全量回测明细，保留信号非NONE的行；多头按距离买入信号天数升序+综合评分降序排，空头按距离卖出信号天数升序+综合评分降序排；并计算距离买入/卖出信号收盘价涨跌幅及均线趋势共振分析"},
                 {"类型": "Sheet说明", "名称": "个股最终选择均线周期",
                  "统计逻辑": "合并全量最优均线周期和窗口稳定性最优均线周期，对比两参数的综合评分、稳定性评分，计算加权总分后选择最终均线周期，并输出股性评价"},
                 {"类型": "Sheet说明", "名称": "全量回测明细",
@@ -1217,7 +1258,7 @@ def run_trade():
                 {"类型": "信号逻辑", "名称": "信号",
                  "统计逻辑": "MA方向变化：dir由-1→1为BUY，1→-1为SELL"},
                 {"类型": "信号逻辑", "名称": "趋势方向",
-                 "统计逻辑": "ma > ma.shift(1) 为1，否则-1"},
+                 "统计逻辑": "ma > ma.shift(1) 为多头，否则空头"},
                 {"类型": "信号逻辑", "名称": "买入信号时间",
                  "统计逻辑": "df中 buy=True 的最后一条记录时间"},
                 {"类型": "信号逻辑", "名称": "卖出信号时间",
@@ -1234,6 +1275,12 @@ def run_trade():
                  "统计逻辑": "(当前收盘价 - 买入信号收盘价) / 买入信号收盘价 × 100，正数表示现价高于买入信号价格"},
                 {"类型": "信号逻辑", "名称": "距离卖出信号收盘价涨跌幅",
                  "统计逻辑": "(当前收盘价 - 卖出信号收盘价) / 卖出信号收盘价 × 100，正数表示现价高于卖出信号价格"},
+                {"类型": "信号逻辑", "名称": "均线趋势共振方向",
+                 "统计逻辑": "最终选择均线周期及以下各周期趋势方向全部一致且≥2个时为多头共振/空头共振，否则为无"},
+                {"类型": "信号逻辑", "名称": "共振均线数量",
+                 "统计逻辑": "参与方向一致的均线周期个数，不足2个时为0"},
+                {"类型": "信号逻辑", "名称": "共振均线列表",
+                 "统计逻辑": "参与方向一致的均线周期列表（逗号分隔），不足2个时为空"},
 
                 {"类型": "收益类", "名称": "收益率",
                  "统计逻辑": "(最终资金 / 初始资金 - 1) × 100"},
