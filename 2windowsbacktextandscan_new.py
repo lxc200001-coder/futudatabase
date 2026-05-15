@@ -45,6 +45,10 @@ MA_LIST = [5, 10, 20, 30, 60]
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
+# 中文映射
+DIR_MAP = {1: "多头", -1: "空头"}
+SIG_MAP = {"BUY": "买入", "SELL": "卖出", "HOLD": "持有", "WATCH": "观察"}
+
 BAR_INTERVAL = "1W"
 TRADING_PERIOD = 52
 WINDOW_YEARS = 5
@@ -94,12 +98,14 @@ def get_last_signal_info(df):
 
     today = pd.Timestamp.today().normalize()
 
-    signal = "NONE"
-
     if df.iloc[-1]["buy"]:
         signal = "BUY"
     elif df.iloc[-1]["sell"]:
         signal = "SELL"
+    elif df.iloc[-1]["dir"] == 1:
+        signal = "HOLD"
+    else:
+        signal = "WATCH"
 
     buy_rows = df[df["buy"]]
 
@@ -761,7 +767,9 @@ def _process_one_stock(code):
         # =============================================
         full_summary_df = reorder_columns(pd.DataFrame(full_summary_rows))
         if "趋势方向" in full_summary_df.columns:
-            full_summary_df["趋势方向"] = full_summary_df["趋势方向"].map({1: "多头", -1: "空头"})
+            full_summary_df["趋势方向"] = full_summary_df["趋势方向"].map(DIR_MAP)
+        if "信号" in full_summary_df.columns:
+            full_summary_df["信号"] = full_summary_df["信号"].map(SIG_MAP)
         full_summary_df.to_excel(writer, sheet_name="全量回测各周期结果汇总", index=False)
 
         # =============================================
@@ -837,7 +845,9 @@ def _process_one_stock(code):
         if window_summary_rows:
             ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
             if "趋势方向" in ws_df.columns:
-                ws_df["趋势方向"] = ws_df["趋势方向"].map({1: "多头", -1: "空头"})
+                ws_df["趋势方向"] = ws_df["趋势方向"].map(DIR_MAP)
+            if "信号" in ws_df.columns:
+                ws_df["信号"] = ws_df["信号"].map(SIG_MAP)
             ws_df.to_excel(writer, sheet_name="窗口回测各周期各窗口结果汇总", index=False)
 
             score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
@@ -1132,7 +1142,7 @@ def run_trade():
                     ascending=[False, True]
                 )
 
-                signal_df = full_df[full_df["信号"] != "NONE"].copy()
+                signal_df = full_df.copy()
                 _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
                     by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
                 _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
@@ -1191,14 +1201,25 @@ def run_trade():
             _idx = signal_df.columns.get_loc("距离卖出信号收盘价涨跌幅") + 1
             signal_df.insert(_idx, "预计持仓进度", signal_df.pop("预计持仓进度"))
 
+            # 信号确认：BUY/SELL 信号且未满5天为待确认，否则已确认
+            signal_df["信号确认"] = signal_df.apply(
+                lambda r: "待确认"
+                if (r["信号"] == "BUY" and pd.notna(r.get("距离买入信号已过天数")) and r["距离买入信号已过天数"] < 5)
+                or (r["信号"] == "SELL" and pd.notna(r.get("距离卖出信号已过天数")) and r["距离卖出信号已过天数"] < 5)
+                else "已确认",
+                axis=1
+            )
+            # 插入到信号字段后面
+            _sig_idx = signal_df.columns.get_loc("信号") + 1
+            signal_df.insert(_sig_idx, "信号确认", signal_df.pop("信号确认"))
+
             # 信号扫描列重排
             _signal_cols = [
                 "股票代码", "K线周期", "均线周期", "综合评分", "股性评价",
                 "时间", "收盘价", "HA收盘价", "HA均线值",
-                "趋势方向", "信号",
-                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数", "距离买入信号收盘价涨跌幅",
+                "趋势方向", "信号", "信号确认",
+                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数", "预计持仓进度", "距离买入信号收盘价涨跌幅",
                 "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数", "距离卖出信号收盘价涨跌幅",
-                "预计持仓进度",
                 "均线趋势共振方向", "共振均线数量", "共振均线列表",
                 "收益率", "年化收益率", "买入持有收益率", "超额收益率",
                 "最大回撤", "Sharpe", "Calmar Ratio",
@@ -1211,12 +1232,13 @@ def run_trade():
             signal_df = signal_df[[c for c in _signal_cols if c in signal_df.columns]]
 
             # =========================================================
-            # 回测数据均线方向转译为中文
+            # 回测数据均线方向/信号转译为中文
             # =========================================================
-            dir_map = {1: "多头", -1: "空头"}
             for _df in [full_df, watch_df, signal_df, all_df, win_df, win_best_full_result]:
                 if "趋势方向" in _df.columns:
-                    _df["趋势方向"] = _df["趋势方向"].map(dir_map)
+                    _df["趋势方向"] = _df["趋势方向"].map(DIR_MAP)
+                if "信号" in _df.columns:
+                    _df["信号"] = _df["信号"].map(SIG_MAP)
 
             # =========================================================
             # 按目标顺序写入
@@ -1278,7 +1300,7 @@ def run_trade():
             logic_rows = [
                 # ==================== Sheet级说明 ====================
                 {"类型": "Sheet说明", "名称": "信号扫描",
-                 "统计逻辑": "用最终选择均线周期筛选全量回测明细，保留信号非NONE的行；多头按距离买入信号天数升序+综合评分降序排，空头按距离卖出信号天数升序+综合评分降序排；并计算距离买入/卖出信号收盘价涨跌幅及均线趋势共振分析"},
+                 "统计逻辑": "用最终选择均线周期筛选全量回测明细（不再过滤NONE），不限于是否有买入/卖出信号；多头按距离买入信号天数升序+综合评分降序排，空头按距离卖出信号天数升序+综合评分降序排；并计算距离买入/卖出信号收盘价涨跌幅、均线趋势共振分析、信号确认"},
                 {"类型": "Sheet说明", "名称": "个股最终选择均线周期",
                  "统计逻辑": "合并全量最优均线周期和窗口稳定性最优均线周期，对比两参数的综合评分、稳定性评分，计算加权总分后选择最终均线周期，并输出股性评价"},
                 {"类型": "Sheet说明", "名称": "全量回测明细",
@@ -1311,7 +1333,9 @@ def run_trade():
                  "统计逻辑": "首条K线时间 ~ 最后一条K线时间（df datetime范围）"},
 
                 {"类型": "信号逻辑", "名称": "信号",
-                 "统计逻辑": "MA方向变化：dir由-1→1为BUY，1→-1为SELL"},
+                 "统计逻辑": "MA方向变化：dir由-1→1为BUY，1→-1为SELL；非信号状态时多头为HOLD、空头为WATCH"},
+                {"类型": "信号逻辑", "名称": "信号确认",
+                 "统计逻辑": "BUY/SELL信号出现且距离信号天数<5为待确认（周K未走完），否则为已确认；HOLD/WATCH始终为已确认"},
                 {"类型": "信号逻辑", "名称": "趋势方向",
                  "统计逻辑": "ma > ma.shift(1) 为多头，否则空头"},
                 {"类型": "信号逻辑", "名称": "买入信号时间",
