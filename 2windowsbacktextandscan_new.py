@@ -6,6 +6,8 @@ import numpy as np
 from datetime import datetime
 from tqdm import tqdm
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
+from openpyxl.formatting.rule import DataBarRule
+from openpyxl.utils import get_column_letter
 
 # 屏蔽pandas concat空列FutureWarning（不影响功能）
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation", category=FutureWarning)
@@ -1215,6 +1217,21 @@ def run_trade():
 
             # 2
             signal_df.to_excel(writer, sheet_name="信号扫描", index=False)
+            # 信号扫描条件格式
+            _ws = writer.sheets["信号扫描"]
+            _nr = len(signal_df) + 1  # data row count (excl header)
+            # 综合评分 - 绿色数据条 (自动最小/最大值)
+            _sc = get_column_letter(signal_df.columns.get_loc("综合评分") + 1)
+            _ws.conditional_formatting.add(
+                f"{_sc}2:{_sc}{_nr}",
+                DataBarRule(start_type="min", end_type="max", color="70AD47", showValue=True, gradient=None)
+            )
+            # 预计持仓进度 - 蓝色数据条 (0~1)
+            _pc = get_column_letter(signal_df.columns.get_loc("预计持仓进度") + 1)
+            _ws.conditional_formatting.add(
+                f"{_pc}2:{_pc}{_nr}",
+                DataBarRule(start_type="num", start_value=0, end_type="num", end_value=1, color="5B9BD5", showValue=True, gradient=None)
+            )
 
             # 3
             if compare is not None and not compare.empty:
