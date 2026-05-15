@@ -230,6 +230,90 @@ def save_data(df, code):
 
 
 # =========================================================
+# 股票名称映射（批量按市场获取）
+# =========================================================
+def fetch_stock_basicinfo_map(symbols, quote_ctx):
+    """获取股票名称，返回 {code: name} 字典"""
+    name_map = {}
+    group = {}
+    for s in symbols:
+        market = s.split(".")[0]
+        group.setdefault(market, []).append(s)
+
+    for market_prefix, codes in group.items():
+        ret, data = quote_ctx.get_stock_basicinfo(
+            market=market_prefix, code_list=codes
+        )
+        if ret == RET_OK and data is not None:
+            for _, row in data.iterrows():
+                name_map[row["code"]] = row.get("name", "")
+        else:
+            print(f"获取名称失败: {market_prefix} {codes}")
+    return name_map
+
+
+# =========================================================
+# 板块信息拉取
+# =========================================================
+def fetch_all_stock_plates(symbols, quote_ctx):
+    """获取所有股票的板块信息，返回 DataFrame"""
+    print("获取股票名称...")
+    name_map = fetch_stock_basicinfo_map(symbols, quote_ctx)
+
+    all_rows = []
+    for i, code in enumerate(symbols, 1):
+        stock_name = name_map.get(code, "")
+        print(f"板块 [{i}/{len(symbols)}] {code} {stock_name}")
+
+        ret, data = quote_ctx.get_owner_plate([code])
+        if ret == RET_OK and data is not None and not data.empty:
+            for _, row in data.iterrows():
+                all_rows.append({
+                    "code": code,
+                    "stock_name": stock_name,
+                    "plate_code": row.get("plate_code", ""),
+                    "plate_name": row.get("plate_name", ""),
+                    "plate_type": row.get("plate_type", ""),
+                    "update_time": datetime.now()
+                })
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(all_rows)
+    df = df.drop_duplicates().sort_values(["code", "plate_type"]).reset_index(drop=True)
+    return df
+
+
+# =========================================================
+# 保存板块信息
+# =========================================================
+def save_stock_plates(df):
+    """保存板块信息到 data/stocks_plates.parquet"""
+    if df.empty:
+        print("无板块数据，跳过保存")
+        return
+    path = os.path.join(DATA_DIR, "stocks_plates.parquet")
+    df.to_parquet(path, index=False)
+    print(f"板块信息保存完成: {path} 共 {len(df)} 条")
+
+
+# =========================================================
+# 板块同步主流程
+# =========================================================
+def run_plate_sync():
+    """同步所有股票的板块信息"""
+    symbols = load_symbols(SYMBOL_FILE)
+    print(f"\n开始同步 {len(symbols)} 只股票的板块信息...")
+    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+    try:
+        df = fetch_all_stock_plates(symbols, quote_ctx)
+        save_stock_plates(df)
+    finally:
+        quote_ctx.close()
+
+
+# =========================================================
 # 下载主流程
 # =========================================================
 def run_download():
@@ -498,8 +582,17 @@ def run_scan():
 # =========================================================
 if __name__ == "__main__":
 
-    # 下载数据
-    run_download()
+    import sys
 
-    # 指标扫描
-    run_scan()
+    if "plate" in sys.argv:
+        # 仅同步板块信息
+        run_plate_sync()
+    else:
+        # 下载数据
+        run_download()
+
+        # 板块信息同步
+        run_plate_sync()
+
+        # 指标扫描
+        run_scan()
