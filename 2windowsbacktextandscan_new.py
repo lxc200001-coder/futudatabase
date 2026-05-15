@@ -49,6 +49,27 @@ FEE_RATE = 0.001
 DIR_MAP = {1: "多头", -1: "空头"}
 SIG_MAP = {"BUY": "买入", "SELL": "卖出", "HOLD": "持有", "WATCH": "观察"}
 
+def apply_cn_mapping(df):
+    """统一应用趋势方向和信号的中文映射"""
+    if "趋势方向" in df.columns:
+        df["趋势方向"] = df["趋势方向"].map(DIR_MAP)
+    if "信号" in df.columns:
+        df["信号"] = df["信号"].map(SIG_MAP)
+
+def filter_watch(df):
+    """筛选有参考价值的可关注股票条件"""
+    return df[
+        (df["距离买入信号已过天数"].notna()) &
+        (df["距离买入信号已过天数"] < 30) &
+        (df["距离买入信号已过天数"] > 4) &
+        (df["趋势方向"] == 1) &
+        (df["交易次数"] > 10) &
+        (df["盈利交易率"] > 40)
+    ].sort_values(
+        by=["综合评分", "距离买入信号已过天数"],
+        ascending=[False, True]
+    )
+
 BAR_INTERVAL = "1W"
 TRADING_PERIOD = 52
 WINDOW_YEARS = 5
@@ -766,10 +787,7 @@ def _process_one_stock(code):
         # 全量回测各周期结果汇总
         # =============================================
         full_summary_df = reorder_columns(pd.DataFrame(full_summary_rows))
-        if "趋势方向" in full_summary_df.columns:
-            full_summary_df["趋势方向"] = full_summary_df["趋势方向"].map(DIR_MAP)
-        if "信号" in full_summary_df.columns:
-            full_summary_df["信号"] = full_summary_df["信号"].map(SIG_MAP)
+        apply_cn_mapping(full_summary_df)
         full_summary_df.to_excel(writer, sheet_name="全量回测各周期结果汇总", index=False)
 
         # =============================================
@@ -829,10 +847,7 @@ def _process_one_stock(code):
         # =============================================
         # 窗口回测交易日志明细（合并所有MA窗口）
         # =============================================
-        window_trades_merged = []
-        for ma in MA_LIST:
-            window_trades_merged.extend(window_trades_by_ma[ma])
-        window_trades_merged = [t for t in window_trades_merged if not t.empty]
+        window_trades_merged = [t for ma in MA_LIST for t in window_trades_by_ma[ma] if not t.empty]
         if window_trades_merged:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -844,10 +859,7 @@ def _process_one_stock(code):
         # =============================================
         if window_summary_rows:
             ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
-            if "趋势方向" in ws_df.columns:
-                ws_df["趋势方向"] = ws_df["趋势方向"].map(DIR_MAP)
-            if "信号" in ws_df.columns:
-                ws_df["信号"] = ws_df["信号"].map(SIG_MAP)
+            apply_cn_mapping(ws_df)
             ws_df.to_excel(writer, sheet_name="窗口回测各周期各窗口结果汇总", index=False)
 
             score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
@@ -1108,46 +1120,20 @@ def run_trade():
                 selected_map = compare[["股票代码", "最终选择均线周期", "股性评价"]].rename(
                     columns={"最终选择均线周期": "均线周期"}
                 )
-                watch_base = full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner")
-                watch_df = watch_base[
-                    (watch_base["距离买入信号已过天数"].notna()) &
-                    (watch_base["距离买入信号已过天数"] < 30) &
-                    (watch_base["距离买入信号已过天数"] > 4) &
-                    (watch_base["趋势方向"] == 1) &
-                    (watch_base["交易次数"] > 10) &
-                    (watch_base["盈利交易率"] > 40)
-                ].sort_values(
-                    by=["综合评分", "距离买入信号已过天数"],
-                    ascending=[False, True]
+                watch_df = filter_watch(
+                    full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner")
                 )
-
                 signal_df = full_df.merge(selected_map, on=["股票代码", "均线周期"], how="inner").copy()
-                # 多头按距离买入信号天数排序，空头按距离卖出信号天数排序
-                _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
-                    by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
-                _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
-                    by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
-                signal_df = pd.concat([_bull, _bear], ignore_index=True)
             else:
-                watch_df = best_score_strategy.copy()
-                watch_df = watch_df[
-                    (watch_df["距离买入信号已过天数"].notna()) &
-                    (watch_df["距离买入信号已过天数"] < 30) &
-                    (watch_df["距离买入信号已过天数"] > 4) &
-                    (watch_df["趋势方向"] == 1) &
-                    (watch_df["交易次数"] > 10) &
-                    (watch_df["盈利交易率"] > 40)
-                ].sort_values(
-                    by=["综合评分", "距离买入信号已过天数"],
-                    ascending=[False, True]
-                )
-
+                watch_df = filter_watch(best_score_strategy.copy())
                 signal_df = full_df.copy()
-                _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
-                    by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
-                _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
-                    by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
-                signal_df = pd.concat([_bull, _bear], ignore_index=True)
+
+            # 信号排序：多头按距离买入信号天数升序，空头按距离卖出信号天数升序
+            _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
+                by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
+            _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
+                by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
+            signal_df = pd.concat([_bull, _bear], ignore_index=True)
 
             # 信号扫描新增字段：距离买入/卖出信号收盘价涨跌幅
             signal_df["距离买入信号收盘价涨跌幅"] = signal_df.apply(
@@ -1235,10 +1221,7 @@ def run_trade():
             # 回测数据均线方向/信号转译为中文
             # =========================================================
             for _df in [full_df, watch_df, signal_df, all_df, win_df, win_best_full_result]:
-                if "趋势方向" in _df.columns:
-                    _df["趋势方向"] = _df["趋势方向"].map(DIR_MAP)
-                if "信号" in _df.columns:
-                    _df["信号"] = _df["信号"].map(SIG_MAP)
+                apply_cn_mapping(_df)
 
             # =========================================================
             # 按目标顺序写入
