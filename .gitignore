@@ -7,6 +7,8 @@ trades/
 # 扫描结果
 results/
 
+# TradingView 导出
+tradingview/
 # IDE
 .idea/
 
