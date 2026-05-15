@@ -874,7 +874,7 @@ def run_trade():
     window_rows = []
     stability_dfs = []
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
         future_to_code = {executor.submit(_process_one_stock, code): code for code in available}
         with tqdm(total=len(available), desc="回测进度", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(future_to_code):
