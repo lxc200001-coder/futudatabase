@@ -53,6 +53,8 @@ GROUP_SIGNAL_MAP = {
     "量化观察": "观察",
 }
 SUB_GROUP_PARENTS = ["量化买入B", "量化卖出S"]  # 会按均线周期自动发现子分组
+# 子分组名称前缀（去掉量化买入/卖出前缀）
+SUB_GROUP_PREFIX = {"量化买入B": "B", "量化卖出S": "S"}
 
 # 修改自选股限频：10次/30秒
 _group_modify_times = deque()
@@ -1572,10 +1574,11 @@ def sync_futu_groups(excel_path):
         # 自动发现子分组并构建预期集合
         for parent in SUB_GROUP_PARENTS:
             sig = GROUP_SIGNAL_MAP.get(parent)
+            prefix = SUB_GROUP_PREFIX.get(parent, parent)
             if not sig:
                 continue
             for ma in MA_LIST:
-                sub_name = f"{parent}/{ma}"
+                sub_name = f"{prefix}/{ma}"
                 if sub_name in existing_groups:
                     mask = (signal_df["信号"] == sig) & (signal_df["均线周期"] == ma)
                     expected_map[sub_name] = set(signal_df[mask]["股票代码"].unique())
@@ -1606,6 +1609,10 @@ def sync_futu_groups(excel_path):
                 print(f"  {group_name}: {len(current)} 只，无变化")
                 continue
 
+            if not to_add and not to_del:
+                print(f"  {group_name}: {len(current)} 只，无变化")
+                continue
+
             msg = f"  {group_name}: {len(current)}→{len(expected)} 只"
             if to_add:
                 msg += f" +{len(to_add)}"
@@ -1626,7 +1633,7 @@ def sync_futu_groups(excel_path):
             if to_del:
                 _wait_group_modify()
                 ret_d, _ = quote_ctx.modify_user_security(
-                    group_name, ModifyUserSecurityOp.DEL, list(to_del)
+                    group_name, ModifyUserSecurityOp.MOVE_OUT, list(to_del)
                 )
                 if ret_d == RET_OK:
                     print(f"    删除 {len(to_del)} 只成功")
