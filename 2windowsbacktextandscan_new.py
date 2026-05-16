@@ -1179,9 +1179,31 @@ def run_trade():
                 if pd.notna(r.get("卖出信号收盘价")) and r["卖出信号收盘价"] != 0 else None,
                 axis=1
             )
-            # 插入到对应天数字段后面
+            # 持仓日化收益率（仅多头，除零保护）
+            signal_df["持仓日化收益率"] = signal_df.apply(
+                lambda r: round(r["距离买入信号收盘价涨跌幅"] / r["距离买入信号已过天数"], 2)
+                if pd.notna(r.get("距离买入信号收盘价涨跌幅"))
+                   and r.get("距离买入信号已过天数", 0) > 0
+                   and r["趋势方向"] == 1
+                else None,
+                axis=1
+            )
+            # 预计持仓进度 = 距离买入信号已过天数 / 平均持仓天数（仅多头时计算）
+            signal_df["预计持仓进度"] = signal_df.apply(
+                lambda r: round(r["距离买入信号已过天数"] / r["平均持仓天数"], 4)
+                if pd.notna(r.get("距离买入信号已过天数"))
+                   and r.get("平均持仓天数", 0) > 0
+                   and r["趋势方向"] == 1
+                else None,
+                axis=1
+            )
+            # 插入：距离买入信号已过天数 → 预计持仓进度 → 距离买入信号收盘价涨跌幅 → 持仓日化收益率
             buy_idx = signal_df.columns.get_loc("距离买入信号已过天数") + 1
-            signal_df.insert(buy_idx, "距离买入信号收盘价涨跌幅", signal_df.pop("距离买入信号收盘价涨跌幅"))
+            signal_df.insert(buy_idx, "预计持仓进度", signal_df.pop("预计持仓进度"))
+            buy_idx2 = signal_df.columns.get_loc("预计持仓进度") + 1
+            signal_df.insert(buy_idx2, "距离买入信号收盘价涨跌幅", signal_df.pop("距离买入信号收盘价涨跌幅"))
+            hold_idx = signal_df.columns.get_loc("距离买入信号收盘价涨跌幅") + 1
+            signal_df.insert(hold_idx, "持仓日化收益率", signal_df.pop("持仓日化收益率"))
             sell_idx = signal_df.columns.get_loc("距离卖出信号已过天数") + 1
             signal_df.insert(sell_idx, "距离卖出信号收盘价涨跌幅", signal_df.pop("距离卖出信号收盘价涨跌幅"))
 
@@ -1206,19 +1228,6 @@ def run_trade():
             signal_df["均线趋势共振方向"] = _confluence.iloc[:, 0]
             signal_df["共振均线数量"] = _confluence.iloc[:, 1]
             signal_df["共振均线列表"] = _confluence.iloc[:, 2]
-
-            # 预计持仓进度 = 距离买入信号已过天数 / 平均持仓天数（仅多头时计算）
-            signal_df["预计持仓进度"] = signal_df.apply(
-                lambda r: round(r["距离买入信号已过天数"] / r["平均持仓天数"], 4)
-                if pd.notna(r.get("距离买入信号已过天数"))
-                   and r.get("平均持仓天数", 0) > 0
-                   and r["趋势方向"] == 1
-                else None,
-                axis=1
-            )
-            # 插入到距离卖出信号收盘价涨跌幅后面
-            _idx = signal_df.columns.get_loc("距离卖出信号收盘价涨跌幅") + 1
-            signal_df.insert(_idx, "预计持仓进度", signal_df.pop("预计持仓进度"))
 
             # 信号确认：BUY/SELL 信号且未满5天为待确认，否则已确认
             signal_df["信号确认"] = signal_df.apply(
@@ -1251,7 +1260,7 @@ def run_trade():
                 "股票代码", "股票名称", "所属板块", "K线周期", "均线周期", "综合评分", "策略表现",
                 "时间", "收盘价", "HA收盘价", "HA均线值",
                 "趋势方向", "信号", "信号确认",
-                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数", "预计持仓进度", "距离买入信号收盘价涨跌幅",
+                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数", "预计持仓进度", "距离买入信号收盘价涨跌幅", "持仓日化收益率",
                 "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数", "距离卖出信号收盘价涨跌幅",
                 "均线趋势共振方向", "共振均线数量", "共振均线列表",
                 "收益率", "年化收益率", "买入持有收益率", "超额收益率",
@@ -1404,6 +1413,8 @@ def run_trade():
                  "统计逻辑": "参与方向一致的均线周期列表（逗号分隔）"},
                 {"类型": "信号逻辑", "名称": "预计持仓进度",
                  "统计逻辑": "距离买入信号已过天数 / 平均持仓天数，仅多头时计算，反映当前持仓在平均持仓中的进度比例"},
+                {"类型": "信号逻辑", "名称": "持仓日化收益率",
+                 "统计逻辑": "距离买入信号收盘价涨跌幅 / 距离买入信号已过天数，仅多头时计算，反映持仓期间日均收益率"},
 
                 {"类型": "收益类", "名称": "收益率",
                  "统计逻辑": "(最终资金 / 初始资金 - 1) × 100"},
