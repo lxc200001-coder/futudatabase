@@ -235,8 +235,8 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 .card {{ background:#fff; border-radius:8px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.05); }}
 .card .num {{ font-size:28px; font-weight:600; }}
 .card .label {{ font-size:13px; color:#b0aea5; margin-top:4px; }}
-.card .num.buy {{ color:#d97757; }}
-.card .num.sell {{ color:#c62828; }}
+.card .num.buy {{ color:#27ae60; }}
+.card .num.sell {{ color:#e74c3c; }}
 .card .num.total {{ color:#141413; }}
 .card .num.stocks {{ color:#b0aea5; }}
 @media (max-width:768px) {{ .cards {{ grid-template-columns:repeat(2,1fr); }} }}
@@ -259,17 +259,17 @@ tr:hover {{ background:#faf9f5; }}
 #ovBody th:first-child {{ z-index:4; }}
 #ovBody td:first-child {{ box-shadow:1px 0 2px rgba(0,0,0,.04); }}
 .tag {{ display:inline-block; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:500; }}
-.tag-buy {{ background:#fef4ee; color:#d97757; }}
-.tag-sell {{ background:#fde8e8; color:#c62828; }}
-.tag-hold {{ background:#eef6fb; color:#5a8db5; }}
-.tag-watch {{ background:#f5f4f0; color:#b0aea5; }}
-.tag-excellent {{ background:#fef4ee; color:#d97757; }}
-.tag-good {{ background:#f5f4f0; color:#8a8865; }}
-.tag-medium {{ background:#f5f4f0; color:#b0aea5; }}
-.tag-poor {{ background:#fff3e0; color:#cc7a4f; }}
-.tag-bad {{ background:#fde8e8; color:#c62828; }}
-.dir-up {{ color:#d97757; }}
-.dir-down {{ color:#c62828; }}
+.tag-buy {{ background:#e8f8e8; color:#27ae60; }}
+.tag-sell {{ background:#fde8e8; color:#e74c3c; }}
+.tag-hold {{ background:#e8f4fd; color:#2980b9; }}
+.tag-watch {{ background:#f0f0f0; color:#95a5a6; }}
+.tag-excellent {{ background:#e8f8e8; color:#27ae60; }}
+.tag-good {{ background:#f1f8e9; color:#558b2f; }}
+.tag-medium {{ background:#f5f5f5; color:#757575; }}
+.tag-poor {{ background:#fff3e0; color:#e65100; }}
+.tag-bad {{ background:#ffebee; color:#c62828; }}
+.dir-up {{ color:#27ae60; }}
+.dir-down {{ color:#e74c3c; }}
 .filter-bar {{ margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }}
 .filter-bar label {{ font-size:13px; color:#b0aea5; }}
 .filter-bar select {{ padding:5px 10px; border:1px solid #e8e6dc; border-radius:6px; font-size:13px; background:#fff; color:#141413; }}
@@ -503,7 +503,7 @@ var OVERVIEW_COLS = [
   ['最大连续盈利次数','连盈'],['最大连续亏损次数','连亏'],['平均持仓天数','平均持仓天数'],
   ['回测周期','回测周期']
 ];
-var OV_KEY=null, OV_DIR=1;
+var OV_KEY=null, OV_DIR=1; var HIDDEN_KEYS=['ma','策略表现','dir','hold_progress','均线趋势共振方向','盈亏比','最大连续盈利次数','最大连续亏损次数','平均持仓天数','所属板块'];
 function renderOverviewTable() {{
   var rows = D.table.slice();
   // 默认排序：多头在前（买入天数升序→评分降序），空头在后（卖出天数升序→评分降序）
@@ -517,7 +517,7 @@ function renderOverviewTable() {{
   ['score','盈利交易率'].forEach(function(k){{if(_mn[k]===Infinity){{_mn[k]=0;_mx[k]=0;}}}});
   function _bar(p,cl,txt){{return '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+p.toFixed(0)+'%;height:100%;background:'+cl+';border-radius:5px"></span></span>'+txt+'</span>';}}
   var h='<table style="font-size:12px;width:100%;"><thead><tr>';
-  OVERVIEW_COLS.forEach(function(c){{h+='<th onclick="ovSort(\\''+c[0]+'\\')"'+((c[0]==='ma'||c[0]==='策略表现')?' class="ma-col"':'')+'>'+c[1]+(OV_KEY===c[0]?(OV_DIR>0?' ▲':' ▼'):'')+'</th>';}});
+  OVERVIEW_COLS.forEach(function(c){{h+='<th onclick="ovSort(\\''+c[0]+'\\')"'+(HIDDEN_KEYS.includes(c[0])?' class="ma-col"':'')+'>'+c[1]+(OV_KEY===c[0]?(OV_DIR>0?' ▲':' ▼'):'')+'</th>';}});
   h+='</tr></thead><tbody>';
   rows.forEach(function(r){{
     h+='<tr>';
@@ -527,9 +527,10 @@ function renderOverviewTable() {{
       if((key==='sell_signal_change'||key==='sell_signal_days') && (r.signal==='BUY'||r.signal==='HOLD')) v=null;
       if(key==='策略表现'){{var _pc={{'优':'tag-excellent','良':'tag-good','中':'tag-medium','差':'tag-poor','劣':'tag-bad'}};v=String(v).replace(/[\\d.]+/g,'').trim();var _pl=String(v);v=_pl?'<span class="tag '+(_pc[_pl]||'tag-medium')+'">'+_pl+'</span>':'-';h+='<td class="ma-col">'+v+'</td>';return;}}
 if(key==='ma'){{h+='<td class="ma-col">'+v+'</td>';return;}}
-      if(v==null && (key==='score'||key==='daily_return'||key==='年化收益率'||key==='盈利交易率'||key==='buy_signal_change'||key==='sell_signal_change'||key==='hold_progress')){{h+='<td>'+_bar(0,'#2980b9','-')+'</td>';return;}}
+      if(v==null && (key==='score'||key==='daily_return'||key==='年化收益率'||key==='盈利交易率'||key==='buy_signal_change'||key==='sell_signal_change'||key==='hold_progress')){{h+='<td>'+_bar(0,'#b0aea5','-')+'</td>';return;}}
+      if(v==null && HIDDEN_KEYS.includes(key)){{h+='<td class="ma-col">-</td>';return;}}
       if(v==null){{h+='<td>-</td>';return;}}
-      if(key==='score'){{var _r=_mn.score===_mx.score?0:(v-_mn.score)/(_mx.score-_mn.score)*100;var _sc=(function(){{var _m={{'优':'#81c784','良':'#aed581','中':'#bdbdbd','差':'#ffb74d','劣':'#e57373'}};var _s=String(r['策略表现']||'').replace(/[\\d.]+/g,'').trim();return _m[_s]||'#bdbdbd';}})();h+='<td>'+_bar(_r,_sc,v.toFixed(1))+'</td>';return;}}
+      if(key==='score'){{var _r=_mn.score===_mx.score?0:(v-_mn.score)/(_mx.score-_mn.score)*100;var _sc=(function(){{var _m={{'优':'#606060','良':'#808080','中':'#a0a0a0','差':'#c0c0c0','劣':'#e0e0e0'}};var _s=String(r['策略表现']||'').replace(/[\\d.]+/g,'').trim();return _m[_s]||'#a0a0a0';}})();h+='<td>'+_bar(_r,_sc,v.toFixed(1))+'</td>';return;}}
       if(key==='daily_return'){{var _r=Math.min(Math.abs(v)/2,1)*100;var _c=v>=0?'#27ae60':'#e74c3c';h+='<td>'+_bar(_r,_c,v.toFixed(2)+'%')+'</td>';return;}}
       if(key==='年化收益率'){{var _r=Math.min(v/30,1)*100;h+='<td>'+_bar(_r,v>20?'#27ae60':'#8bc34a',v.toFixed(2)+'%')+'</td>';return;}}
       if(key==='盈利交易率'){{var _r=_mn['盈利交易率']===_mx['盈利交易率']?0:(v-_mn['盈利交易率'])/(_mx['盈利交易率']-_mn['盈利交易率'])*100;h+='<td>'+_bar(_r,v>40?'#27ae60':'#8bc34a',v.toFixed(1)+'%')+'</td>';return;}}
@@ -539,13 +540,14 @@ if(key==='ma'){{h+='<td class="ma-col">'+v+'</td>';return;}}
         h+='<td style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+v.toFixed(2)+'%</span></td>';
         return;
       }}
-      if(key==='dir'){{h+='<td class="'+(v===1?'dir-up':'dir-down')+'">'+(v===1?'↑ 多头':'↓ 空头')+'</td>';return;}}
+      if(key==='dir'){{h+='<td class="ma-col '+(v===1?'dir-up':'dir-down')+'">'+(v===1?'↑ 多头':'↓ 空头')+'</td>';return;}}
       if(key==='signal'){{var _sn=v==='BUY'?'买入':v==='SELL'?'卖出':v==='HOLD'?'持有':'观察';var _sc=v==='BUY'?'tag-buy':v==='SELL'?'tag-sell':v==='HOLD'?'tag-hold':'tag-watch';h+='<td><span class="tag '+_sc+'">'+_sn+'</span></td>';return;}}
-      if(key==='hold_progress'){{var _r=Math.min(v,1)*100;h+='<td>'+_bar(_r,'#2980b9',(v*100).toFixed(2)+'%')+'</td>';return;}}
+      if(key==='hold_progress'){{var _r=Math.min(v,1)*100;h+='<td class="ma-col">'+_bar(_r,'#b0aea5',(v*100).toFixed(2)+'%')+'</td>';return;}}
       if(key==='buy_signal_time'||key==='sell_signal_time'||key==='datetime'){{h+='<td>'+(v||'-')+'</td>';return;}}
-      if(key==='盈利因子'||key==='盈亏比'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}
+      if(key==='盈利因子'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}if(key==='盈亏比'){{h+='<td class="ma-col">'+v.toFixed(2)+'</td>';return;}}
       var _lk={{"所属板块":80,"共振均线列表":50,stock_name:60,"策略表现":30,"回测周期":50,"年化收益率":60}};
-      var _w=_lk[key];if(_w){{h+='<td><span style="display:inline-block;width:'+_w+'px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;" title="'+String(v).replace(/"/g,'&quot;')+'">'+v+'</span></td>';}}else{{h+='<td>'+v+'</td>';}}
+      var _cls=HIDDEN_KEYS.includes(key)?' class="ma-col"':'';
+      var _w=_lk[key];if(_w){{h+='<td'+_cls+'><span style="display:inline-block;width:'+_w+'px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;" title="'+String(v).replace(/"/g,'&quot;')+'">'+v+'</span></td>';}}else{{h+='<td'+_cls+'>'+v+'</td>';}}
     }});
     h+='</tr>';
   }});
