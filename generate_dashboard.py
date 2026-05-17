@@ -259,7 +259,8 @@ tr:hover {{ background:#f5f6fa; }}
 .filter-bar label {{ font-size:13px; color:#666; }}
 .filter-bar select {{ padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px; }}
 .filter-bar input {{ padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px; width:160px; }}
-@media (max-width:768px) {{ .cards {{ grid-template-columns:repeat(2,1fr); }} .grid2 {{ grid-template-columns:1fr; }} }}
+.sig-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; min-width:0; }}
+@media (max-width:768px) {{ .cards {{ grid-template-columns:repeat(2,1fr); }} .grid2 {{ grid-template-columns:1fr; }} .sig-grid {{ grid-template-columns:1fr; }} }}
 .tab-bar {{ display:flex; gap:0; margin-bottom:16px; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.08); }}
 .tab {{ padding:10px 28px; border:none; background:#fff; font-size:14px; cursor:pointer; color:#666; transition:all .2s; }}
 .tab:hover {{ background:#f5f6fa; }}
@@ -346,16 +347,6 @@ function renderBubbleChart(domId) {{
   if(!D.bubble || !D.bubble.length) return;
   var chart = echarts.init(document.getElementById(domId));
 
-  // dataZoom 缩放后根据可见 Y 轴范围重算气泡大小
-  var sizeRange = null;
-  function calcSize(a) {{
-    if(sizeRange) {{
-      var r = sizeRange[1]-sizeRange[0] || 1;
-      return Math.max(8,Math.min(50,8+(a-sizeRange[0])/r*42));
-    }}
-    return Math.max(8,Math.min(50,Math.sqrt(a)*3+8));
-  }}
-
   var sigOrder = ['BUY','SELL','HOLD','WATCH'];
   var seriesData = [];
   sigOrder.forEach(function(sig) {{
@@ -372,13 +363,12 @@ function renderBubbleChart(domId) {{
         if(sz>22) item.label = {{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};
         return item;
       }}),
-      symbolSize:function(d){{return calcSize((d.value||d)[2]);}},
+      symbolSize:function(d){{var a=(d.value||d)[2];return Math.max(8,Math.min(50,Math.sqrt(a)*3+8));}},
       labelLayout:{{hideOverlap:true}},
       itemStyle:{{color:SIG_COLORS[sig],opacity:0.7}}
     }});
   }});
 
-  var allSeries = seriesData;
   if(seriesData.length) {{
     chart.setOption({{
       tooltip:{{formatter:function(p){{var v=p.value||p.data;return (v[4]||v[3])+' ('+v[3]+')<br/>评分: '+v[0]+'<br/>涨跌幅: '+v[1].toFixed(2)+'%<br/>'+p.seriesName;}}}},
@@ -394,14 +384,6 @@ function renderBubbleChart(domId) {{
       series:seriesData
     }});
   }}
-  // 缩放后重算气泡大小（基于可见范围）
-  chart.on('datazoom',function(){{
-    try {{
-      var ext = chart.getModel().getComponent('yAxis').axis.scale.getExtent();
-      sizeRange = [ext[0], ext[1]];
-      chart.setOption({{series:allSeries.map(function(s){{return {{data:s.data.map(function(it){{var c={{value:it.value.slice()}};var newSz=calcSize(c.value[2]);if(newSz>22)c.label={{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};return c;}})}};}})}});
-    }} catch(e){{}}
-  }});
   window.addEventListener('resize',function(){{chart.resize();}});
   return chart;
 }}
@@ -454,7 +436,7 @@ function _renderSigTableBody(sig) {{
   document.getElementById('sigBody-' + sig).innerHTML = h;
 }}
 function renderSignalSections() {{
-  var h = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;min-width:0;">';
+  var h = '<div class="sig-grid">';
   ['BUY','SELL','HOLD','WATCH'].forEach(function(sig){{
     var sec = D.signal_sections[sig];
     if (!sec || !sec.rows.length) {{ var c0=sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6'; h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+c0+'"><h3>'+SIG_NAMES[sig]+'信号 <span style="color:'+c0+'">0</span></h3><p style="color:#aaa;font-size:13px;padding:12px 0;">暂无数据</p></div>'; return; }}
