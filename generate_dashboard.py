@@ -474,11 +474,10 @@ function initSigTables() {{
   ['BUY','SELL','HOLD','WATCH'].forEach(function(sig){{ if (sigSort[sig]) _renderSigTableBody(sig); }});
 }}
 
-document.getElementById('tab-dashboard').innerHTML = cardHtml + chartsHtml + renderSignalSections() + '<div class="table-wrap"><h3>信号明细（最新信号/股）</h3><div id="signalTable"></div></div>';
+document.getElementById('tab-dashboard').innerHTML = cardHtml + chartsHtml + renderSignalSections();
 document.getElementById('tab-bubble').innerHTML = D.bubble && D.bubble.length
   ? '<div class="chart-box" style="min-height:calc(100vh - 220px);display:flex;flex-direction:column;"><h3>信号表现图</h3><div id="fullBubbleChart" style="width:100%;flex:1;min-height:400px;"></div></div>'
   : '<div class="chart-box"><h3>信号表现图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无信号表现数据</p></div>';
-renderTable();
 initCharts();
 initSigTables();
 </script>
