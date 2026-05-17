@@ -224,7 +224,7 @@ def generate_html(data):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>低频周K交易策略信号</title>
+<title>低频周K-趋势跟随交易策略信号</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
@@ -290,7 +290,7 @@ tr:hover {{ background:#faf9f5; }}
 </head>
 <body>
 <div class="header">
-  <h1>低频周K交易策略信号</h1>
+  <h1><strong style="font-weight:600;">低频周K趋势跟随</strong>-交易策略信号</h1>
   <p>生成时间: {data["generated_at"]}</p>
 </div>
 <div class="container" style="padding-bottom:32px;">
