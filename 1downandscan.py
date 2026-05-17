@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 import pandas as pd
 import numpy as np
 
@@ -161,6 +162,83 @@ def fetch_weekly(code, start_str, end_str, quote_ctx):
 
 
 # =========================================================
+# Binance 周线数据（替代富途获取 BTC 等加密货币）
+# =========================================================
+def fetch_binance_weekly(code, start_str, end_str):
+    """
+    从 Binance 获取周 K 线数据，返回格式与 fetch_weekly 一致。
+    仅支持 CC.BTCUSD → BTCUSDT。
+    """
+    symbol_map = {
+        "CC.BTCUSD": "BTCUSDT",
+        "CC.BTC": "BTCUSDT",
+        "CC.ETHUSD": "ETHUSDT",
+        "CC.ETH": "ETHUSDT",
+    }
+    binance_symbol = symbol_map.get(code)
+    if binance_symbol is None:
+        print(f"{code} 不支持 Binance 数据源")
+        return pd.DataFrame()
+
+    print(f"  Binance: {binance_symbol} 周线 {start_str} ~ {end_str}")
+
+    base_url = "https://api.binance.com/api/v3/klines"
+    start_ms = int(pd.Timestamp(start_str).timestamp() * 1000)
+    end_ms = int(pd.Timestamp(end_str).timestamp() * 1000)
+
+    all_rows = []
+    current_start = start_ms
+
+    while current_start < end_ms:
+        params = {
+            "symbol": binance_symbol,
+            "interval": "1w",
+            "startTime": current_start,
+            "endTime": end_ms,
+            "limit": 1000,
+        }
+        try:
+            resp = requests.get(base_url, params=params, timeout=15)
+            resp.raise_for_status()
+            klines = resp.json()
+        except Exception as e:
+            print(f"Binance 请求失败: {e}")
+            break
+
+        if not klines:
+            break
+
+        for k in klines:
+            # [0]open_time_ms, [1]open, [2]high, [3]low, [4]close,
+            # [5]volume, [6]close_time, [7]quote_vol, [8]trades, ...
+            all_rows.append({
+                "code": code,
+                "time_key": pd.Timestamp(k[0], unit="ms"),  # ms -> datetime
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]),
+                "turnover": float(k[7]),     # quote asset volume
+            })
+
+        # 下一页从最后一条的 close_time 开始
+        current_start = klines[-1][6] + 1
+
+        if len(klines) < 1000:
+            break
+
+        print(f"  Binance 分页: 已获取 {len(all_rows)} 条")
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    print(f"  Binance: 共获取 {len(all_rows)} 条周线数据")
+
+    return pd.DataFrame(all_rows)
+
+
+# =========================================================
 # 保存数据
 # =========================================================
 def save_data(df, code):
@@ -289,10 +367,14 @@ def save_stock_plates(df):
 def run_plate_sync():
     """同步所有股票的板块信息"""
     symbols = load_symbols(SYMBOL_FILE)
-    print(f"\n开始同步 {len(symbols)} 只股票的板块信息...")
+    stock_symbols = [c for c in symbols if not c.startswith("CC.")]
+    if not stock_symbols:
+        print("无可同步板块信息的标的，跳过")
+        return
+    print(f"\n开始同步 {len(stock_symbols)} 只股票的板块信息...")
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
     try:
-        df = fetch_all_stock_plates(symbols, quote_ctx)
+        df = fetch_all_stock_plates(stock_symbols, quote_ctx)
         save_stock_plates(df)
     finally:
         quote_ctx.close()
@@ -309,7 +391,8 @@ def run_download():
 
     end_str = datetime.now().strftime("%Y-%m-%d")
 
-    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+    non_crypto = [c for c in symbols if not c.startswith("CC.")]
+    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111) if non_crypto else None
 
     for i, code in enumerate(symbols, 1):
 
@@ -324,11 +407,16 @@ def run_download():
         print("开始日期:", start_str)
         print("结束日期:", end_str)
 
-        df = fetch_weekly(code, start_str, end_str, quote_ctx)
+        if code.startswith("CC."):
+            print("  使用 Binance 数据源")
+            df = fetch_binance_weekly(code, start_str, end_str)
+        else:
+            df = fetch_weekly(code, start_str, end_str, quote_ctx)
 
         save_data(df, code)
 
-    quote_ctx.close()
+    if quote_ctx is not None:
+        quote_ctx.close()
 
 
 # =========================================================
