@@ -226,64 +226,62 @@ def generate_html(data):
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#f0f2f5; color:#333; }}
-.header {{ background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460); color:#fff; padding:24px 32px; }}
-.header h1 {{ font-size:22px; font-weight:600; }}
-.header p {{ font-size:13px; opacity:.7; margin-top:4px; }}
-.container {{ margin:0 auto; padding:16px; }}
-.cards {{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }}
-.card {{ background:#fff; border-radius:10px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,.06); }}
-.card .num {{ font-size:32px; font-weight:700; }}
-.card .label {{ font-size:13px; color:#888; margin-top:4px; }}
-.card .num.buy {{ color:#27ae60; }}
-.card .num.sell {{ color:#e74c3c; }}
-.card .num.total {{ color:#2c3e50; }}
-.card .num.stocks {{ color:#95a5a6; }}
+body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#faf9f5; color:#141413; }}
+.header {{ padding:20px 32px; text-align:center; border-bottom:1px solid #e8e6dc; }}
+.header h1 {{ font-size:20px; font-weight:600; color:#141413; }}
+.header p {{ font-size:13px; color:#b0aea5; margin-top:2px; }}
+.container {{ margin:0 auto; padding:20px; }}
+.cards {{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }}
+.card {{ background:#fff; border-radius:8px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.05); }}
+.card .num {{ font-size:28px; font-weight:600; }}
+.card .label {{ font-size:13px; color:#b0aea5; margin-top:4px; }}
+.card .num.buy {{ color:#d97757; }}
+.card .num.sell {{ color:#c62828; }}
+.card .num.total {{ color:#141413; }}
+.card .num.stocks {{ color:#b0aea5; }}
 @media (max-width:768px) {{ .cards {{ grid-template-columns:repeat(2,1fr); }} }}
-.chart-box {{ background:#fff; border-radius:10px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,.06); }}
-.chart-box h3 {{ font-size:14px; color:#555; margin-bottom:8px; }}
+.chart-box {{ background:#fff; border-radius:8px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.05); }}
+.chart-box h3 {{ font-size:14px; color:#141413; margin-bottom:12px; font-weight:500; }}
 .chart {{ width:100%; height:320px; }}
-.table-wrap {{ background:#fff; border-radius:10px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,.06); overflow-x:auto; }}
-.table-wrap h3 {{ font-size:14px; color:#555; margin-bottom:8px; }}
+.table-wrap {{ background:#fff; border-radius:8px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.05); overflow-x:auto; }}
+.table-wrap h3 {{ font-size:14px; color:#141413; margin-bottom:12px; font-weight:500; }}
 table {{ width:100%; border-collapse:collapse; font-size:13px; white-space:nowrap; }}
-th {{ text-align:left; padding:8px 10px; background:#f8f9fa; border-bottom:2px solid #dee2e6; cursor:pointer; user-select:none; }}
-th:hover {{ background:#e9ecef; }}
-thead th {{ position:sticky; top:0; z-index:3; background:#f8f9fa; }}
-td {{ padding:7px 10px; border-bottom:1px solid #eee; }}
-tr:hover {{ background:#f5f6fa; }}
+th {{ text-align:left; padding:8px 12px; background:#faf9f5; border-bottom:1px solid #e8e6dc; cursor:pointer; user-select:none; font-weight:500; color:#141413; }}
+th:hover {{ background:#f0efe9; }}
+thead th {{ position:sticky; top:0; z-index:3; background:#faf9f5; }}
+td {{ padding:7px 12px; border-bottom:1px solid #f0efe9; }}
+tr:hover {{ background:#faf9f5; }}
 .sig-grid td:first-child, .sig-grid th:first-child {{ position:sticky; left:0; z-index:1; background:#fff; }}
 .sig-grid th:first-child {{ z-index:4; }}
-.sig-grid td:first-child {{ box-shadow:1px 0 2px rgba(0,0,0,.08); }}
-.sig-grid tr:hover td:first-child {{ background:#f5f6fa; }}
+.sig-grid td:first-child {{ box-shadow:1px 0 2px rgba(0,0,0,.04); }}
+.sig-grid tr:hover td:first-child {{ background:#faf9f5; }}
 #ovBody td:first-child, #ovBody th:first-child {{ position:sticky; left:0; z-index:1; background:#fff; }}
 #ovBody th:first-child {{ z-index:4; }}
-#ovBody td:first-child {{ box-shadow:1px 0 2px rgba(0,0,0,.08); }}
-.tag {{ display:inline-block; padding:1px 8px; border-radius:4px; font-size:12px; font-weight:600; }}
-.ov-cell {{ max-width:30px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-.ov-cell-wide {{ max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-.tag-buy {{ background:#e8f8e8; color:#27ae60; }}
-.tag-sell {{ background:#fde8e8; color:#e74c3c; }}
-.tag-hold {{ background:#e8f4fd; color:#2980b9; }}
-.tag-watch {{ background:#f0f0f0; color:#95a5a6; }}
-.tag-excellent {{ background:#e8f8e8; color:#27ae60; }}
-.tag-good {{ background:#f1f8e9; color:#558b2f; }}
-.tag-medium {{ background:#f5f5f5; color:#757575; }}
-.tag-poor {{ background:#fff3e0; color:#e65100; }}
-.tag-bad {{ background:#ffebee; color:#c62828; }}
-.dir-up {{ color:#27ae60; }}
-.dir-down {{ color:#e74c3c; }}
+#ovBody td:first-child {{ box-shadow:1px 0 2px rgba(0,0,0,.04); }}
+.tag {{ display:inline-block; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:500; }}
+.tag-buy {{ background:#fef4ee; color:#d97757; }}
+.tag-sell {{ background:#fde8e8; color:#c62828; }}
+.tag-hold {{ background:#eef6fb; color:#5a8db5; }}
+.tag-watch {{ background:#f5f4f0; color:#b0aea5; }}
+.tag-excellent {{ background:#fef4ee; color:#d97757; }}
+.tag-good {{ background:#f5f4f0; color:#8a8865; }}
+.tag-medium {{ background:#f5f4f0; color:#b0aea5; }}
+.tag-poor {{ background:#fff3e0; color:#cc7a4f; }}
+.tag-bad {{ background:#fde8e8; color:#c62828; }}
+.dir-up {{ color:#d97757; }}
+.dir-down {{ color:#c62828; }}
 .filter-bar {{ margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }}
-.filter-bar label {{ font-size:13px; color:#666; }}
-.filter-bar select {{ padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px; }}
-.filter-bar input {{ padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:13px; width:160px; }}
+.filter-bar label {{ font-size:13px; color:#b0aea5; }}
+.filter-bar select {{ padding:5px 10px; border:1px solid #e8e6dc; border-radius:6px; font-size:13px; background:#fff; color:#141413; }}
+.filter-bar input {{ padding:5px 10px; border:1px solid #e8e6dc; border-radius:6px; font-size:13px; width:160px; background:#fff; color:#141413; }}
 	.ma-col {{ display:none; }}
 	.show-ma .ma-col {{ display:table-cell; }}
-.sig-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; min-width:0; }}
+.sig-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; min-width:0; }}
 @media (max-width:768px) {{ .cards {{ grid-template-columns:repeat(2,1fr); }} .grid2 {{ grid-template-columns:1fr; }} .sig-grid {{ grid-template-columns:1fr; }} }}
-.tab-bar {{ display:flex; gap:0; margin-bottom:16px; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.08); }}
-.tab {{ padding:10px 28px; border:none; background:#fff; font-size:14px; cursor:pointer; color:#666; transition:all .2s; }}
-.tab:hover {{ background:#f5f6fa; }}
-.tab.active {{ background:#1a1a2e; color:#fff; font-weight:600; }}
+.tab-bar {{ display:flex; gap:4px; margin:0 auto 20px; padding:4px; background:#f0efe9; border-radius:8px; width:fit-content; }}
+.tab {{ padding:8px 20px; border:none; background:transparent; font-size:14px; cursor:pointer; color:#b0aea5; border-radius:6px; transition:all .2s; font-weight:500; }}
+.tab:hover {{ background:#f5f4f0; color:#141413; }}
+.tab.active {{ background:#fff; color:#141413; }}
 .tab-content {{ display:none; }}
 .tab-content.active {{ display:block; }}
 </style>
