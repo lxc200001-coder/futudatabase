@@ -13,7 +13,10 @@ else:
     _ALT_DIR = os.path.normpath(os.path.join(os.path.expanduser("~"), ".claude", "skills", "futuapi", "scripts"))
     if os.path.isdir(_ALT_DIR):
         sys.path.insert(0, _ALT_DIR)
-from common import create_quote_context, check_ret, safe_close
+    else:
+        print("错误: 未找到 futuapi common 模块，请确认 skills/futuapi/scripts 目录存在", file=sys.stderr)
+        sys.exit(1)
+from common import create_quote_context, check_ret, safe_close  # type: ignore
 
 
 def main():
