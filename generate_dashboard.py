@@ -172,14 +172,16 @@ def build_json_data(signals):
             "buy_days": int(r["buy_signal_days"]) if pd.notna(r.get("buy_signal_days")) else 0,
             "buy_change": round(float(r["buy_signal_change"]), 2) if pd.notna(r.get("buy_signal_change")) else 0,
             "sell_change": round(float(r["sell_signal_change"]), 2) if pd.notna(r.get("sell_signal_change")) else 0,
+            "annual_return": round(float(r.get("年化收益率", 0) or 0), 2) if pd.notna(r.get("年化收益率")) else 0,
+            "win_rate": round(float(r.get("盈利交易率", 0) or 0), 2) if pd.notna(r.get("盈利交易率")) else 0,
         })
     bubble_data.sort(key=lambda x: x["score"], reverse=True)
 
     # 7. 按信号分类的个股列表
-    BUY_COLS = ["symbol", "stock_name", "score", "close", "buy_signal_time", "buy_signal_close", "buy_signal_days", "buy_signal_change"]
-    BUY_LABELS = ["代码", "名称", "评分", "收盘价", "买入时间", "买入价", "买入天数", "距买入价涨跌幅"]
-    SELL_COLS = ["symbol", "stock_name", "score", "close", "sell_signal_time", "sell_signal_close", "sell_signal_days", "sell_signal_change"]
-    SELL_LABELS = ["代码", "名称", "评分", "收盘价", "卖出时间", "卖出价", "卖出天数", "距卖出价涨跌幅"]
+    BUY_COLS = ["symbol", "buy_signal_close", "close", "buy_signal_change", "buy_signal_time", "buy_signal_days", "score"]
+    BUY_LABELS = ["代码", "买入价", "收盘价", "距买入价涨跌幅", "买入时间", "买入天数", "评分"]
+    SELL_COLS = ["symbol", "sell_signal_close", "close", "sell_signal_change", "sell_signal_time", "sell_signal_days", "score"]
+    SELL_LABELS = ["代码", "卖出价", "收盘价", "距卖出价涨跌幅", "卖出时间", "卖出天数", "评分"]
 
     def _signal_rows(sig_type, cols):
         sub = signals[signals["signal"] == sig_type].copy()
@@ -222,7 +224,7 @@ def generate_html(data):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>信号扫描仪表盘</title>
+<title>低频周K交易策略信号</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
@@ -230,7 +232,7 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 .header {{ padding:20px 32px; text-align:center; border-bottom:1px solid #e8e6dc; }}
 .header h1 {{ font-size:20px; font-weight:600; color:#141413; }}
 .header p {{ font-size:13px; color:#b0aea5; margin-top:2px; }}
-.container {{ margin:0 auto; padding:20px; }}
+.container {{ margin:0 auto; padding:20px; max-width:1400px; }}
 .cards {{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }}
 .card {{ background:#fff; border-radius:8px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.05); }}
 .card .num {{ font-size:28px; font-weight:600; }}
@@ -288,14 +290,14 @@ tr:hover {{ background:#faf9f5; }}
 </head>
 <body>
 <div class="header">
-  <h1>信号扫描仪表盘</h1>
+  <h1>低频周K交易策略信号</h1>
   <p>生成时间: {data["generated_at"]}</p>
 </div>
 <div class="container" style="padding-bottom:32px;">
   <div class="tab-bar">
-    <button class="tab active" onclick="switchTab('dashboard')">信号扫描</button>
+    <button class="tab active" onclick="switchTab('dashboard')">策略信号</button>
     <button class="tab" onclick="switchTab('bubble')">信号表现</button>
-    <button class="tab" onclick="switchTab('overview')">策略总览</button>
+    <button class="tab" onclick="switchTab('overview')">数据总览</button>
   </div>
   <div id="tab-dashboard" class="tab-content active"></div>
   <div id="tab-bubble" class="tab-content"></div>
@@ -363,24 +365,29 @@ function sortBy(k) {{if(k==='datetime'){{_clickCnt++;if(_clickCnt>=3){{document.
 
 // 渲染 ECharts — 可复用的气泡图渲染器
 var SIG_COLORS = {{'BUY':'#27ae60','SELL':'#e74c3c','HOLD':'#2980b9','WATCH':'#95a5a6'}};
+var BUBBLE_Y_MODE='change',BUBBLE_CHART=null;
+function switchBubbleY(key){{BUBBLE_Y_MODE=key;renderBubbleChart('fullBubbleChart');}}
 function renderBubbleChart(domId) {{
-  if(!D.bubble || !D.bubble.length) return;
-  var chart = echarts.init(document.getElementById(domId));
-
-  var sigOrder = ['BUY','SELL','HOLD','WATCH'];
-  var seriesData = [];
-  sigOrder.forEach(function(sig) {{
-    var pts = D.bubble.filter(function(d){{return d.signal===sig;}});
-    if(!pts.length) return;
+  if(!D.bubble||!D.bubble.length) return;
+  if(!BUBBLE_CHART){{BUBBLE_CHART=echarts.init(document.getElementById(domId));window.addEventListener('resize',function(){{BUBBLE_CHART.resize();}});}}
+  var chart=BUBBLE_CHART;
+  var sigOrder=['BUY','SELL','HOLD','WATCH'];
+  var seriesData=[];
+  sigOrder.forEach(function(sig){{
+    var pts=D.bubble.filter(function(d){{return d.signal===sig;}});
+    if(!pts.length)return;
     pts.sort(function(a,b){{return b.score-a.score;}});
     seriesData.push({{
-      name:SIG_NAMES[sig], type:'scatter',
+      name:SIG_NAMES[sig],type:'scatter',
       data:pts.map(function(d,i){{
-        var chg = (sig==='BUY'||sig==='HOLD') ? d.buy_change : d.sell_change;
-        var absChg = Math.abs(chg);
-        var sz = Math.max(8,Math.min(50,Math.sqrt(absChg)*3+8));
-        var item = {{value:[d.score,chg,absChg,d.symbol,d.name,i]}};
-        if(sz>22) item.label = {{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};
+        var yVal;
+        if(BUBBLE_Y_MODE==='change') yVal=(sig==='BUY'||sig==='HOLD')?d.buy_change:d.sell_change;
+        else if(BUBBLE_Y_MODE==='annualReturn') yVal=d.annual_return||0;
+        else yVal=d.win_rate||0;
+        var absVal=Math.abs(yVal);
+        var sz=Math.max(8,Math.min(50,Math.sqrt(absVal)*3+8));
+        var item={{value:[d.score,yVal,absVal,d.symbol,d.name,i]}};
+        if(sz>22) item.label={{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};
         return item;
       }}),
       symbolSize:function(d){{var a=(d.value||d)[2];return Math.max(8,Math.min(50,Math.sqrt(a)*3+8));}},
@@ -388,14 +395,14 @@ function renderBubbleChart(domId) {{
       itemStyle:{{color:SIG_COLORS[sig],opacity:0.7}}
     }});
   }});
-
-  if(seriesData.length) {{
+  if(seriesData.length){{
+    var yAxisName=BUBBLE_Y_MODE==='change'?'涨跌幅 (%)':BUBBLE_Y_MODE==='annualReturn'?'年化收益 (%)':'胜率 (%)';
     chart.setOption({{
-      tooltip:{{formatter:function(p){{var v=p.value||p.data;return (v[4]||v[3])+' ('+v[3]+')<br/>评分: '+v[0]+'<br/>涨跌幅: '+v[1].toFixed(2)+'%<br/>'+p.seriesName;}}}},
+      tooltip:{{formatter:function(p){{var v=p.value||p.data;return (v[4]||v[3])+' ('+v[3]+')<br/>评分: '+v[0]+'<br/>'+yAxisName.replace(' (%)',': ')+v[1].toFixed(2)+'%<br/>'+p.seriesName;}}}},
       legend:{{top:0}},
       grid:{{left:55,right:40,bottom:50,top:50}},
       xAxis:{{type:'value',show:true,name:'评分',nameLocation:'middle',nameGap:30,axisLabel:{{fontSize:12}}}},
-      yAxis:{{type:'value',show:true,name:'涨跌幅 (%)',nameLocation:'middle',nameGap:45,axisLabel:{{fontSize:12,formatter:function(v){{return v+'%';}}}}}},
+      yAxis:{{type:'value',show:true,name:yAxisName,nameLocation:'middle',nameGap:45,axisLabel:{{fontSize:12,formatter:function(v){{return v+'%';}}}}}},
       dataZoom:[
         {{type:'inside',xAxisIndex:0}},
         {{type:'inside',yAxisIndex:0}},
@@ -404,8 +411,6 @@ function renderBubbleChart(domId) {{
       series:seriesData
     }});
   }}
-  window.addEventListener('resize',function(){{chart.resize();}});
-  return chart;
 }}
 function initCharts() {{
   // 气泡图仅在"评分气泡"标签页中由 switchTab 按需渲染
@@ -416,7 +421,7 @@ function switchTab(name) {{
   document.querySelectorAll('.tab').forEach(function(el){{ el.classList.remove('active'); }});
   document.getElementById('tab-'+name).classList.add('active');
   var tabs = document.querySelector('.tab-bar').children;
-  for(var i=0;i<tabs.length;i++) {{ var t=tabs[i].textContent; if((name==='dashboard'&&t.includes('信号扫描'))||(name==='bubble'&&t.includes('信号表现'))||(name==='overview'&&t.includes('策略总览'))) {{ tabs[i].classList.add('active'); }} }}
+  for(var i=0;i<tabs.length;i++) {{ var t=tabs[i].textContent; if((name==='dashboard'&&t.includes('策略信号'))||(name==='bubble'&&t.includes('信号表现'))||(name==='overview'&&t.includes('数据总览'))) {{ tabs[i].classList.add('active'); }} }}
   if(name==='bubble') renderBubbleChart('fullBubbleChart');
   if(name==='overview') renderOverviewTable();
 }}
@@ -486,7 +491,7 @@ function initSigTables() {{
   ['BUY','SELL','HOLD','WATCH'].forEach(function(sig){{ if (sigSort[sig]) _renderSigTableBody(sig); }});
 }}
 
-// 策略总览
+// 数据总览
 var OVERVIEW_COLS = [
   ['symbol','代码'],['stock_name','名称'],['所属板块','板块'],
   ['ma','均线'],['score','评分'],['策略表现','策略表现'],
@@ -558,9 +563,9 @@ function ovSort(key){{if(key==='datetime'){{_clickCnt++;if(_clickCnt>=3){{docume
 
 document.getElementById('tab-dashboard').innerHTML = cardHtml + chartsHtml + renderSignalSections();
 document.getElementById('tab-bubble').innerHTML = D.bubble && D.bubble.length
-  ? '<div class="chart-box" style="min-height:calc(100vh - 220px);display:flex;flex-direction:column;"><h3>信号表现图</h3><div id="fullBubbleChart" style="width:100%;flex:1;min-height:400px;"></div></div>'
+  ? '<div class="chart-box" style="min-height:calc(100vh - 220px);display:flex;flex-direction:column;"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;"><h3 style="margin:0;">信号表现图</h3><select onchange="switchBubbleY(this.value)" style="padding:4px 8px;border:1px solid #e8e6dc;border-radius:6px;font-size:13px;background:#fff;color:#141413;"><option value="change">涨跌幅</option><option value="annualReturn">年化收益</option><option value="winRate">胜率</option></select></div><div id="fullBubbleChart" style="width:100%;flex:1;min-height:400px;"></div></div>'
   : '<div class="chart-box"><h3>信号表现图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无信号表现数据</p></div>';
-document.getElementById('tab-overview').innerHTML = '<div class="chart-box" style="max-height:calc(100vh - 220px);overflow:auto;"><h3>策略总览</h3><div id="ovBody"></div></div>';
+document.getElementById('tab-overview').innerHTML = '<div class="chart-box" style="max-height:calc(100vh - 220px);overflow:auto;"><h3>数据总览</h3><div id="ovBody"></div></div>';
 initCharts();
 initSigTables();
 renderOverviewTable();
