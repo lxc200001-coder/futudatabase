@@ -276,7 +276,7 @@ tr:hover {{ background:#f5f6fa; }}
 <div class="container" style="padding-bottom:32px;">
   <div class="tab-bar">
     <button class="tab active" onclick="switchTab('dashboard')">信号扫描</button>
-    <button class="tab" onclick="switchTab('bubble')">评分气泡</button>
+    <button class="tab" onclick="switchTab('bubble')">信号表现</button>
   </div>
   <div id="tab-dashboard" class="tab-content active"></div>
   <div id="tab-bubble" class="tab-content"></div>
@@ -346,6 +346,16 @@ function renderBubbleChart(domId) {{
   if(!D.bubble || !D.bubble.length) return;
   var chart = echarts.init(document.getElementById(domId));
 
+  // dataZoom 缩放后根据可见 Y 轴范围重算气泡大小
+  var sizeRange = null;
+  function calcSize(a) {{
+    if(sizeRange) {{
+      var r = sizeRange[1]-sizeRange[0] || 1;
+      return Math.max(8,Math.min(50,8+(a-sizeRange[0])/r*42));
+    }}
+    return Math.max(8,Math.min(50,Math.sqrt(a)*3+8));
+  }}
+
   var sigOrder = ['BUY','SELL','HOLD','WATCH'];
   var seriesData = [];
   sigOrder.forEach(function(sig) {{
@@ -358,16 +368,17 @@ function renderBubbleChart(domId) {{
         var chg = (sig==='BUY'||sig==='HOLD') ? d.buy_change : d.sell_change;
         var absChg = Math.abs(chg);
         var sz = Math.max(8,Math.min(50,Math.sqrt(absChg)*3+8));
-        var item = {{value:[d.score,chg,absChg,d.symbol,d.name]}};
-        if(i<3 && sz>22) item.label = {{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};
+        var item = {{value:[d.score,chg,absChg,d.symbol,d.name,i]}};
+        if(sz>22) item.label = {{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};
         return item;
       }}),
-      symbolSize:function(d){{var a=(d.value||d)[2];return Math.max(8,Math.min(50,Math.sqrt(a)*3+8));}},
+      symbolSize:function(d){{return calcSize((d.value||d)[2]);}},
       labelLayout:{{hideOverlap:true}},
       itemStyle:{{color:SIG_COLORS[sig],opacity:0.7}}
     }});
   }});
 
+  var allSeries = seriesData;
   if(seriesData.length) {{
     chart.setOption({{
       tooltip:{{formatter:function(p){{var v=p.value||p.data;return (v[4]||v[3])+' ('+v[3]+')<br/>评分: '+v[0]+'<br/>涨跌幅: '+v[1].toFixed(2)+'%<br/>'+p.seriesName;}}}},
@@ -383,6 +394,14 @@ function renderBubbleChart(domId) {{
       series:seriesData
     }});
   }}
+  // 缩放后重算气泡大小（基于可见范围）
+  chart.on('datazoom',function(){{
+    try {{
+      var ext = chart.getModel().getComponent('yAxis').axis.scale.getExtent();
+      sizeRange = [ext[0], ext[1]];
+      chart.setOption({{series:allSeries.map(function(s){{return {{data:s.data.map(function(it){{var c={{value:it.value.slice()}};var newSz=calcSize(c.value[2]);if(newSz>22)c.label={{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};return c;}})}};}})}});
+    }} catch(e){{}}
+  }});
   window.addEventListener('resize',function(){{chart.resize();}});
   return chart;
 }}
@@ -457,8 +476,8 @@ function initSigTables() {{
 
 document.getElementById('tab-dashboard').innerHTML = cardHtml + chartsHtml + renderSignalSections() + '<div class="table-wrap"><h3>信号明细（最新信号/股）</h3><div id="signalTable"></div></div>';
 document.getElementById('tab-bubble').innerHTML = D.bubble && D.bubble.length
-  ? '<div class="chart-box" style="min-height:calc(100vh - 220px);display:flex;flex-direction:column;"><h3>评分气泡图</h3><div id="fullBubbleChart" style="width:100%;flex:1;min-height:400px;"></div></div>'
-  : '<div class="chart-box"><h3>评分气泡图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无气泡图数据</p></div>';
+  ? '<div class="chart-box" style="min-height:calc(100vh - 220px);display:flex;flex-direction:column;"><h3>信号表现图</h3><div id="fullBubbleChart" style="width:100%;flex:1;min-height:400px;"></div></div>'
+  : '<div class="chart-box"><h3>信号表现图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无信号表现数据</p></div>';
 renderTable();
 initCharts();
 initSigTables();
