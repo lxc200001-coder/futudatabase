@@ -1556,8 +1556,8 @@ def sync_futu_groups(excel_path):
     latest_idx = signal_df.groupby("股票代码")["时间"].transform("max") == signal_df["时间"]
     latest_signals = signal_df[latest_idx].set_index("股票代码")["信号"].to_dict()
 
-    # 全部股票列表
-    all_stocks = set(load_symbols(SYMBOL_FILE))
+    # 全部股票列表（过滤掉无权限的加密货币）
+    all_stocks = {c for c in load_symbols(SYMBOL_FILE) if not c.startswith("CC.")}
 
     # 构建主分组预期股票集合
     expected_map = {"量化监控": all_stocks}
