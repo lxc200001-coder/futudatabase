@@ -159,23 +159,19 @@ def build_json_data(signals):
     else:
         timeline_json = {"dates": [], "counts": []}
 
-    # 6. 评分气泡图（按信号类型筛选，按评分降序）
+    # 6. 评分气泡图（全部有评分的个股，颜色区分信号类型）
     bubble_data = []
     per_stock = signals.loc[signals.groupby("symbol")["datetime"].idxmax()]
     scored = per_stock[per_stock["score"].notna()]
-    # BUY/SELL: 全部显示, HOLD: 买入天数前30, WATCH: 不显示
-    buy_sell = scored[scored["signal"].isin(["BUY", "SELL"])]
-    hold = scored[scored["signal"] == "HOLD"].copy()
-    if not hold.empty and "buy_signal_days" in hold.columns:
-        hold = hold.sort_values("buy_signal_days", ascending=True).head(10)
-    watch = pd.DataFrame()  # 不显示观察信号
-    combined = pd.concat([buy_sell, hold, watch])
-    for _, r in combined.iterrows():
+    for _, r in scored.iterrows():
         bubble_data.append({
             "symbol": str(r.get("symbol", "")),
             "name": str(r.get("stock_name", "")) if pd.notna(r.get("stock_name")) else "",
             "score": round(float(r["score"]), 1),
             "signal": str(r.get("signal", "")),
+            "buy_days": int(r["buy_signal_days"]) if pd.notna(r.get("buy_signal_days")) else 0,
+            "buy_change": round(float(r["buy_signal_change"]), 2) if pd.notna(r.get("buy_signal_change")) else 0,
+            "sell_change": round(float(r["sell_signal_change"]), 2) if pd.notna(r.get("sell_signal_change")) else 0,
         })
     bubble_data.sort(key=lambda x: x["score"], reverse=True)
 
@@ -349,8 +345,8 @@ var SIG_COLORS = {{'BUY':'#27ae60','SELL':'#e74c3c','HOLD':'#2980b9','WATCH':'#9
 function renderBubbleChart(domId) {{
   if(!D.bubble || !D.bubble.length) return;
   var chart = echarts.init(document.getElementById(domId));
-  var xBase = {{BUY:0,SELL:1,HOLD:2}};
-  var sigOrder = ['BUY','SELL','HOLD'];
+
+  var sigOrder = ['BUY','SELL','HOLD','WATCH'];
   var seriesData = [];
   sigOrder.forEach(function(sig) {{
     var pts = D.bubble.filter(function(d){{return d.signal===sig;}});
@@ -359,20 +355,31 @@ function renderBubbleChart(domId) {{
     seriesData.push({{
       name:SIG_NAMES[sig], type:'scatter',
       data:pts.map(function(d,i){{
-        var spread = pts.length>1?(i/(pts.length-1)-0.5)*0.4:0;
-        return{{value:[xBase[sig]+spread,d.score,d.score,d.symbol,d.name],label:{{show:i<3,formatter:'{{@3}}',fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}}}};
+        var chg = (sig==='BUY'||sig==='HOLD') ? d.buy_change : d.sell_change;
+        var absChg = Math.abs(chg);
+        var sz = Math.max(8,Math.min(50,Math.sqrt(absChg)*3+8));
+        var item = {{value:[d.score,chg,absChg,d.symbol,d.name]}};
+        if(i<3 && sz>22) item.label = {{show:true,formatter:function(p){{return (p.value[3]||'').replace(/^(US\\.|CC\\.)/,'');}},fontSize:11,fontWeight:'bold',color:'#fff',position:'inside'}};
+        return item;
       }}),
-      symbolSize:function(d){{return Math.max(12,Math.min(60,d[2]*0.65));}},
-      itemStyle:{{color:SIG_COLORS[sig]}}
+      symbolSize:function(d){{var a=(d.value||d)[2];return Math.max(8,Math.min(50,Math.sqrt(a)*3+8));}},
+      labelLayout:{{hideOverlap:true}},
+      itemStyle:{{color:SIG_COLORS[sig],opacity:0.7}}
     }});
   }});
+
   if(seriesData.length) {{
     chart.setOption({{
-      tooltip:{{formatter:function(p){{var d=p.data;return d[3]+' ('+d[4]+')<br/>评分: '+d[1]+'<br/>'+p.seriesName;}}}},
-      legend:{{data:sigOrder.map(function(s){{return SIG_NAMES[s];}}), top:0}},
-      grid:{{left:20,right:20,bottom:30,top:40}},
-      xAxis:{{type:'value',show:true,min:-0.3,max:2.3,axisTick:{{show:false}},axisLine:{{show:false}},splitLine:{{show:false}},axisLabel:{{formatter:function(v){{if(Math.abs(v-0)<0.1)return SIG_NAMES.BUY;if(Math.abs(v-1)<0.1)return SIG_NAMES.SELL;if(Math.abs(v-2)<0.1)return SIG_NAMES.HOLD;return'';}},fontSize:13,fontWeight:'bold'}}}},
-      yAxis:{{type:'value',show:false}},
+      tooltip:{{formatter:function(p){{var v=p.value||p.data;return (v[4]||v[3])+' ('+v[3]+')<br/>评分: '+v[0]+'<br/>涨跌幅: '+v[1].toFixed(2)+'%<br/>'+p.seriesName;}}}},
+      legend:{{top:0}},
+      grid:{{left:55,right:40,bottom:50,top:50}},
+      xAxis:{{type:'value',show:true,name:'评分',nameLocation:'middle',nameGap:30,axisLabel:{{fontSize:12}}}},
+      yAxis:{{type:'value',show:true,name:'涨跌幅 (%)',nameLocation:'middle',nameGap:45,axisLabel:{{fontSize:12,formatter:function(v){{return v+'%';}}}}}},
+      dataZoom:[
+        {{type:'inside',xAxisIndex:0}},
+        {{type:'inside',yAxisIndex:0}},
+        {{type:'slider',xAxisIndex:0,height:20,bottom:5,showDataShadow:false,borderColor:'#ddd',fillerColor:'rgba(60,140,220,0.15)'}}
+      ],
       series:seriesData
     }});
   }}
@@ -450,7 +457,7 @@ function initSigTables() {{
 
 document.getElementById('tab-dashboard').innerHTML = cardHtml + chartsHtml + renderSignalSections() + '<div class="table-wrap"><h3>信号明细（最新信号/股）</h3><div id="signalTable"></div></div>';
 document.getElementById('tab-bubble').innerHTML = D.bubble && D.bubble.length
-  ? '<div class="chart-box" style="min-height:600px;"><h3>评分气泡图</h3><div id="fullBubbleChart" style="width:100%;height:600px;"></div></div>'
+  ? '<div class="chart-box" style="min-height:calc(100vh - 220px);display:flex;flex-direction:column;"><h3>评分气泡图</h3><div id="fullBubbleChart" style="width:100%;flex:1;min-height:400px;"></div></div>'
   : '<div class="chart-box"><h3>评分气泡图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无气泡图数据</p></div>';
 renderTable();
 initCharts();
