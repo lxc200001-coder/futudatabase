@@ -250,6 +250,10 @@ th {{ text-align:left; padding:8px 10px; background:#f8f9fa; border-bottom:2px s
 th:hover {{ background:#e9ecef; }}
 td {{ padding:7px 10px; border-bottom:1px solid #eee; }}
 tr:hover {{ background:#f5f6fa; }}
+.sig-grid td:first-child, .sig-grid th:first-child {{ position:sticky; left:0; z-index:1; background:#fff; }}
+.sig-grid th:first-child {{ z-index:2; }}
+.sig-grid td:first-child {{ box-shadow:1px 0 2px rgba(0,0,0,.08); }}
+.sig-grid tr:hover td:first-child {{ background:#f5f6fa; }}
 .tag {{ display:inline-block; padding:1px 8px; border-radius:4px; font-size:12px; font-weight:600; }}
 .tag-buy {{ background:#e8f8e8; color:#27ae60; }}
 .tag-sell {{ background:#fde8e8; color:#e74c3c; }}
@@ -425,7 +429,14 @@ function _renderSigTableBody(sig) {{
       var v = r[c];
       if (c === 'close' || c === 'buy_signal_close' || c === 'sell_signal_close') v = v != null ? v.toFixed(2) : '-';
       else if (c === 'score') v = v != null ? v.toFixed(1) : '-';
-      else if (c === 'buy_signal_change' || c === 'sell_signal_change') v = v != null ? Number(v).toFixed(2) + '%' : '-';
+      else if (c === 'buy_signal_change' || c === 'sell_signal_change') {{
+        if (v == null) {{ v = '-'; }}
+        else {{
+          var _nv=Number(v);
+          var _pct=Math.min(Math.abs(_nv),50)/50*100;var _cl=_nv>=0?'#27ae60':'#e74c3c';var _pm=_nv>0?'+':(_nv<0?'':'+');
+          v='<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+_nv.toFixed(2)+'%</span>';
+        }}
+      }}
       else if (c === 'buy_signal_time' || c === 'sell_signal_time') v = v || '-';
       else if (c === 'stock_name') {{ v = v || '-'; h += '<td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+v+'">'+v+'</td>'; return; }}
       else v = v != null ? v : '-';
