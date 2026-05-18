@@ -1698,6 +1698,53 @@ def sync_futu_groups(excel_path):
 
     print("分组同步完成")
 
+    # 生成交易记录缓存（供仪表盘使用）
+    _build_trade_cache()
+
+
+def _build_trade_cache():
+    """扫描所有个股交易xlsx，按最终选择均线周期过滤后合并为all_trades.parquet"""
+    summary_path = os.path.join(TRADE_DIR, "all_summary.xlsx")
+    if not os.path.exists(summary_path):
+        print(f"未找到 {summary_path}，跳过缓存生成")
+        return
+    # 读取信号扫描sheet获取每只股票的最终选择均线周期
+    sel_ma = pd.read_excel(summary_path, sheet_name="信号扫描", usecols=["股票代码", "均线周期"])
+    sel_ma = dict(zip(sel_ma["股票代码"], sel_ma["均线周期"]))
+
+    cache_path = os.path.join(TRADE_DIR, "all_trades.parquet")
+    records = []
+    for f in os.listdir(TRADE_DIR):
+        if not f.endswith("_trades.xlsx"):
+            continue
+        symbol = f.replace("_trades.xlsx", "")
+        fpath = os.path.join(TRADE_DIR, f)
+        try:
+            xl = pd.ExcelFile(fpath)
+            for sn in xl.sheet_names:
+                tmp = pd.read_excel(fpath, sheet_name=sn, nrows=0)
+                if "开仓时间" in tmp.columns:
+                    trades = pd.read_excel(fpath, sheet_name=sn)
+                    # 过滤强制结算（不计入正常平仓标记）
+                    if "交易状态" in trades.columns:
+                        trades = trades[trades["交易状态"] != "未平仓(强制结算)"]
+                    # 按最终选择均线周期过滤
+                    ma = sel_ma.get(symbol)
+                    if ma is not None:
+                        trades = trades[trades["均线周期"] == ma]
+                    trades["股票代码"] = symbol
+                    records.append(trades)
+                    break
+        except Exception:
+            continue
+    if not records:
+        return
+    all_trades = pd.concat(records, ignore_index=True)
+    keep = ["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"]
+    all_trades = all_trades[[c for c in keep if c in all_trades.columns]]
+    all_trades.to_parquet(cache_path, index=False)
+    print(f"交易记录缓存已生成: {cache_path} ({len(all_trades)} 条)")
+
 
 def _to_tv_code(code):
     """转换股票代码为TradingView兼容格式"""

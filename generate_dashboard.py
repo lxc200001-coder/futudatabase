@@ -130,42 +130,15 @@ def _js(val):
 
 
 def _load_trade_cache():
-    """读取/构建统一交易记录缓存（避免逐个读取 xlsx）"""
+    """读取交易记录缓存（由回测脚本生成）"""
     cache_path = "trades/all_trades.parquet"
     if os.path.exists(cache_path):
         return pd.read_parquet(cache_path)
-
-    records = []
-    for f in os.listdir("trades"):
-        if not f.endswith("_trades.xlsx"):
-            continue
-        symbol = f.replace("_trades.xlsx", "")
-        fpath = os.path.join("trades", f)
-        try:
-            xl = pd.ExcelFile(fpath)
-            for sn in xl.sheet_names:
-                tmp = pd.read_excel(fpath, sheet_name=sn, nrows=0)
-                if "开仓时间" in tmp.columns:
-                    trades = pd.read_excel(fpath, sheet_name=sn)
-                    trades["股票代码"] = symbol
-                    records.append(trades)
-                    break
-        except Exception:
-            continue
-    if not records:
-        return pd.DataFrame(columns=["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"])
-    all_trades = pd.concat(records, ignore_index=True)
-    # 只保留需要的列
-    keep = ["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"]
-    all_trades = all_trades[[c for c in keep if c in all_trades.columns]]
-    all_trades.to_parquet(cache_path, index=False)
-    print(f"  交易记录缓存已生成: {cache_path} ({len(all_trades)} 条)")
-    return all_trades
+    return pd.DataFrame(columns=["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"])
 
 
-def load_kline_map(symbols, selected_ma=None):
-    """加载个股周K线数据，从回测交易记录提取开平仓位置，返回K线+信号标记
-    selected_ma: {symbol: ma_period} 按选定均线周期过滤交易"""
+def load_kline_map(symbols):
+    """加载个股周K线数据，从回测交易记录提取开平仓位置，返回K线+信号标记"""
     all_trades = _load_trade_cache()
     kline_map = {}
     for symbol in symbols:
@@ -177,12 +150,9 @@ def load_kline_map(symbols, selected_ma=None):
         dates = df["datetime"].dt.strftime("%Y-%m-%d").tolist()
         date_set = set(dates)
 
-        # 从缓存中过滤该股票+选定均线周期的交易记录
+        # 从缓存中过滤该股票的交易记录
         buy_coords, sell_coords = [], []
         sym_trades = all_trades[all_trades["股票代码"] == symbol]
-        ma_val = selected_ma.get(symbol) if selected_ma else None
-        if ma_val is not None:
-            sym_trades = sym_trades[sym_trades["均线周期"] == ma_val]
 
         for _, row in sym_trades.iterrows():
             open_str = pd.Timestamp(row["开仓时间"]).strftime("%Y-%m-%d")
@@ -278,8 +248,7 @@ def build_json_data(signals):
 
     # 8. 个股周K线数据
     symbols = signals["symbol"].unique().tolist()
-    selected_ma = {r["symbol"]: r["ma"] for _, r in latest.iterrows()}
-    kline_map = load_kline_map(symbols, selected_ma)
+    kline_map = load_kline_map(symbols)
 
     # 9. 个股收盘价数据（信号表格下的迷你走势图，最近3年）
     price_map = {}
