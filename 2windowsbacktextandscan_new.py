@@ -105,6 +105,8 @@ def apply_cn_mapping(df):
         df["趋势方向"] = df["趋势方向"].map(DIR_MAP)
     if "信号" in df.columns:
         df["信号"] = df["信号"].map(SIG_MAP)
+    if "最新信号" in df.columns:
+        df["最新信号"] = df["最新信号"].map(SIG_MAP)
 
 
 BAR_INTERVAL = "1W"
@@ -190,14 +192,70 @@ def get_last_signal_info(df):
         sell_days = None
 
     last = df.iloc[-1]
+    last_close = round(float(last["close"]), 2)
+
+    # 取最后一次信号（买入或卖出，取较晚的那次）
+    hist_signal = None
+    hist_time = pd.NaT
+    hist_close = None
+    hist_days = None
+    if len(buy_rows) > 0 and len(sell_rows) > 0:
+        lb = pd.to_datetime(buy_rows.iloc[-1]["datetime"])
+        ls = pd.to_datetime(sell_rows.iloc[-1]["datetime"])
+        if lb >= ls:
+            hist_signal = "买入"
+            hist_time = lb
+            hist_close = round(float(buy_rows.iloc[-1]["close"]), 2)
+        else:
+            hist_signal = "卖出"
+            hist_time = ls
+            hist_close = round(float(sell_rows.iloc[-1]["close"]), 2)
+    elif len(buy_rows) > 0:
+        hist_signal = "买入"
+        hist_time = pd.to_datetime(buy_rows.iloc[-1]["datetime"])
+        hist_close = round(float(buy_rows.iloc[-1]["close"]), 2)
+    elif len(sell_rows) > 0:
+        hist_signal = "卖出"
+        hist_time = pd.to_datetime(sell_rows.iloc[-1]["datetime"])
+        hist_close = round(float(sell_rows.iloc[-1]["close"]), 2)
+
+    # 若选出的历史信号未确认（<5天），回退到上一次已确认的信号
+    if hist_signal is not None:
+        _hd = (today - hist_time.normalize()).days
+        if _hd < 5:
+            _cutoff = today - pd.Timedelta(days=5)
+            _cb = buy_rows[pd.to_datetime(buy_rows["datetime"]).dt.normalize() <= _cutoff]
+            _cs = sell_rows[pd.to_datetime(sell_rows["datetime"]).dt.normalize() <= _cutoff]
+            if len(_cs) > 0 and (len(_cb) == 0 or pd.to_datetime(_cs.iloc[-1]["datetime"]) >= pd.to_datetime(_cb.iloc[-1]["datetime"])):
+                hist_signal = "卖出"
+                hist_time = pd.to_datetime(_cs.iloc[-1]["datetime"])
+                hist_close = round(float(_cs.iloc[-1]["close"]), 2)
+            elif len(_cb) > 0:
+                hist_signal = "买入"
+                hist_time = pd.to_datetime(_cb.iloc[-1]["datetime"])
+                hist_close = round(float(_cb.iloc[-1]["close"]), 2)
+            else:
+                hist_signal = None
+                hist_time = pd.NaT
+                hist_close = None
+
+    if hist_signal is not None:
+        hist_days = (today - hist_time.normalize()).days
+        hist_change = round((last_close - hist_close) / hist_close * 100, 2) if hist_close else None
+        hist_daily = round(hist_change / hist_days, 2) if hist_days and hist_days > 0 else None
+    else:
+        hist_change = None
+        hist_daily = None
 
     return {
         "时间": last["datetime"],
-        "收盘价": round(float(last["close"]), 2),
+        "收盘价": last_close,
         "HA收盘价": round(float(last["ha_close"]), 2),
         "HA均线值": round(float(last["ma"]), 2) if not pd.isna(last["ma"]) else None,
         "趋势方向": int(last["dir"]),
-        "信号": signal,
+        "最新信号": signal,
+        "最新信号时间": last["datetime"],
+        "最新信号收盘价": last_close,
 
         "买入信号时间": buy_time,
         "买入信号收盘价": buy_close,
@@ -205,7 +263,14 @@ def get_last_signal_info(df):
 
         "卖出信号时间": sell_time,
         "卖出信号收盘价": sell_close,
-        "距离卖出信号已过天数": sell_days
+        "距离卖出信号已过天数": sell_days,
+
+        "历史信号": hist_signal,
+        "历史信号时间": hist_time,
+        "历史信号收盘价": hist_close,
+        "距离历史信号已过天数": hist_days,
+        "距离历史信号收盘价涨跌幅": hist_change,
+        "持仓日化收益率": hist_daily,
     }
 
 # =========================================================
@@ -804,6 +869,13 @@ def _process_one_stock(code):
             summary.update(signal_info)
 
             summary["综合评分"] = calc_score_row(summary)
+            # 预计持仓进度
+            avg_hold = summary.get("平均持仓天数", 0)
+            hist_d = summary.get("距离历史信号已过天数")
+            if summary.get("历史信号") == "买入" and avg_hold and avg_hold > 0 and hist_d is not None:
+                summary["预计持仓进度"] = round(hist_d / avg_hold, 4)
+            else:
+                summary["预计持仓进度"] = None
             summary["回测类型"] = "全量"
             summary["窗口"] = "FULL"
 
@@ -1168,44 +1240,7 @@ def run_trade():
                 by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
             signal_df = pd.concat([_bull, _bear], ignore_index=True)
 
-            # 信号扫描新增字段：距离买入/卖出信号收盘价涨跌幅
-            signal_df["距离买入信号收盘价涨跌幅"] = signal_df.apply(
-                lambda r: round((r["收盘价"] - r["买入信号收盘价"]) / r["买入信号收盘价"] * 100, 2)
-                if pd.notna(r.get("买入信号收盘价")) and r["买入信号收盘价"] != 0 else None,
-                axis=1
-            )
-            signal_df["距离卖出信号收盘价涨跌幅"] = signal_df.apply(
-                lambda r: round((r["收盘价"] - r["卖出信号收盘价"]) / r["卖出信号收盘价"] * 100, 2)
-                if pd.notna(r.get("卖出信号收盘价")) and r["卖出信号收盘价"] != 0 else None,
-                axis=1
-            )
-            # 持仓日化收益率（仅多头，除零保护）
-            signal_df["持仓日化收益率"] = signal_df.apply(
-                lambda r: round(r["距离买入信号收盘价涨跌幅"] / r["距离买入信号已过天数"], 2)
-                if pd.notna(r.get("距离买入信号收盘价涨跌幅"))
-                   and r.get("距离买入信号已过天数", 0) > 0
-                   and r["趋势方向"] == 1
-                else None,
-                axis=1
-            )
-            # 预计持仓进度 = 距离买入信号已过天数 / 平均持仓天数（仅多头时计算）
-            signal_df["预计持仓进度"] = signal_df.apply(
-                lambda r: round(r["距离买入信号已过天数"] / r["平均持仓天数"], 4)
-                if pd.notna(r.get("距离买入信号已过天数"))
-                   and r.get("平均持仓天数", 0) > 0
-                   and r["趋势方向"] == 1
-                else None,
-                axis=1
-            )
-            # 插入：距离买入信号已过天数 → 预计持仓进度 → 距离买入信号收盘价涨跌幅 → 持仓日化收益率
-            buy_idx = signal_df.columns.get_loc("距离买入信号已过天数") + 1
-            signal_df.insert(buy_idx, "预计持仓进度", signal_df.pop("预计持仓进度"))
-            buy_idx2 = signal_df.columns.get_loc("预计持仓进度") + 1
-            signal_df.insert(buy_idx2, "距离买入信号收盘价涨跌幅", signal_df.pop("距离买入信号收盘价涨跌幅"))
-            hold_idx = signal_df.columns.get_loc("距离买入信号收盘价涨跌幅") + 1
-            signal_df.insert(hold_idx, "持仓日化收益率", signal_df.pop("持仓日化收益率"))
-            sell_idx = signal_df.columns.get_loc("距离卖出信号已过天数") + 1
-            signal_df.insert(sell_idx, "距离卖出信号收盘价涨跌幅", signal_df.pop("距离卖出信号收盘价涨跌幅"))
+            # 新增字段已由 get_last_signal_info 计算，列顺序由 _signal_cols 控制
 
             # =========================================================
             # 均线趋势共振分析
@@ -1232,13 +1267,13 @@ def run_trade():
             # 信号确认：BUY/SELL 信号且未满5天为待确认，否则已确认
             signal_df["信号确认"] = signal_df.apply(
                 lambda r: "待确认"
-                if (r["信号"] == "BUY" and pd.notna(r.get("距离买入信号已过天数")) and r["距离买入信号已过天数"] < 5)
-                or (r["信号"] == "SELL" and pd.notna(r.get("距离卖出信号已过天数")) and r["距离卖出信号已过天数"] < 5)
+                if (r["最新信号"] == "BUY" and pd.notna(r.get("距离买入信号已过天数")) and r["距离买入信号已过天数"] < 5)
+                or (r["最新信号"] == "SELL" and pd.notna(r.get("距离卖出信号已过天数")) and r["距离卖出信号已过天数"] < 5)
                 else "已确认",
                 axis=1
             )
             # 插入到信号字段后面
-            _sig_idx = signal_df.columns.get_loc("信号") + 1
+            _sig_idx = signal_df.columns.get_loc("最新信号") + 1
             signal_df.insert(_sig_idx, "信号确认", signal_df.pop("信号确认"))
 
             # =========================================================
@@ -1259,9 +1294,11 @@ def run_trade():
             _signal_cols = [
                 "股票代码", "股票名称", "所属板块", "K线周期", "均线周期", "综合评分", "策略表现",
                 "时间", "收盘价", "HA收盘价", "HA均线值",
-                "趋势方向", "信号", "信号确认",
-                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数", "预计持仓进度", "距离买入信号收盘价涨跌幅", "持仓日化收益率",
-                "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数", "距离卖出信号收盘价涨跌幅",
+                "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "信号确认",
+                "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
+                "距离历史信号收盘价涨跌幅", "持仓日化收益率", "预计持仓进度",
+                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数",
+                "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数",
                 "均线趋势共振方向", "共振均线数量", "共振均线列表",
                 "收益率", "年化收益率", "买入持有收益率", "超额收益率",
                 "最大回撤", "夏普比率", "卡尔玛比率",
@@ -1383,22 +1420,40 @@ def run_trade():
                 {"类型": "基础信息", "名称": "HA均线值",
                  "统计逻辑": "HA收盘价的移动平均值（对应均线周期）"},
 
-                {"类型": "信号逻辑", "名称": "信号",
-                 "统计逻辑": "MA方向变化：dir由-1→1为BUY，1→-1为SELL；非信号状态时多头为HOLD、空头为WATCH"},
-                {"类型": "信号逻辑", "名称": "信号确认",
-                 "统计逻辑": "BUY/SELL信号出现且距离信号天数<5为待确认（周K未走完），否则为已确认；HOLD/WATCH始终为已确认"},
                 {"类型": "信号逻辑", "名称": "趋势方向",
                  "统计逻辑": "ma > ma.shift(1) 为多头，否则空头"},
+                {"类型": "信号逻辑", "名称": "最新信号",
+                 "统计逻辑": "MA方向变化：dir由-1→1为BUY，1→-1为SELL；非信号状态时多头为HOLD、空头为WATCH"},
+                {"类型": "信号逻辑", "名称": "最新信号时间",
+                 "统计逻辑": "最新一根K线的时间"},
+                {"类型": "信号逻辑", "名称": "最新信号收盘价",
+                 "统计逻辑": "最新一根K线的收盘价"},
+                {"类型": "信号逻辑", "名称": "信号确认",
+                 "统计逻辑": "BUY/SELL信号出现且距离最近一次信号天数<5为待确认（周K未走完），否则为已确认；HOLD/WATCH始终为已确认"},
+                {"类型": "信号逻辑", "名称": "历史信号",
+                 "统计逻辑": "取最近一次买入/卖出事件；若该事件已确认（>=5天前）则直接使用，否则回退到上一次已确认的事件"},
+                {"类型": "信号逻辑", "名称": "历史信号时间",
+                 "统计逻辑": "历史信号对应的K线时间"},
+                {"类型": "信号逻辑", "名称": "历史信号收盘价",
+                 "统计逻辑": "历史信号对应的收盘价"},
+                {"类型": "信号逻辑", "名称": "距离历史信号已过天数",
+                 "统计逻辑": "当前日期 - 历史信号时间（自然日差）"},
+                {"类型": "信号逻辑", "名称": "距离历史信号收盘价涨跌幅",
+                 "统计逻辑": "(当前收盘价 - 历史信号收盘价) / 历史信号收盘价 × 100"},
+                {"类型": "信号逻辑", "名称": "持仓日化收益率",
+                 "统计逻辑": "距离历史信号收盘价涨跌幅 / 距离历史信号已过天数，反映持仓期间日均收益率"},
+                {"类型": "信号逻辑", "名称": "预计持仓进度",
+                 "统计逻辑": "距离历史信号已过天数 / 平均持仓天数，仅历史信号为买入时计算"},
                 {"类型": "信号逻辑", "名称": "买入信号时间",
                  "统计逻辑": "df中 buy=True 的最后一条记录时间"},
-                {"类型": "信号逻辑", "名称": "卖出信号时间",
-                 "统计逻辑": "df中 sell=True 的最后一条记录时间"},
                 {"类型": "信号逻辑", "名称": "买入信号收盘价",
                  "统计逻辑": "最近buy信号时的收盘价"},
-                {"类型": "信号逻辑", "名称": "卖出信号收盘价",
-                 "统计逻辑": "最近sell信号时的收盘价"},
                 {"类型": "信号逻辑", "名称": "距离买入信号已过天数",
                  "统计逻辑": "当前日期 - 最近buy信号日期（自然日差）"},
+                {"类型": "信号逻辑", "名称": "卖出信号时间",
+                 "统计逻辑": "df中 sell=True 的最后一条记录时间"},
+                {"类型": "信号逻辑", "名称": "卖出信号收盘价",
+                 "统计逻辑": "最近sell信号时的收盘价"},
                 {"类型": "信号逻辑", "名称": "距离卖出信号已过天数",
                  "统计逻辑": "当前日期 - 最近sell信号日期（自然日差）"},
                 {"类型": "信号逻辑", "名称": "距离买入信号收盘价涨跌幅",
@@ -1411,10 +1466,6 @@ def run_trade():
                  "统计逻辑": "参与方向一致的均线周期个数"},
                 {"类型": "信号逻辑", "名称": "共振均线列表",
                  "统计逻辑": "参与方向一致的均线周期列表（逗号分隔）"},
-                {"类型": "信号逻辑", "名称": "预计持仓进度",
-                 "统计逻辑": "距离买入信号已过天数 / 平均持仓天数，仅多头时计算，反映当前持仓在平均持仓中的进度比例"},
-                {"类型": "信号逻辑", "名称": "持仓日化收益率",
-                 "统计逻辑": "距离买入信号收盘价涨跌幅 / 距离买入信号已过天数，仅多头时计算，反映持仓期间日均收益率"},
 
                 {"类型": "收益类", "名称": "收益率",
                  "统计逻辑": "(最终资金 / 初始资金 - 1) × 100"},
@@ -1554,7 +1605,7 @@ def sync_futu_groups(excel_path):
     # 每只股票取最新一条信号（用于主分组：去重后的信号归属）
     signal_df["时间"] = pd.to_datetime(signal_df["时间"])
     latest_idx = signal_df.groupby("股票代码")["时间"].transform("max") == signal_df["时间"]
-    latest_signals = signal_df[latest_idx].set_index("股票代码")["信号"].to_dict()
+    latest_signals = signal_df[latest_idx].set_index("股票代码")["最新信号"].to_dict()
 
     # 全部股票列表（过滤掉无权限的加密货币）
     all_stocks = {c for c in load_symbols(SYMBOL_FILE) if not c.startswith("CC.")}
@@ -1591,7 +1642,7 @@ def sync_futu_groups(excel_path):
             for ma in MA_LIST:
                 sub_name = f"{prefix}/{ma}"
                 if sub_name in existing_groups:
-                    mask = (signal_df["信号"] == sig) & (signal_df["均线周期"] == ma)
+                    mask = (signal_df["最新信号"] == sig) & (signal_df["均线周期"] == ma)
                     expected_map[sub_name] = set(signal_df[mask]["股票代码"].unique())
                     active_groups.append(sub_name)
 
@@ -1719,11 +1770,11 @@ def export_tradingview_txts(excel_path):
     # 构建各分组股票集合
     groups = {"全部股票": all_stocks}
     for sig_name in ["买入", "卖出", "持有", "观察"]:
-        groups[sig_name] = set(latest[latest["信号"] == sig_name]["股票代码"].unique())
+        groups[sig_name] = set(latest[latest["最新信号"] == sig_name]["股票代码"].unique())
     # 按均线周期子分组
     for sig_name in ["买入", "卖出"]:
         for ma in MA_LIST:
-            mask = (signal_df["信号"] == sig_name) & (signal_df["均线周期"] == ma)
+            mask = (signal_df["最新信号"] == sig_name) & (signal_df["均线周期"] == ma)
             codes = set(signal_df[mask]["股票代码"].unique())
             groups[f"{sig_name}/{ma}"] = codes
 

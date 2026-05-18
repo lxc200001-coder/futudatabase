@@ -547,11 +547,13 @@ function renderMiniChart(domId, pd, sigTime, sigType) {{
       var idx = pd.d.indexOf(sigTime.substring(0,10));
       if (idx>=0) {{
         var sc = sigType==='BUY'||sigType==='HOLD'?'#27ae60':'#e74c3c';
-        s.markPoint = {{silent:true,symbol:'pin',symbolSize:24,data:[{{coord:[idx,pd.c[idx]],itemStyle:{{color:sc}}}}]}};
+        var isUp = sigType==='BUY'||sigType==='HOLD';
+        var isUp = sigType==='BUY'||sigType==='HOLD';
+        s.markPoint = {{silent:true,symbol:'pin',symbolSize:16,symbolRotate:isUp?180:0,data:[{{coord:[idx,pd.c[idx]],itemStyle:{{color:sc}}}}]}};
       }}
     }}
     chart.setOption({{
-      grid:{{show:false,left:2,right:2,top:6,bottom:4}},
+      grid:{{show:false,left:2,right:2,top:4,bottom:4}},
       xAxis:{{show:false,type:'category',data:pd.d}},
       yAxis:{{show:false,scale:true}},
       series:[s]
