@@ -248,7 +248,7 @@ def get_last_signal_info(df):
         (signal == "BUY" and buy_days is not None and buy_days < 5) or
         (signal == "SELL" and sell_days is not None and sell_days < 5)
     ):
-        confirm = "未确认"
+        confirm = "待确认，周K未正式收盘"
     else:
         confirm = "已确认"
 
@@ -1418,7 +1418,7 @@ def run_trade():
                 {"类型": "信号逻辑", "名称": "最新信号收盘价",
                  "统计逻辑": "最新一根K线的收盘价"},
                 {"类型": "信号逻辑", "名称": "最新信号确认",
-                 "统计逻辑": "BUY/SELL信号出现且距离最近一次信号天数<5为未确认（周K未正式收盘），否则为已确认；HOLD/WATCH始终为已确认"},
+                 "统计逻辑": "BUY/SELL信号出现且距离最近一次信号天数<5为「待确认，周K未正式收盘」，否则为已确认；HOLD/WATCH始终为已确认"},
                 {"类型": "信号逻辑", "名称": "历史信号",
                  "统计逻辑": "取最近一次买入/卖出事件；若该事件已确认（>=5天前）则直接使用，否则回退到上一次已确认的事件"},
                 {"类型": "信号逻辑", "名称": "历史信号时间",
