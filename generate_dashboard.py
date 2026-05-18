@@ -144,7 +144,7 @@ def load_kline_map(symbols):
         if not os.path.exists(path):
             continue
         df = pd.read_parquet(path)
-        df = df.sort_values("datetime").tail(150).reset_index(drop=True)
+        df = df.sort_values("datetime").tail(156).reset_index(drop=True)
         dates = df["datetime"].dt.strftime("%Y-%m-%d").tolist()
         date_set = set(dates)
 
@@ -224,19 +224,35 @@ def build_json_data(signals):
     bubble_data.sort(key=lambda x: x["score"], reverse=True)
 
     # 7. 按信号分类的个股列表
-    SIG_COLS = ["symbol", "signal_time", "signal_close", "hist_days", "hist_change", "score"]
-    SIG_LABELS = ["代码", "信号时间", "信号收盘价", "历史天数", "涨跌幅", "评分"]
+    SIG_COLS = ["symbol", "hist_change", "close", "hist_close", "hist_time", "hist_days", "score"]
+    SIG_LABELS = ["代码", "涨跌幅", "收盘价", "信号价", "信号时间", "已过天数", "评分"]
+
+    # 有效信号：已确认用最新信号，待确认回退到历史信号分板块
+    def _eff_signal(r):
+        if r.get("signal_confirm") == "已确认":
+            return r["signal"]
+        elif r.get("signal_confirm") == "待确认，周K未正式收盘":
+            if r.get("hist_signal") == "BUY":
+                return "HOLD"
+            elif r.get("hist_signal") == "SELL":
+                return "WATCH"
+        return r["signal"]
+
+    signals["_eff_signal"] = signals.apply(_eff_signal, axis=1)
 
     def _signal_rows(sig_type, cols):
-        sub = signals[signals["signal"] == sig_type].copy()
+        sub = signals[signals["_eff_signal"] == sig_type].copy()
         if sub.empty:
             return [], cols
         # 每只股票取最新一条
         latest_sig = sub.loc[sub.groupby("symbol")["datetime"].idxmax()]
         rows = []
         for _, r in latest_sig.iterrows():
-            rows.append({c: _js(r[c]) for c in cols})
-        rows.sort(key=lambda x: x.get("score") or 0, reverse=True)
+            row = {c: _js(r[c]) for c in cols}
+            # 隐藏字段：迷你走势图彩色大头针需要
+            row["hist_signal"] = _js(r.get("hist_signal"))
+            rows.append(row)
+        rows.sort(key=lambda x: (x.get("hist_days") or 9999, -(x.get("score") or 0)))
         return rows, cols
 
     signal_sections = {}
@@ -248,19 +264,30 @@ def build_json_data(signals):
     symbols = signals["symbol"].unique().tolist()
     kline_map = load_kline_map(symbols)
 
-    # 9. 个股收盘价数据（信号表格下的迷你走势图，最近3年）
-    price_map = {}
+    # 9. 个股收盘价数据（信号表格下的迷你走势图）
+    all_dates = set()
+    sym_data = {}
     for sym in symbols:
         path = os.path.join(DATA_DIR, f"{sym}_1w.parquet")
         if not os.path.exists(path):
             continue
         pdf = pd.read_parquet(path)
-        pdf = pdf.sort_values("datetime").tail(150).reset_index(drop=True)
-        price_map[sym] = {
-            "d": pdf["datetime"].dt.strftime("%Y-%m-%d").tolist(),
-            "c": [round(float(v), 2) for v in pdf["close"].values],
-        }
+        pdf = pdf.sort_values("datetime").tail(156).reset_index(drop=True)
+        dates = pdf["datetime"].dt.strftime("%Y-%m-%d").tolist()
+        closes = [round(float(v), 2) for v in pdf["close"].values]
+        sym_data[sym] = dict(zip(dates, closes))
+        all_dates.update(dates)
 
+
+    # 全局时间轴：取最近 104 周（约2年），确保走势图对齐且不压扁
+    common_dates = sorted(all_dates)[-104:]
+
+    price_map = {}
+    for sym in symbols:
+        if sym not in sym_data:
+            continue
+        sd = sym_data[sym]
+        price_map[sym] = {"d": common_dates, "c": [sd.get(d) for d in common_dates]}
     return {
         "overview": overview,
         "bubble": bubble_data,
@@ -288,7 +315,7 @@ def generate_html(data):
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#faf9f5; color:#141413; }}
-.header {{ padding:20px 32px; text-align:center; border-bottom:1px solid #e8e6dc; }}
+.header {{ padding:24px 32px; text-align:center; }}
 .header h1 {{ font-size:20px; font-weight:600; color:#141413; }}
 .header p {{ font-size:13px; color:#b0aea5; margin-top:2px; }}
 .container {{ margin:0 auto; padding:20px; max-width:1400px; }}
@@ -357,12 +384,10 @@ tr:hover {{ background:#faf9f5; }}
     <button class="tab active" onclick="switchTab('dashboard')">策略信号</button>
     <button class="tab" onclick="switchTab('bubble')">信号表现</button>
     <button class="tab" onclick="switchTab('overview')">数据总览</button>
-    <button class="tab" onclick="switchTab('kline')">走势图</button>
   </div>
   <div id="tab-dashboard" class="tab-content active"></div>
   <div id="tab-bubble" class="tab-content"></div>
   <div id="tab-overview" class="tab-content"></div>
-  <div id="tab-kline" class="tab-content"></div>
 </div>
 
 <script>
@@ -407,7 +432,7 @@ function renderTable() {{
     var tagCls = r.signal==='BUY'?'tag-buy':'tag-sell';
     var dirCls = r.dir===1?'dir-up':'dir-down';
     h+='<tr>';
-    h+='<td><strong>'+r.symbol+'</strong></td>';
+    h+='<td><strong>'+r.symbol.replace(/^(US|CC)\./,'')+'</strong></td>';
     h+='<td class="ma-col">'+r.ma+'</td>';
     h+='<td>'+(r.datetime||'-')+'</td>';
     h+='<td>'+(r.close!=null?r.close.toFixed(2):'-')+'</td>';
@@ -482,59 +507,10 @@ function switchTab(name) {{
   document.querySelectorAll('.tab').forEach(function(el){{ el.classList.remove('active'); }});
   document.getElementById('tab-'+name).classList.add('active');
   var tabs = document.querySelector('.tab-bar').children;
-  for(var i=0;i<tabs.length;i++) {{ var t=tabs[i].textContent; if((name==='dashboard'&&t.includes('策略信号'))||(name==='bubble'&&t.includes('信号表现'))||(name==='overview'&&t.includes('数据总览'))||(name==='kline'&&t.includes('走势图'))) {{ tabs[i].classList.add('active'); }} }}
+  for(var i=0;i<tabs.length;i++) {{ var t=tabs[i].textContent; if((name==='dashboard'&&t.includes('策略信号'))||(name==='bubble'&&t.includes('信号表现'))||(name==='overview'&&t.includes('数据总览'))) {{ tabs[i].classList.add('active'); }} }}
   if(name==='bubble') renderBubbleChart('fullBubbleChart');
   if(name==='overview') renderOverviewTable();
-  if(name==='kline') initKlineTab();
-}}
-
-// 走势图 — ECharts K线+信号标记
-var KLINE_CHART = null;
-function renderKlineChart(symbol) {{
-  var data = D.kline_map[symbol];
-  if(!data) return;
-  if(!KLINE_CHART) {{ KLINE_CHART = echarts.init(document.getElementById('klineChart')); }}
-  var dates = data.k.map(function(r){{return r[0];}});
-  var ohlc = data.k.map(function(r){{return [r[1],r[4],r[3],r[2]];}});
-  KLINE_CHART.setOption({{
-    tooltip:{{trigger:'axis',axisPointer:{{type:'cross'}}}},
-    legend:{{show:false}},
-    grid:{{left:50,right:20,bottom:60,top:20}},
-    xAxis:{{type:'category',data:dates,axisLabel:{{rotate:45,fontSize:10}},axisLine:{{onZero:false}}}},
-    yAxis:{{type:'value',scale:true,splitLine:{{lineStyle:{{color:'#f0efe9'}}}}}},
-    dataZoom:[{{type:'inside',xAxisIndex:0}},{{type:'slider',xAxisIndex:0,height:20,bottom:5}}],
-    series:[{{
-      type:'candlestick',name:'K线',
-      data:ohlc,
-      itemStyle:{{color:'#e74c3c',color0:'#27ae60',borderColor:'#e74c3c',borderColor0:'#27ae60'}}
-    }},{{
-      type:'scatter',name:'买入信号',
-      data:(data.b||[]).map(function(m){{return [m[0],m[1]];}}),
-      symbol:'pin',symbolSize:24,symbolRotate:180,
-      itemStyle:{{color:'#27ae60'}},
-      label:{{show:true,formatter:'买入',fontSize:10,color:'#27ae60'}},
-      xAxisIndex:0,yAxisIndex:0,z:10
-    }},{{
-      type:'scatter',name:'卖出信号',
-      data:(data.s||[]).map(function(m){{return [m[0],m[1]];}}),
-      symbol:'pin',symbolSize:24,symbolRotate:0,
-      itemStyle:{{color:'#e74c3c'}},
-      label:{{show:true,formatter:'卖出',fontSize:10,color:'#e74c3c'}},
-      xAxisIndex:0,yAxisIndex:0,z:10
-    }}]
-  }});
-  window.addEventListener('resize',function(){{KLINE_CHART.resize();}});
-}}
-function initKlineTab() {{
-  var wrap = document.getElementById('tab-kline');
-  var symbols = Object.keys(D.kline_map||{{}});
-  if(!symbols.length) {{ wrap.innerHTML = '<div class="chart-box"><h3>走势图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无K线数据</p></div>'; return; }}
-  if(wrap.querySelector('select')) {{ renderKlineChart(wrap.querySelector('select').value); return; }}
-  var h = '<div class="chart-box" style="display:flex;flex-direction:column;"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;"><h3 style="margin:0;">走势图</h3><select id="klineSel" onchange="renderKlineChart(this.value)" style="padding:4px 8px;border:1px solid #e8e6dc;border-radius:6px;font-size:13px;background:#fff;color:#141413;">';
-  symbols.forEach(function(s){{ h+='<option value="'+s+'">'+s+'</option>'; }});
-  h += '</select></div><div id="klineChart" style="width:100%;height:500px;"></div></div>';
-  wrap.innerHTML = h;
-  renderKlineChart(symbols[0]);
+  
 }}
 
 // 按信号分类的4个板块（可排序）
@@ -543,6 +519,7 @@ var SIG_NAMES = {{'BUY':'买入', 'SELL':'卖出', 'HOLD':'持有', 'WATCH':'观
 var sigSort = {{}};
 function sortSig(sig, key) {{
   var st = sigSort[sig];
+  st.multi = false;
   if (st.key === key) st.dir = -st.dir;
   else {{ st.key = key; st.dir = 1; }}
   _renderSigTableBody(sig);
@@ -553,21 +530,13 @@ function renderMiniChart(domId, pd, sigTime, sigType, km) {{
     var chart = echarts.init(document.getElementById(domId));
     var s = {{type:'line',data:pd.c,smooth:true,showSymbol:false,lineStyle:{{color:'#27ae60',width:1}},areaStyle:{{color:'rgba(39,174,96,0.12)'}}}};
     var mpData = [];
-    // 历史所有买入标记（浅绿色，大头针朝下）
-    if (km && km.b) {{
-      km.b.forEach(function(m){{mpData.push({{coord:[m[0],m[1]],symbol:'pin',symbolSize:10,symbolRotate:180,itemStyle:{{color:'#a8dfc0'}}}});}});
-    }}
-    // 历史所有卖出标记（浅红色，大头针朝上）
-    if (km && km.s) {{
-      km.s.forEach(function(m){{mpData.push({{coord:[m[0],m[1]],symbol:'pin',symbolSize:10,symbolRotate:0,itemStyle:{{color:'#f5b7b1'}}}});}});
-    }}
-    // 当前信号标记（彩色）
+    // 当前信号标记（彩色）：BUY绿色大头针朝上，SELL红色大头针朝下
     if (sigTime && pd.d) {{
       var idx = pd.d.indexOf(sigTime.substring(0,10));
       if (idx>=0) {{
-        var sc = sigType==='BUY'||sigType==='HOLD'?'#27ae60':'#e74c3c';
-        var isUp = sigType==='BUY'||sigType==='HOLD';
-        mpData.push({{coord:[idx,pd.c[idx]],symbol:'pin',symbolSize:16,symbolRotate:isUp?180:0,itemStyle:{{color:sc}}}});
+        var sc = sigType==='BUY'?'#27ae60':'#e74c3c';
+        var rot = sigType==='BUY'?180:0;
+        mpData.push({{coord:[idx,pd.c[idx]],symbol:'pin',symbolSize:16,symbolRotate:rot,itemStyle:{{color:sc}}}});
       }}
     }}
     if (mpData.length) s.markPoint = {{silent:true,data:mpData}};
@@ -587,11 +556,30 @@ function toggleChart(el) {{
   cr.style.display=hidden?'':'none';
   if(hidden){{var mc=cr.querySelector('.mc');if(mc){{var k=mc.id;MINI_CHARTS[k]&&MINI_CHARTS[k].resize();}}}}
 }}
+function toggleAllCharts(sig) {{
+  var body=document.getElementById('sigBody-'+sig);
+  if(!body) return;
+  var crs=body.querySelectorAll('.cr');
+  if(!crs.length) return;
+  var hidden=crs[0].style.display==='none';
+  crs.forEach(function(r){{ r.style.display=hidden?'':'none'; }});
+  var btn=document.getElementById('sigHead-'+sig).closest('.chart-box').querySelector('.toggle-all');
+  if(btn) btn.textContent=hidden?'折叠走势图':'展开走势图';
+  if(hidden) crs.forEach(function(r){{ var mc=r.querySelector('.mc');if(mc){{var k=mc.id;if(MINI_CHARTS[k]) MINI_CHARTS[k].resize();}}}});
+}}
 function _renderSigTableBody(sig) {{
   var oldBody=document.getElementById('sigBody-'+sig);
   if(oldBody){{oldBody.querySelectorAll('.mc').forEach(function(div){{var c=MINI_CHARTS[div.id];if(c){{c.dispose();delete MINI_CHARTS[div.id];}}}});}}
   var st = sigSort[sig];
   var rows = st.rows.slice().sort(function(a,b){{
+    if (st.multi) {{
+      for (var i=0;i<st.keys.length;i++) {{ var k=st.keys[i], va=a[k.key], vb=b[k.key];
+        if (va==null&&vb==null) continue;
+        if (va==null) return 1; if (vb==null) return -1;
+        if (va!==vb) return typeof va==='string' ? (va<vb?-k.dir:va>vb?k.dir:0) : (va-vb)*k.dir;
+      }}
+      return 0;
+    }}
     var va = a[st.key], vb = b[st.key];
     if (va == null) return 1; if (vb == null) return -1;
     if (typeof va === 'string') return va < vb ? -st.dir : va > vb ? st.dir : 0;
@@ -603,7 +591,7 @@ function _renderSigTableBody(sig) {{
     h += '<tr class="dr" onclick="toggleChart(this)">';
     st.cols.forEach(function(c){{
       var v = r[c];
-      if (c === 'close' || c === 'signal_close') v = v != null ? v.toFixed(2) : '-';
+      if (c === 'close' || c === 'hist_close') v = v != null ? v.toFixed(2) : '-';
       else if (c === 'score') v = v != null ? v.toFixed(1) : '-';
       else if (c === 'hist_change') {{
         if (v == null) {{ v = '-'; }}
@@ -613,14 +601,16 @@ function _renderSigTableBody(sig) {{
           v='<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+_nv.toFixed(2)+'%</span>';
         }}
       }}
-      else if (c === 'signal_time') v = v || '-';
+      else if (c === 'hist_time') v = v || '-';
       else v = v != null ? v : '-';
-      h += '<td>' + (c === 'symbol' ? '<strong>' + v + '</strong>' : v) + '</td>';
+      h += '<td>' + (c === 'symbol' ? '<strong>' + v.replace(/^(US|CC)\./,'') + '</strong>' : v) + '</td>';
     }});
     h += '</tr>';
-    h += '<tr class="cr" id="cr-'+sig+'-'+symClean+'"><td colspan="'+st.cols.length+'" style="padding:0 12px 6px;"><div class="mc" id="mc-'+sig+'-'+symClean+'" style="height:90px;width:100%;"></div></td></tr>';
+    h += '<tr class="cr" id="cr-'+sig+'-'+symClean+'" style="display:none;"><td colspan="'+st.cols.length+'" style="padding:0 12px 6px;"><div class="mc" id="mc-'+sig+'-'+symClean+'" style="height:90px;width:100%;"></div></td></tr>';
   }});
   document.getElementById('sigBody-' + sig).innerHTML = h;
+  var tb = document.getElementById('sigBody-'+sig);
+  // 先创建走势图
   rows.forEach(function(r){{
     var pd = D.price_map && D.price_map[r.symbol];
     if (!pd || !pd.d || !pd.d.length) return;
@@ -629,16 +619,16 @@ function _renderSigTableBody(sig) {{
     var km = D.kline_map && D.kline_map[r.symbol];
     renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, histSig, km);
   }});
+  if (tb) tb.querySelectorAll('.mc').forEach(function(div){{ var c=MINI_CHARTS[div.id]; if (c) c.resize(); }});
 }}
 function renderSignalSections() {{
   var h = '<div class="sig-grid">';
   ['BUY','SELL','HOLD','WATCH'].forEach(function(sig){{
     var sec = D.signal_sections[sig];
     if (!sec || !sec.rows.length) {{ var c0=sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6'; h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+c0+'"><h3>'+SIG_NAMES[sig]+'信号 <span style="color:'+c0+'">0</span></h3><p style="color:#aaa;font-size:13px;padding:12px 0;">暂无数据</p></div>'; return; }}
-    var defKey = 'hist_days';
-    sigSort[sig] = {{key: defKey, dir: 1, rows: sec.rows.slice(), cols: sec.cols, labels: sec.labels}};
+    sigSort[sig] = {{multi: true, keys: [{{key:'hist_days', dir:1}}, {{key:'score', dir:-1}}], rows: sec.rows.slice(), cols: sec.cols, labels: sec.labels}};
     var sigColor = sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6';
-    h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+sigColor+'"><h3>'+SIG_NAMES[sig]+'信号 <span style="color:'+sigColor+'">'+sec.rows.length+'</span></h3>';
+    h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+sigColor+'"><h3 style="display:flex;justify-content:space-between;align-items:center;"><span>'+SIG_NAMES[sig]+'信号 <span style="color:'+sigColor+'">'+sec.rows.length+'</span></span><span class="toggle-all" onclick="toggleAllCharts(\\''+sig+'\\')" style="font-size:12px;cursor:pointer;color:#b0aea5;user-select:none;flex-shrink:0;">展开走势图</span></h3>';
     h+='<div style="overflow-x:auto;"><table style="font-size:12px;width:100%;">';
     h+='<thead id="sigHead-'+sig+'"><tr>';
     sec.labels.forEach(function(l, i){{ h+='<th onclick="sortSig(\\''+sig+'\\',\\''+sec.cols[i]+'\\')">'+l+'</th>'; }});
