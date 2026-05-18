@@ -1,12 +1,16 @@
 import os
 import time
 import requests
+import urllib3
 import pandas as pd
 import numpy as np
 
 from collections import deque
 from datetime import datetime
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
+
+# 关闭 Binance SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =========================================================
 # 配置
@@ -189,6 +193,11 @@ def fetch_binance_weekly(code, start_str, end_str):
     all_rows = []
     current_start = start_ms
 
+    # Binance SSL 兼容：使用自定义 session
+    sess = requests.Session()
+    sess.verify = False
+    sess.headers.update({"User-Agent": "Mozilla/5.0"})
+
     while current_start < end_ms:
         params = {
             "symbol": binance_symbol,
@@ -198,7 +207,7 @@ def fetch_binance_weekly(code, start_str, end_str):
             "limit": 1000,
         }
         try:
-            resp = requests.get(base_url, params=params, timeout=15)
+            resp = sess.get(base_url, params=params, timeout=15)
             resp.raise_for_status()
             klines = resp.json()
         except Exception as e:
@@ -394,6 +403,8 @@ def run_download():
     non_crypto = [c for c in symbols if not c.startswith("CC.")]
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111) if non_crypto else None
 
+    all_dfs = []
+
     for i, code in enumerate(symbols, 1):
 
         print("\n================================================")
@@ -414,9 +425,39 @@ def run_download():
             df = fetch_weekly(code, start_str, end_str, quote_ctx)
 
         save_data(df, code)
+        if not df.empty:
+            all_dfs.append(df)
 
     if quote_ctx is not None:
         quote_ctx.close()
+
+    # 合并所有股票数据输出总表
+    if all_dfs:
+        combined = pd.concat(all_dfs, ignore_index=True)
+        combined = combined.rename(columns={"time_key": "datetime"})
+        combined["datetime"] = pd.to_datetime(combined["datetime"])
+        combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
+
+        # 合并板块信息
+        plates_path = os.path.join(DATA_DIR, "stocks_plates.parquet")
+        if os.path.exists(plates_path):
+            plates_df = pd.read_parquet(plates_path)[["code", "plates", "plate_type_list"]]
+            combined = combined.merge(plates_df, on="code", how="left")
+
+        # 列名统一：name → stock_name
+        if "name" in combined.columns:
+            combined = combined.rename(columns={"name": "stock_name"})
+
+        # 列排序：单股文件字段在前，附加字段在后
+        base_cols = ["code", "datetime", "open", "high", "low", "close", "volume", "turnover"]
+        extra_cols = [c for c in ["stock_name", "plates", "plate_type_list"] if c in combined.columns]
+        keep_cols = base_cols + extra_cols
+        combined = combined[[c for c in keep_cols if c in combined.columns]]
+        out_path = os.path.join(DATA_DIR, "all_1w.parquet")
+        combined.to_parquet(out_path, index=False)
+        print(f"\n总表保存完成: {out_path} 共 {len(combined)} 条")
+    else:
+        print("\n无数据，跳过总表保存")
 
 
 # =========================================================
