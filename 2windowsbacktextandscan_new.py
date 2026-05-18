@@ -10,16 +10,21 @@ from tqdm import tqdm
 from futu import OpenQuoteContext, KLType, AuType, RET_OK, ModifyUserSecurityOp
 from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment
 
 # 屏蔽pandas concat空列FutureWarning（不影响功能）
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation", category=FutureWarning)
 
 
 def _apply_sheet_format(ws):
-    """设置自动筛选和冻结首行+首列"""
+    """设置自动筛选、冻结首行+首列、表头加高4倍+文字自动换行"""
     if ws.max_row and ws.max_column:
         ws.auto_filter.ref = ws.dimensions
         ws.freeze_panes = "B2"
+    # 首行表头加高到默认4倍，文字自动换行
+    ws.row_dimensions[1].height = 60
+    for cell in ws[1]:
+        cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
 
 # =========================================================
 # 配置
