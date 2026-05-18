@@ -182,11 +182,6 @@ def load_kline_map(symbols):
 
 def build_json_data(signals):
 
-    # 1. 概览
-    buy_cnt = int((signals["signal"] == "BUY").sum())
-    sell_cnt = int((signals["signal"] == "SELL").sum())
-    overview = {"buy": buy_cnt, "sell": sell_cnt, "total": buy_cnt + sell_cnt}
-
     # 2. 是否有评分数据
     has_score = "score" in signals.columns and signals["score"].notna().any()
     has_score = bool(has_score)
@@ -239,6 +234,12 @@ def build_json_data(signals):
         return r["signal"]
 
     signals["_eff_signal"] = signals.apply(_eff_signal, axis=1)
+
+    # 1. 概览（按 _eff_signal 去重统计，与信号板块一致）
+    latest = signals.loc[signals.groupby("symbol")["datetime"].idxmax()]
+    buy_cnt = int((latest["_eff_signal"] == "BUY").sum())
+    sell_cnt = int((latest["_eff_signal"] == "SELL").sum())
+    overview = {"buy": buy_cnt, "sell": sell_cnt, "total": buy_cnt + sell_cnt}
 
     def _signal_rows(sig_type, cols):
         sub = signals[signals["_eff_signal"] == sig_type].copy()
@@ -394,11 +395,13 @@ tr:hover {{ background:#faf9f5; }}
 var D = {encoded};
 
 // 概览卡片
+var _holdRate = (function(){{var r=D.signal_sections.HOLD.rows;return r.length?(r.filter(function(x){{return x.hist_change>0}}).length/r.length*100).toFixed(1)+'%':'0%';}})();
+var _watchRate = (function(){{var r=D.signal_sections.WATCH.rows;return r.length?(r.filter(function(x){{return x.hist_change<0}}).length/r.length*100).toFixed(1)+'%':'0%';}})();
 var cardHtml = '<div class="cards">' + [
-  {{num:D.overview.buy, label:'买入信号 (BUY)', cls:'buy'}},
-  {{num:D.overview.sell, label:'卖出信号 (SELL)', cls:'sell'}},
-  {{num:D.overview.total, label:'有效信号合计', cls:'total'}},
-  {{num:D.table.length, label:'触发信号的个股', cls:'stocks'}},
+  {{num:D.overview.buy, label:'买入信号', cls:'buy'}},
+  {{num:D.overview.sell, label:'卖出信号', cls:'sell'}},
+  {{num:_holdRate, label:'持有准确率', cls:'total'}},
+  {{num:_watchRate, label:'观察准确率', cls:'total'}},
 ].map(function(c){{ return '<div class="card"><div class="num '+c.cls+'">'+c.num+'</div><div class="label">'+c.label+'</div></div>'}}).join('')+'</div>';
 
 // 图表容器（主页不再显示气泡图，请在"评分气泡"标签页查看）
@@ -528,7 +531,7 @@ var MINI_CHARTS = {{}};
 function renderMiniChart(domId, pd, sigTime, sigType, km) {{
   try {{
     var chart = echarts.init(document.getElementById(domId));
-    var s = {{type:'line',data:pd.c,smooth:true,showSymbol:false,lineStyle:{{color:'#27ae60',width:1}},areaStyle:{{color:'rgba(39,174,96,0.12)'}}}};
+    var s = {{type:'line',data:pd.c,smooth:true,showSymbol:false,lineStyle:{{color:'#2980b9',width:1}},areaStyle:{{color:'rgba(41,128,185,0.12)'}}}};
     var mpData = [];
     // 当前信号标记（彩色）：BUY绿色大头针朝上，SELL红色大头针朝下
     if (sigTime && pd.d) {{
