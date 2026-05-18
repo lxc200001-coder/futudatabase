@@ -172,11 +172,9 @@ def get_last_signal_info(df):
     if len(buy_rows) > 0:
         last_buy = buy_rows.iloc[-1]
         buy_time = pd.to_datetime(last_buy["datetime"])
-        buy_close = round(float(last_buy["close"]), 2)
         buy_days = (today - buy_time.normalize()).days
     else:
         buy_time = pd.NaT
-        buy_close = None
         buy_days = None
 
     sell_rows = df[df["sell"]]
@@ -184,11 +182,9 @@ def get_last_signal_info(df):
     if len(sell_rows) > 0:
         last_sell = sell_rows.iloc[-1]
         sell_time = pd.to_datetime(last_sell["datetime"])
-        sell_close = round(float(last_sell["close"]), 2)
         sell_days = (today - sell_time.normalize()).days
     else:
         sell_time = pd.NaT
-        sell_close = None
         sell_days = None
 
     last = df.iloc[-1]
@@ -247,6 +243,15 @@ def get_last_signal_info(df):
         hist_change = None
         hist_daily = None
 
+    # 信号确认
+    if signal in ("BUY", "SELL") and (
+        (signal == "BUY" and buy_days is not None and buy_days < 5) or
+        (signal == "SELL" and sell_days is not None and sell_days < 5)
+    ):
+        confirm = "待确认"
+    else:
+        confirm = "已确认"
+
     return {
         "时间": last["datetime"],
         "收盘价": last_close,
@@ -256,14 +261,7 @@ def get_last_signal_info(df):
         "最新信号": signal,
         "最新信号时间": last["datetime"],
         "最新信号收盘价": last_close,
-
-        "买入信号时间": buy_time,
-        "买入信号收盘价": buy_close,
-        "距离买入信号已过天数": buy_days,
-
-        "卖出信号时间": sell_time,
-        "卖出信号收盘价": sell_close,
-        "距离卖出信号已过天数": sell_days,
+        "信号确认": confirm,
 
         "历史信号": hist_signal,
         "历史信号时间": hist_time,
@@ -1233,11 +1231,11 @@ def run_trade():
             else:
                 signal_df = full_df.copy()
 
-            # 信号排序：多头按距离买入信号天数升序，空头按距离卖出信号天数升序
+            # 信号排序：按距离历史信号已过天数升序
             _bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
-                by=["距离买入信号已过天数", "综合评分"], ascending=[True, False])
+                by=["距离历史信号已过天数", "综合评分"], ascending=[True, False])
             _bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
-                by=["距离卖出信号已过天数", "综合评分"], ascending=[True, False])
+                by=["距离历史信号已过天数", "综合评分"], ascending=[True, False])
             signal_df = pd.concat([_bull, _bear], ignore_index=True)
 
             # 新增字段已由 get_last_signal_info 计算，列顺序由 _signal_cols 控制
@@ -1264,17 +1262,7 @@ def run_trade():
             signal_df["共振均线数量"] = _confluence.iloc[:, 1]
             signal_df["共振均线列表"] = _confluence.iloc[:, 2]
 
-            # 信号确认：BUY/SELL 信号且未满5天为待确认，否则已确认
-            signal_df["信号确认"] = signal_df.apply(
-                lambda r: "待确认"
-                if (r["最新信号"] == "BUY" and pd.notna(r.get("距离买入信号已过天数")) and r["距离买入信号已过天数"] < 5)
-                or (r["最新信号"] == "SELL" and pd.notna(r.get("距离卖出信号已过天数")) and r["距离卖出信号已过天数"] < 5)
-                else "已确认",
-                axis=1
-            )
-            # 插入到信号字段后面
-            _sig_idx = signal_df.columns.get_loc("最新信号") + 1
-            signal_df.insert(_sig_idx, "信号确认", signal_df.pop("信号确认"))
+            # 信号确认已由 get_last_signal_info 计算
 
             # =========================================================
             # 股票名称 + 所属板块（从板块映射表读取）
@@ -1297,8 +1285,6 @@ def run_trade():
                 "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "信号确认",
                 "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
                 "距离历史信号收盘价涨跌幅", "持仓日化收益率", "预计持仓进度",
-                "买入信号时间", "买入信号收盘价", "距离买入信号已过天数",
-                "卖出信号时间", "卖出信号收盘价", "距离卖出信号已过天数",
                 "均线趋势共振方向", "共振均线数量", "共振均线列表",
                 "收益率", "年化收益率", "买入持有收益率", "超额收益率",
                 "最大回撤", "夏普比率", "卡尔玛比率",
@@ -1374,7 +1360,7 @@ def run_trade():
             logic_rows = [
                 # ==================== Sheet级说明 ====================
                 {"类型": "Sheet说明", "名称": "信号扫描",
-                 "统计逻辑": "用最终选择均线周期筛选全量回测明细（不再过滤NONE），不限于是否有买入/卖出信号；多头按距离买入信号天数升序+综合评分降序排，空头按距离卖出信号天数升序+综合评分降序排；并计算距离买入/卖出信号收盘价涨跌幅、均线趋势共振分析、信号确认；从data/stocks_plates.parquet关联股票名称和所属板块"},
+                 "统计逻辑": "用最终选择均线周期筛选全量回测明细（不再过滤NONE），不限于是否有买入/卖出信号；多头和空头均按距离历史信号已过天数升序+综合评分降序排；均线趋势共振分析、信号确认由 get_last_signal_info 计算；从data/stocks_plates.parquet关联股票名称和所属板块"},
                 {"类型": "Sheet说明", "名称": "个股最终选择均线周期",
                  "统计逻辑": "合并全量最优均线周期和窗口稳定性最优均线周期，对比两参数的综合评分、稳定性评分，计算加权总分后选择最终均线周期，并输出策略表现"},
                 {"类型": "Sheet说明", "名称": "全量回测明细",
@@ -1444,22 +1430,6 @@ def run_trade():
                  "统计逻辑": "距离历史信号收盘价涨跌幅 / 距离历史信号已过天数，反映持仓期间日均收益率"},
                 {"类型": "信号逻辑", "名称": "预计持仓进度",
                  "统计逻辑": "距离历史信号已过天数 / 平均持仓天数，仅历史信号为买入时计算"},
-                {"类型": "信号逻辑", "名称": "买入信号时间",
-                 "统计逻辑": "df中 buy=True 的最后一条记录时间"},
-                {"类型": "信号逻辑", "名称": "买入信号收盘价",
-                 "统计逻辑": "最近buy信号时的收盘价"},
-                {"类型": "信号逻辑", "名称": "距离买入信号已过天数",
-                 "统计逻辑": "当前日期 - 最近buy信号日期（自然日差）"},
-                {"类型": "信号逻辑", "名称": "卖出信号时间",
-                 "统计逻辑": "df中 sell=True 的最后一条记录时间"},
-                {"类型": "信号逻辑", "名称": "卖出信号收盘价",
-                 "统计逻辑": "最近sell信号时的收盘价"},
-                {"类型": "信号逻辑", "名称": "距离卖出信号已过天数",
-                 "统计逻辑": "当前日期 - 最近sell信号日期（自然日差）"},
-                {"类型": "信号逻辑", "名称": "距离买入信号收盘价涨跌幅",
-                 "统计逻辑": "(当前收盘价 - 买入信号收盘价) / 买入信号收盘价 × 100，正数表示现价高于买入信号价格"},
-                {"类型": "信号逻辑", "名称": "距离卖出信号收盘价涨跌幅",
-                 "统计逻辑": "(当前收盘价 - 卖出信号收盘价) / 卖出信号收盘价 × 100，正数表示现价高于卖出信号价格"},
                 {"类型": "信号逻辑", "名称": "均线趋势共振方向",
                  "统计逻辑": "最终选择均线周期及以下各周期趋势方向全部一致时为多头共振/空头共振，否则为无"},
                 {"类型": "信号逻辑", "名称": "共振均线数量",
