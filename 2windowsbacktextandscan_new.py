@@ -243,28 +243,31 @@ def get_last_signal_info(df):
         hist_change = None
         hist_daily = None
 
-    # 信号确认
+    # 最新信号确认
     if signal in ("BUY", "SELL") and (
         (signal == "BUY" and buy_days is not None and buy_days < 5) or
         (signal == "SELL" and sell_days is not None and sell_days < 5)
     ):
-        confirm = "待确认"
+        confirm = "未确认"
     else:
         confirm = "已确认"
 
+    _date = lambda v: pd.Timestamp(v).date()
+    _opt_date = lambda v: _date(v) if pd.notna(v) else None
+
     return {
-        "时间": last["datetime"],
+        "时间": _opt_date(last["datetime"]),
         "收盘价": last_close,
         "HA收盘价": round(float(last["ha_close"]), 2),
         "HA均线值": round(float(last["ma"]), 2) if not pd.isna(last["ma"]) else None,
         "趋势方向": int(last["dir"]),
         "最新信号": signal,
-        "最新信号时间": last["datetime"],
+        "最新信号时间": _opt_date(last["datetime"]),
         "最新信号收盘价": last_close,
-        "信号确认": confirm,
+        "最新信号确认": confirm,
 
         "历史信号": hist_signal,
-        "历史信号时间": hist_time,
+        "历史信号时间": _opt_date(hist_time),
         "历史信号收盘价": hist_close,
         "距离历史信号已过天数": hist_days,
         "距离历史信号收盘价涨跌幅": hist_change,
@@ -1262,7 +1265,7 @@ def run_trade():
             signal_df["共振均线数量"] = _confluence.iloc[:, 1]
             signal_df["共振均线列表"] = _confluence.iloc[:, 2]
 
-            # 信号确认已由 get_last_signal_info 计算
+            # 信号字段由 get_last_signal_info 统一计算
 
             # =========================================================
             # 股票名称 + 所属板块（从板块映射表读取）
@@ -1282,7 +1285,7 @@ def run_trade():
             _signal_cols = [
                 "股票代码", "股票名称", "所属板块", "K线周期", "均线周期", "综合评分", "策略表现",
                 "时间", "收盘价", "HA收盘价", "HA均线值",
-                "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "信号确认",
+                "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
                 "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
                 "距离历史信号收盘价涨跌幅", "持仓日化收益率", "预计持仓进度",
                 "均线趋势共振方向", "共振均线数量", "共振均线列表",
@@ -1414,8 +1417,8 @@ def run_trade():
                  "统计逻辑": "最新一根K线的时间"},
                 {"类型": "信号逻辑", "名称": "最新信号收盘价",
                  "统计逻辑": "最新一根K线的收盘价"},
-                {"类型": "信号逻辑", "名称": "信号确认",
-                 "统计逻辑": "BUY/SELL信号出现且距离最近一次信号天数<5为待确认（周K未走完），否则为已确认；HOLD/WATCH始终为已确认"},
+                {"类型": "信号逻辑", "名称": "最新信号确认",
+                 "统计逻辑": "BUY/SELL信号出现且距离最近一次信号天数<5为未确认（周K未正式收盘），否则为已确认；HOLD/WATCH始终为已确认"},
                 {"类型": "信号逻辑", "名称": "历史信号",
                  "统计逻辑": "取最近一次买入/卖出事件；若该事件已确认（>=5天前）则直接使用，否则回退到上一次已确认的事件"},
                 {"类型": "信号逻辑", "名称": "历史信号时间",
