@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
+DATA_DIR = "data"
+MA_LIST = [5, 10, 20, 30, 60]
+
 # 中->英列名映射（all_summary.xlsx 信号扫描 sheet → 内部使用）
 COL_MAP = {
     "股票代码": "symbol",
@@ -133,6 +136,45 @@ def _js(val):
     return val
 
 
+def load_kline_map(symbols):
+    """加载个股周K线数据，计算HA-MA信号，返回K线+信号标记"""
+    kline_map = {}
+    for symbol in symbols:
+        path = os.path.join(DATA_DIR, f"{symbol}_1w.parquet")
+        if not os.path.exists(path):
+            continue
+        df = pd.read_parquet(path)
+        df = df.sort_values("datetime").tail(150).reset_index(drop=True)
+
+        ha_close = (df["open"] + df["high"] + df["low"] + df["close"]) / 4
+        dates = df["datetime"].dt.strftime("%Y-%m-%d").tolist()
+
+        # 收集所有MA周期的买入/卖出信号位置
+        buy_indices, sell_indices = set(), set()
+        for ma_len in MA_LIST:
+            ma = ha_close.rolling(ma_len, min_periods=ma_len).mean()
+            dir_vals = np.where(ma > ma.shift(1), 1, -1)
+            for i in range(1, len(dir_vals)):
+                if dir_vals[i] == 1 and dir_vals[i - 1] == -1:
+                    buy_indices.add(i)
+                elif dir_vals[i] == -1 and dir_vals[i - 1] == 1:
+                    sell_indices.add(i)
+
+        kline_map[symbol] = {
+            "k": [[
+                dates[i],
+                float(_js(df["open"].iloc[i])),
+                float(_js(df["high"].iloc[i])),
+                float(_js(df["low"].iloc[i])),
+                float(_js(df["close"].iloc[i])),
+                float(_js(df["volume"].iloc[i])),
+            ] for i in range(len(df))],
+            "b": [[dates[i], float(df["low"].iloc[i])] for i in sorted(buy_indices)],
+            "s": [[dates[i], float(df["high"].iloc[i])] for i in sorted(sell_indices)],
+        }
+    return kline_map
+
+
 def build_json_data(signals):
 
     # 1. 概览
@@ -204,6 +246,23 @@ def build_json_data(signals):
             rows, cols = _signal_rows(sig, SELL_COLS)
             signal_sections[sig] = {"rows": rows, "cols": cols, "labels": SELL_LABELS}
 
+    # 8. 个股周K线数据
+    symbols = signals["symbol"].unique().tolist()
+    kline_map = load_kline_map(symbols)
+
+    # 9. 个股收盘价数据（信号表格下的迷你走势图，最近3年）
+    price_map = {}
+    for sym in symbols:
+        path = os.path.join(DATA_DIR, f"{sym}_1w.parquet")
+        if not os.path.exists(path):
+            continue
+        pdf = pd.read_parquet(path)
+        pdf = pdf.sort_values("datetime").tail(156).reset_index(drop=True)
+        price_map[sym] = {
+            "d": pdf["datetime"].dt.strftime("%Y-%m-%d").tolist(),
+            "c": [round(float(v), 2) for v in pdf["close"].values],
+        }
+
     return {
         "overview": overview,
         "bubble": bubble_data,
@@ -213,6 +272,8 @@ def build_json_data(signals):
         "has_score": has_score,
         "table_cols": TABLE_COLS,
         "signal_sections": signal_sections,
+        "kline_map": kline_map,
+        "price_map": price_map,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -298,10 +359,12 @@ tr:hover {{ background:#faf9f5; }}
     <button class="tab active" onclick="switchTab('dashboard')">策略信号</button>
     <button class="tab" onclick="switchTab('bubble')">信号表现</button>
     <button class="tab" onclick="switchTab('overview')">数据总览</button>
+    <button class="tab" onclick="switchTab('kline')">走势图</button>
   </div>
   <div id="tab-dashboard" class="tab-content active"></div>
   <div id="tab-bubble" class="tab-content"></div>
   <div id="tab-overview" class="tab-content"></div>
+  <div id="tab-kline" class="tab-content"></div>
 </div>
 
 <script>
@@ -421,9 +484,48 @@ function switchTab(name) {{
   document.querySelectorAll('.tab').forEach(function(el){{ el.classList.remove('active'); }});
   document.getElementById('tab-'+name).classList.add('active');
   var tabs = document.querySelector('.tab-bar').children;
-  for(var i=0;i<tabs.length;i++) {{ var t=tabs[i].textContent; if((name==='dashboard'&&t.includes('策略信号'))||(name==='bubble'&&t.includes('信号表现'))||(name==='overview'&&t.includes('数据总览'))) {{ tabs[i].classList.add('active'); }} }}
+  for(var i=0;i<tabs.length;i++) {{ var t=tabs[i].textContent; if((name==='dashboard'&&t.includes('策略信号'))||(name==='bubble'&&t.includes('信号表现'))||(name==='overview'&&t.includes('数据总览'))||(name==='kline'&&t.includes('走势图'))) {{ tabs[i].classList.add('active'); }} }}
   if(name==='bubble') renderBubbleChart('fullBubbleChart');
   if(name==='overview') renderOverviewTable();
+  if(name==='kline') initKlineTab();
+}}
+
+// 走势图 — ECharts K线+信号标记
+var KLINE_CHART = null;
+function renderKlineChart(symbol) {{
+  var data = D.kline_map[symbol];
+  if(!data) return;
+  if(!KLINE_CHART) {{ KLINE_CHART = echarts.init(document.getElementById('klineChart')); }}
+  var dates = data.k.map(function(r){{return r[0];}});
+  var ohlc = data.k.map(function(r){{return [r[1],r[4],r[3],r[2]];}});
+  var buys = (data.b||[]).map(function(m){{return {{coord:[m[0],m[1]],symbol:'pin',symbolSize:24,itemStyle:{{color:'#27ae60'}},label:{{show:true,formatter:'买入',fontSize:10,color:'#27ae60'}}}};}});
+  var sells = (data.s||[]).map(function(m){{return {{coord:[m[0],m[1]],symbol:'pin',symbolSize:24,itemStyle:{{color:'#e74c3c'}},label:{{show:true,formatter:'卖出',fontSize:10,color:'#e74c3c'}}}};}});
+  KLINE_CHART.setOption({{
+    tooltip:{{trigger:'axis',axisPointer:{{type:'cross'}}}},
+    legend:{{show:false}},
+    grid:{{left:50,right:20,bottom:60,top:20}},
+    xAxis:{{type:'category',data:dates,axisLabel:{{rotate:45,fontSize:10}},axisLine:{{onZero:false}}}},
+    yAxis:{{type:'value',scale:true,splitLine:{{lineStyle:{{color:'#f0efe9'}}}}}},
+    dataZoom:[{{type:'inside',xAxisIndex:0}},{{type:'slider',xAxisIndex:0,height:20,bottom:5}}],
+    series:[{{
+      type:'candlestick',name:'K线',
+      data:ohlc,
+      itemStyle:{{color:'#e74c3c',color0:'#27ae60',borderColor:'#e74c3c',borderColor0:'#27ae60'}},
+      markPoint:{{data:buys.concat(sells),symbol:'arrowUp',symbolSize:28}}
+    }}]
+  }});
+  window.addEventListener('resize',function(){{KLINE_CHART.resize();}});
+}}
+function initKlineTab() {{
+  var wrap = document.getElementById('tab-kline');
+  var symbols = Object.keys(D.kline_map||{{}});
+  if(!symbols.length) {{ wrap.innerHTML = '<div class="chart-box"><h3>走势图</h3><p style="color:#aaa;font-size:13px;padding:20px 0;">暂无K线数据</p></div>'; return; }}
+  if(wrap.querySelector('select')) {{ renderKlineChart(wrap.querySelector('select').value); return; }}
+  var h = '<div class="chart-box" style="display:flex;flex-direction:column;"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;"><h3 style="margin:0;">走势图</h3><select id="klineSel" onchange="renderKlineChart(this.value)" style="padding:4px 8px;border:1px solid #e8e6dc;border-radius:6px;font-size:13px;background:#fff;color:#141413;">';
+  symbols.forEach(function(s){{ h+='<option value="'+s+'">'+s+'</option>'; }});
+  h += '</select></div><div id="klineChart" style="width:100%;height:500px;"></div></div>';
+  wrap.innerHTML = h;
+  renderKlineChart(symbols[0]);
 }}
 
 // 按信号分类的4个板块（可排序）
@@ -436,7 +538,37 @@ function sortSig(sig, key) {{
   else {{ st.key = key; st.dir = 1; }}
   _renderSigTableBody(sig);
 }}
+var MINI_CHARTS = {{}};
+function renderMiniChart(domId, pd, sigTime, sigType) {{
+  try {{
+    var chart = echarts.init(document.getElementById(domId));
+    var s = {{type:'line',data:pd.c,smooth:true,showSymbol:false,lineStyle:{{color:'#27ae60',width:1}},areaStyle:{{color:'rgba(39,174,96,0.12)'}}}};
+    if (sigTime && pd.d) {{
+      var idx = pd.d.indexOf(sigTime.substring(0,10));
+      if (idx>=0) {{
+        var sc = sigType==='BUY'||sigType==='HOLD'?'#27ae60':'#e74c3c';
+        s.markPoint = {{silent:true,symbol:'pin',symbolSize:24,data:[{{coord:[idx,pd.c[idx]],itemStyle:{{color:sc}}}}]}};
+      }}
+    }}
+    chart.setOption({{
+      grid:{{show:false,left:2,right:2,top:6,bottom:4}},
+      xAxis:{{show:false,type:'category',data:pd.d}},
+      yAxis:{{show:false,scale:true}},
+      series:[s]
+    }});
+    MINI_CHARTS[domId] = chart;
+  }}catch(e){{}}
+}}
+function toggleChart(el) {{
+  var cr=el.nextElementSibling;
+  if(!cr||!cr.classList.contains('cr'))return;
+  var hidden=cr.style.display==='none';
+  cr.style.display=hidden?'':'none';
+  if(hidden){{var mc=cr.querySelector('.mc');if(mc){{var k=mc.id;MINI_CHARTS[k]&&MINI_CHARTS[k].resize();}}}}
+}}
 function _renderSigTableBody(sig) {{
+  var oldBody=document.getElementById('sigBody-'+sig);
+  if(oldBody){{oldBody.querySelectorAll('.mc').forEach(function(div){{var c=MINI_CHARTS[div.id];if(c){{c.dispose();delete MINI_CHARTS[div.id];}}}});}}
   var st = sigSort[sig];
   var rows = st.rows.slice().sort(function(a,b){{
     var va = a[st.key], vb = b[st.key];
@@ -446,7 +578,8 @@ function _renderSigTableBody(sig) {{
   }});
   var h = '';
   rows.forEach(function(r){{
-    h += '<tr>';
+    var symClean = r.symbol.replace(/\\./g,'_');
+    h += '<tr class="dr" onclick="toggleChart(this)">';
     st.cols.forEach(function(c){{
       var v = r[c];
       if ((c === 'buy_signal_change' || c === 'buy_signal_days') && (sig === 'SELL' || sig === 'WATCH')) v = null;
@@ -462,13 +595,19 @@ function _renderSigTableBody(sig) {{
         }}
       }}
       else if (c === 'buy_signal_time' || c === 'sell_signal_time') v = v || '-';
-      else if (c === 'stock_name') {{ v = v || '-'; h += '<td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+v+'">'+v+'</td>'; return; }}
       else v = v != null ? v : '-';
       h += '<td>' + (c === 'symbol' ? '<strong>' + v + '</strong>' : v) + '</td>';
     }});
     h += '</tr>';
+    h += '<tr class="cr" id="cr-'+sig+'-'+symClean+'"><td colspan="'+st.cols.length+'" style="padding:0 12px 6px;"><div class="mc" id="mc-'+sig+'-'+symClean+'" style="height:90px;width:100%;"></div></td></tr>';
   }});
   document.getElementById('sigBody-' + sig).innerHTML = h;
+  rows.forEach(function(r){{
+    var pd = D.price_map && D.price_map[r.symbol];
+    if (!pd || !pd.d || !pd.d.length) return;
+    var sigTime = r.buy_signal_time || r.sell_signal_time || null;
+    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, sig);
+  }});
 }}
 function renderSignalSections() {{
   var h = '<div class="sig-grid">';
