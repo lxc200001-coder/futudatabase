@@ -10,7 +10,6 @@ import pandas as pd
 from datetime import datetime
 
 DATA_DIR = "data"
-MA_LIST = [5, 10, 20, 30, 60]
 
 # 中->英列名映射（all_summary.xlsx 信号扫描 sheet → 内部使用）
 COL_MAP = {
@@ -21,19 +20,19 @@ COL_MAP = {
     "HA收盘价": "ha_close",
     "HA均线值": "ma_value",
     "趋势方向": "dir",
-    "信号": "signal",
-    "买入信号时间": "buy_signal_time",
-    "买入信号收盘价": "buy_signal_close",
-    "距离买入信号已过天数": "buy_signal_days",
-    "卖出信号时间": "sell_signal_time",
-    "卖出信号收盘价": "sell_signal_close",
-    "距离卖出信号已过天数": "sell_signal_days",
+    "最新信号": "signal",
+    "最新信号时间": "signal_time",
+    "最新信号收盘价": "signal_close",
+    "最新信号确认": "signal_confirm",
     "综合评分": "score",
-    "预计持仓进度": "hold_progress",
+    "历史信号": "hist_signal",
+    "历史信号时间": "hist_time",
+    "历史信号收盘价": "hist_close",
+    "距离历史信号已过天数": "hist_days",
+    "距离历史信号收盘价涨跌幅": "hist_change",
     "持仓日化收益率": "daily_return",
+    "预计持仓进度": "hold_progress",
     "股票名称": "stock_name",
-    "距离买入信号收盘价涨跌幅": "buy_signal_change",
-    "距离卖出信号收盘价涨跌幅": "sell_signal_change",
 }
 
 # 表格中展示的列（英文key → 中文标签）
@@ -47,7 +46,9 @@ TABLE_COLS = [
     ("hold_progress", "预计持仓进度"),
     ("daily_return", "日化收益率"),
     ("dir", "方向"),
-    ("buy_signal_days", "买入天数"),
+    ("signal_time", "信号时间"),
+    ("hist_days", "历史天数"),
+    ("hist_change", "涨跌幅"),
 ]
 
 
@@ -86,10 +87,6 @@ def load_data():
                 # 方向值标准化：中文 → 数值
                 if "dir" in df.columns:
                     df["dir"] = df["dir"].map({"多头": 1, "空头": -1}).astype(int)
-                if "buy_signal_time" in df.columns:
-                    df["buy_signal_time"] = pd.to_datetime(df["buy_signal_time"])
-                if "sell_signal_time" in df.columns:
-                    df["sell_signal_time"] = pd.to_datetime(df["sell_signal_time"])
                 print(f"读取 all_summary.xlsx → 信号扫描: {len(df)} 行")
                 return df, summary_path
         except Exception as e:
@@ -102,10 +99,6 @@ def load_data():
         print(f"读取（fallback）: {fpath}")
         df = pd.read_excel(fpath, sheet_name="all_raw")
         df["datetime"] = pd.to_datetime(df["datetime"])
-        if "buy_signal_time" in df.columns:
-            df["buy_signal_time"] = pd.to_datetime(df["buy_signal_time"])
-        if "sell_signal_time" in df.columns:
-            df["sell_signal_time"] = pd.to_datetime(df["sell_signal_time"])
         return df, fpath
 
     print("错误: 未找到 all_summary.xlsx 或 scan_result_*.xlsx")
@@ -136,8 +129,9 @@ def _js(val):
     return val
 
 
-def load_kline_map(symbols):
-    """加载个股周K线数据，计算HA-MA信号，返回K线+信号标记"""
+def load_kline_map(symbols, selected_ma=None):
+    """加载个股周K线数据，从回测交易记录提取开平仓位置，返回K线+信号标记
+    selected_ma: {symbol: ma_period} 按选定均线周期过滤交易"""
     kline_map = {}
     for symbol in symbols:
         path = os.path.join(DATA_DIR, f"{symbol}_1w.parquet")
@@ -145,20 +139,43 @@ def load_kline_map(symbols):
             continue
         df = pd.read_parquet(path)
         df = df.sort_values("datetime").tail(150).reset_index(drop=True)
-
-        ha_close = (df["open"] + df["high"] + df["low"] + df["close"]) / 4
         dates = df["datetime"].dt.strftime("%Y-%m-%d").tolist()
+        date_set = set(dates)
 
-        # 收集所有MA周期的买入/卖出信号位置
-        buy_indices, sell_indices = set(), set()
-        for ma_len in MA_LIST:
-            ma = ha_close.rolling(ma_len, min_periods=ma_len).mean()
-            dir_vals = np.where(ma > ma.shift(1), 1, -1)
-            for i in range(1, len(dir_vals)):
-                if dir_vals[i] == 1 and dir_vals[i - 1] == -1:
-                    buy_indices.add(i)
-                elif dir_vals[i] == -1 and dir_vals[i - 1] == 1:
-                    sell_indices.add(i)
+        # 从回测交易记录提取开/平仓信号
+        trade_path = os.path.join("trades", f"{symbol}_trades.xlsx")
+        buy_coords, sell_coords = [], []
+        if os.path.exists(trade_path):
+            try:
+                # 查找包含交易明细的 sheet（按列名定位，不依赖 sheet 顺序）
+                xl = pd.ExcelFile(trade_path)
+                trades_df = None
+                for sn in xl.sheet_names:
+                    tmp = pd.read_excel(trade_path, sheet_name=sn, nrows=0)
+                    if "开仓时间" in tmp.columns:
+                        trades_df = pd.read_excel(trade_path, sheet_name=sn)
+                        break
+                if trades_df is None:
+                    continue  # 该股票无交易记录
+                # 按选定均线周期过滤
+                ma_val = selected_ma.get(symbol) if selected_ma else None
+                if ma_val is not None:
+                    trades_df = trades_df[trades_df["均线周期"] == ma_val]
+                for _, row in trades_df.iterrows():
+                    open_ts = row["开仓时间"]
+                    open_str = pd.Timestamp(open_ts).strftime("%Y-%m-%d")
+                    if open_str in date_set:
+                        idx = dates.index(open_str)
+                        buy_coords.append([idx, float(df["low"].iloc[idx])])
+
+                    close_val = row["平仓时间"]
+                    if pd.notna(close_val):
+                        close_str = pd.Timestamp(close_val).strftime("%Y-%m-%d")
+                        if close_str in date_set:
+                            idx = dates.index(close_str)
+                            sell_coords.append([idx, float(df["high"].iloc[idx])])
+            except Exception as e:
+                print(f"  [{symbol}] 读取交易记录失败: {e}")
 
         kline_map[symbol] = {
             "k": [[
@@ -169,8 +186,8 @@ def load_kline_map(symbols):
                 float(_js(df["close"].iloc[i])),
                 float(_js(df["volume"].iloc[i])),
             ] for i in range(len(df))],
-            "b": [[dates[i], float(df["low"].iloc[i])] for i in sorted(buy_indices)],
-            "s": [[dates[i], float(df["high"].iloc[i])] for i in sorted(sell_indices)],
+            "b": buy_coords,
+            "s": sell_coords,
         }
     return kline_map
 
@@ -211,19 +228,16 @@ def build_json_data(signals):
             "name": str(r.get("stock_name", "")) if pd.notna(r.get("stock_name")) else "",
             "score": round(float(r["score"]), 1),
             "signal": str(r.get("signal", "")),
-            "buy_days": int(r["buy_signal_days"]) if pd.notna(r.get("buy_signal_days")) else 0,
-            "buy_change": round(float(r["buy_signal_change"]), 2) if pd.notna(r.get("buy_signal_change")) else 0,
-            "sell_change": round(float(r["sell_signal_change"]), 2) if pd.notna(r.get("sell_signal_change")) else 0,
+            "hist_days": int(r["hist_days"]) if pd.notna(r.get("hist_days")) else 0,
+            "hist_change": round(float(r["hist_change"]), 2) if pd.notna(r.get("hist_change")) else 0,
             "annual_return": round(float(r.get("年化收益率", 0) or 0), 2) if pd.notna(r.get("年化收益率")) else 0,
             "win_rate": round(float(r.get("盈利交易率", 0) or 0), 2) if pd.notna(r.get("盈利交易率")) else 0,
         })
     bubble_data.sort(key=lambda x: x["score"], reverse=True)
 
     # 7. 按信号分类的个股列表
-    BUY_COLS = ["symbol", "buy_signal_close", "close", "buy_signal_change", "buy_signal_time", "buy_signal_days", "score"]
-    BUY_LABELS = ["代码", "买入价", "收盘价", "距买入价涨跌幅", "买入时间", "买入天数", "评分"]
-    SELL_COLS = ["symbol", "sell_signal_close", "close", "sell_signal_change", "sell_signal_time", "sell_signal_days", "score"]
-    SELL_LABELS = ["代码", "卖出价", "收盘价", "距卖出价涨跌幅", "卖出时间", "卖出天数", "评分"]
+    SIG_COLS = ["symbol", "signal_time", "signal_close", "hist_days", "hist_change", "score"]
+    SIG_LABELS = ["代码", "信号时间", "信号收盘价", "历史天数", "涨跌幅", "评分"]
 
     def _signal_rows(sig_type, cols):
         sub = signals[signals["signal"] == sig_type].copy()
@@ -239,16 +253,13 @@ def build_json_data(signals):
 
     signal_sections = {}
     for sig in ["BUY", "SELL", "HOLD", "WATCH"]:
-        if sig in ("BUY", "HOLD"):
-            rows, cols = _signal_rows(sig, BUY_COLS)
-            signal_sections[sig] = {"rows": rows, "cols": cols, "labels": BUY_LABELS}
-        else:
-            rows, cols = _signal_rows(sig, SELL_COLS)
-            signal_sections[sig] = {"rows": rows, "cols": cols, "labels": SELL_LABELS}
+        rows, cols = _signal_rows(sig, SIG_COLS)
+        signal_sections[sig] = {"rows": rows, "cols": cols, "labels": SIG_LABELS}
 
     # 8. 个股周K线数据
     symbols = signals["symbol"].unique().tolist()
-    kline_map = load_kline_map(symbols)
+    selected_ma = {r["symbol"]: r["ma"] for _, r in latest.iterrows()}
+    kline_map = load_kline_map(symbols, selected_ma)
 
     # 9. 个股收盘价数据（信号表格下的迷你走势图，最近3年）
     price_map = {}
@@ -257,7 +268,7 @@ def build_json_data(signals):
         if not os.path.exists(path):
             continue
         pdf = pd.read_parquet(path)
-        pdf = pdf.sort_values("datetime").tail(156).reset_index(drop=True)
+        pdf = pdf.sort_values("datetime").tail(150).reset_index(drop=True)
         price_map[sym] = {
             "d": pdf["datetime"].dt.strftime("%Y-%m-%d").tolist(),
             "c": [round(float(v), 2) for v in pdf["close"].values],
@@ -418,7 +429,7 @@ function renderTable() {{
     h+='<td>'+(r.hold_progress!=null?(r.hold_progress*100).toFixed(1)+'%':'-')+'</td>';
     h+='<td>'+(r.daily_return!=null?(r.daily_return*100).toFixed(2)+'%':'-')+'</td>';
     h+='<td class="'+dirCls+'">'+(r.dir===1?'↑ 多头':'↓ 空头')+'</td>';
-    h+='<td>'+(r.buy_signal_days!=null?r.buy_signal_days:'-')+'</td>';
+    h+='<td>'+(r.hist_days!=null?r.hist_days:'-')+'</td>';
     h+='</tr>';
   }});
   h+='</tbody></table>';
@@ -444,7 +455,7 @@ function renderBubbleChart(domId) {{
       name:SIG_NAMES[sig],type:'scatter',
       data:pts.map(function(d,i){{
         var yVal;
-        if(BUBBLE_Y_MODE==='change') yVal=(sig==='BUY'||sig==='HOLD')?d.buy_change:d.sell_change;
+        if(BUBBLE_Y_MODE==='change') yVal=d.hist_change||0;
         else if(BUBBLE_Y_MODE==='annualReturn') yVal=d.annual_return||0;
         else yVal=d.win_rate||0;
         var absVal=Math.abs(yVal);
@@ -498,8 +509,6 @@ function renderKlineChart(symbol) {{
   if(!KLINE_CHART) {{ KLINE_CHART = echarts.init(document.getElementById('klineChart')); }}
   var dates = data.k.map(function(r){{return r[0];}});
   var ohlc = data.k.map(function(r){{return [r[1],r[4],r[3],r[2]];}});
-  var buys = (data.b||[]).map(function(m){{return {{coord:[m[0],m[1]],symbol:'pin',symbolSize:24,itemStyle:{{color:'#27ae60'}},label:{{show:true,formatter:'买入',fontSize:10,color:'#27ae60'}}}};}});
-  var sells = (data.s||[]).map(function(m){{return {{coord:[m[0],m[1]],symbol:'pin',symbolSize:24,itemStyle:{{color:'#e74c3c'}},label:{{show:true,formatter:'卖出',fontSize:10,color:'#e74c3c'}}}};}});
   KLINE_CHART.setOption({{
     tooltip:{{trigger:'axis',axisPointer:{{type:'cross'}}}},
     legend:{{show:false}},
@@ -510,8 +519,21 @@ function renderKlineChart(symbol) {{
     series:[{{
       type:'candlestick',name:'K线',
       data:ohlc,
-      itemStyle:{{color:'#e74c3c',color0:'#27ae60',borderColor:'#e74c3c',borderColor0:'#27ae60'}},
-      markPoint:{{data:buys.concat(sells),symbol:'arrowUp',symbolSize:28}}
+      itemStyle:{{color:'#e74c3c',color0:'#27ae60',borderColor:'#e74c3c',borderColor0:'#27ae60'}}
+    }},{{
+      type:'scatter',name:'买入信号',
+      data:(data.b||[]).map(function(m){{return [m[0],m[1]];}}),
+      symbol:'pin',symbolSize:24,symbolRotate:180,
+      itemStyle:{{color:'#27ae60'}},
+      label:{{show:true,formatter:'买入',fontSize:10,color:'#27ae60'}},
+      xAxisIndex:0,yAxisIndex:0,z:10
+    }},{{
+      type:'scatter',name:'卖出信号',
+      data:(data.s||[]).map(function(m){{return [m[0],m[1]];}}),
+      symbol:'pin',symbolSize:24,symbolRotate:0,
+      itemStyle:{{color:'#e74c3c'}},
+      label:{{show:true,formatter:'卖出',fontSize:10,color:'#e74c3c'}},
+      xAxisIndex:0,yAxisIndex:0,z:10
     }}]
   }});
   window.addEventListener('resize',function(){{KLINE_CHART.resize();}});
@@ -539,19 +561,29 @@ function sortSig(sig, key) {{
   _renderSigTableBody(sig);
 }}
 var MINI_CHARTS = {{}};
-function renderMiniChart(domId, pd, sigTime, sigType) {{
+function renderMiniChart(domId, pd, sigTime, sigType, km) {{
   try {{
     var chart = echarts.init(document.getElementById(domId));
     var s = {{type:'line',data:pd.c,smooth:true,showSymbol:false,lineStyle:{{color:'#27ae60',width:1}},areaStyle:{{color:'rgba(39,174,96,0.12)'}}}};
+    var mpData = [];
+    // 历史所有买入标记（浅绿色，大头针朝下）
+    if (km && km.b) {{
+      km.b.forEach(function(m){{mpData.push({{coord:[m[0],m[1]],symbol:'pin',symbolSize:10,symbolRotate:180,itemStyle:{{color:'#a8dfc0'}}}});}});
+    }}
+    // 历史所有卖出标记（浅红色，大头针朝上）
+    if (km && km.s) {{
+      km.s.forEach(function(m){{mpData.push({{coord:[m[0],m[1]],symbol:'pin',symbolSize:10,symbolRotate:0,itemStyle:{{color:'#f5b7b1'}}}});}});
+    }}
+    // 当前信号标记（彩色）
     if (sigTime && pd.d) {{
       var idx = pd.d.indexOf(sigTime.substring(0,10));
       if (idx>=0) {{
         var sc = sigType==='BUY'||sigType==='HOLD'?'#27ae60':'#e74c3c';
         var isUp = sigType==='BUY'||sigType==='HOLD';
-        var isUp = sigType==='BUY'||sigType==='HOLD';
-        s.markPoint = {{silent:true,symbol:'pin',symbolSize:16,symbolRotate:isUp?180:0,data:[{{coord:[idx,pd.c[idx]],itemStyle:{{color:sc}}}}]}};
+        mpData.push({{coord:[idx,pd.c[idx]],symbol:'pin',symbolSize:16,symbolRotate:isUp?180:0,itemStyle:{{color:sc}}}});
       }}
     }}
+    if (mpData.length) s.markPoint = {{silent:true,data:mpData}};
     chart.setOption({{
       grid:{{show:false,left:2,right:2,top:4,bottom:4}},
       xAxis:{{show:false,type:'category',data:pd.d}},
@@ -584,11 +616,9 @@ function _renderSigTableBody(sig) {{
     h += '<tr class="dr" onclick="toggleChart(this)">';
     st.cols.forEach(function(c){{
       var v = r[c];
-      if ((c === 'buy_signal_change' || c === 'buy_signal_days') && (sig === 'SELL' || sig === 'WATCH')) v = null;
-      if ((c === 'sell_signal_change' || c === 'sell_signal_days') && (sig === 'BUY' || sig === 'HOLD')) v = null;
-      if (c === 'close' || c === 'buy_signal_close' || c === 'sell_signal_close') v = v != null ? v.toFixed(2) : '-';
+      if (c === 'close' || c === 'signal_close') v = v != null ? v.toFixed(2) : '-';
       else if (c === 'score') v = v != null ? v.toFixed(1) : '-';
-      else if (c === 'buy_signal_change' || c === 'sell_signal_change') {{
+      else if (c === 'hist_change') {{
         if (v == null) {{ v = '-'; }}
         else {{
           var _nv=Number(v);
@@ -596,7 +626,7 @@ function _renderSigTableBody(sig) {{
           v='<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+_nv.toFixed(2)+'%</span>';
         }}
       }}
-      else if (c === 'buy_signal_time' || c === 'sell_signal_time') v = v || '-';
+      else if (c === 'signal_time') v = v || '-';
       else v = v != null ? v : '-';
       h += '<td>' + (c === 'symbol' ? '<strong>' + v + '</strong>' : v) + '</td>';
     }});
@@ -607,8 +637,9 @@ function _renderSigTableBody(sig) {{
   rows.forEach(function(r){{
     var pd = D.price_map && D.price_map[r.symbol];
     if (!pd || !pd.d || !pd.d.length) return;
-    var sigTime = r.buy_signal_time || r.sell_signal_time || null;
-    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, sig);
+    var sigTime = r.signal_time || null;
+    var km = D.kline_map && D.kline_map[r.symbol];
+    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, sig, km);
   }});
 }}
 function renderSignalSections() {{
@@ -616,7 +647,7 @@ function renderSignalSections() {{
   ['BUY','SELL','HOLD','WATCH'].forEach(function(sig){{
     var sec = D.signal_sections[sig];
     if (!sec || !sec.rows.length) {{ var c0=sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6'; h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+c0+'"><h3>'+SIG_NAMES[sig]+'信号 <span style="color:'+c0+'">0</span></h3><p style="color:#aaa;font-size:13px;padding:12px 0;">暂无数据</p></div>'; return; }}
-    var defKey = (sig === 'BUY' || sig === 'HOLD') ? 'buy_signal_days' : 'sell_signal_days';
+    var defKey = 'hist_days';
     sigSort[sig] = {{key: defKey, dir: 1, rows: sec.rows.slice(), cols: sec.cols, labels: sec.labels}};
     var sigColor = sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6';
     h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+sigColor+'"><h3>'+SIG_NAMES[sig]+'信号 <span style="color:'+sigColor+'">'+sec.rows.length+'</span></h3>';
@@ -638,11 +669,9 @@ var OVERVIEW_COLS = [
   ['ma','均线'],['score','评分'],['策略表现','策略表现'],
   ['datetime','时间'],['close','收盘价'],
   ['dir','方向'],['signal','信号'],
-  ['buy_signal_time','买入时间'],['buy_signal_close','买入价'],
-  ['buy_signal_days','买入天数'],['hold_progress','预计持仓进度'],
-  ['buy_signal_change','买入涨幅'],['daily_return','日化收益'],
-  ['sell_signal_time','卖出时间'],['sell_signal_close','卖出价'],
-  ['sell_signal_days','卖出天数'],['sell_signal_change','卖出涨幅'],
+  ['signal_time','信号时间'],['signal_close','信号收盘价'],
+  ['hist_days','历史天数'],['hist_change','涨跌幅'],
+  ['hold_progress','预计持仓进度'],['daily_return','日化收益'],
   ['均线趋势共振方向','共振方向'],
   ['年化收益率','年化收益'],
   ['交易次数','交易次数'],['盈利交易率','胜率'],['盈利因子','盈利因子'],['盈亏比','盈亏比'],
@@ -652,9 +681,8 @@ var OVERVIEW_COLS = [
 var OV_KEY=null, OV_DIR=1; var HIDDEN_KEYS=['ma','策略表现','dir','hold_progress','均线趋势共振方向','盈亏比','最大连续盈利次数','最大连续亏损次数','平均持仓天数','所属板块'];
 function renderOverviewTable() {{
   var rows = D.table.slice();
-  // 默认排序：多头在前（买入天数升序→评分降序），空头在后（卖出天数升序→评分降序）
-  rows.sort(function(a,b){{if(a.dir!==b.dir)return a.dir===1?-1:1;if(a.dir===1){{var da=a.buy_signal_days!=null?a.buy_signal_days:9999;var db=b.buy_signal_days!=null?b.buy_signal_days:9999;if(da!==db)return da-db;var sa=a.score!=null?a.score:-9999;var sb=b.score!=null?b.score:-9999;return sb-sa;}}else{{var da=a.sell_signal_days!=null?a.sell_signal_days:9999;var db=b.sell_signal_days!=null?b.sell_signal_days:9999;if(da!==db)return da-db;var sa=a.score!=null?a.score:-9999;var sb=b.score!=null?b.score:-9999;return sb-sa;}}}});
-  rows.forEach(function(r){{if(r.signal==='SELL'||r.signal==='WATCH'){{r.buy_signal_days=null;r.buy_signal_change=null;}}if(r.signal==='BUY'||r.signal==='HOLD'){{r.sell_signal_days=null;r.sell_signal_change=null;}}}});
+  // 默认排序：多头在前（历史天数升序→评分降序），空头在后（历史天数升序→评分降序）
+  rows.sort(function(a,b){{if(a.dir!==b.dir)return a.dir===1?-1:1;var da=a.hist_days!=null?a.hist_days:9999;var db=b.hist_days!=null?b.hist_days:9999;if(da!==db)return da-db;var sa=a.score!=null?a.score:-9999;var sb=b.score!=null?b.score:-9999;return sb-sa;}});
   if(OV_KEY) rows.sort(function(a,b){{var va=a[OV_KEY],vb=b[OV_KEY];if(va==null)return 1;if(vb==null)return -1;if(typeof va==='string')return va<vb?-OV_DIR:va>vb?OV_DIR:0;return (va-vb)*OV_DIR;}});
   // 预扫描自动 min/max
   var _mn={{}},_mx={{}};
@@ -669,19 +697,19 @@ function renderOverviewTable() {{
     h+='<tr>';
     OVERVIEW_COLS.forEach(function(c){{
       var key=c[0],v=r[key];
-      if((key==='buy_signal_change'||key==='buy_signal_days') && (r.signal==='SELL'||r.signal==='WATCH')) v=null;
-      if((key==='sell_signal_change'||key==='sell_signal_days') && (r.signal==='BUY'||r.signal==='HOLD')) v=null;
+      
+      
       if(key==='策略表现'){{var _pc={{'优':'tag-excellent','良':'tag-good','中':'tag-medium','差':'tag-poor','劣':'tag-bad'}};v=String(v).replace(/[\\d.]+/g,'').trim();var _pl=String(v);v=_pl?'<span class="tag '+(_pc[_pl]||'tag-medium')+'">'+_pl+'</span>':'-';h+='<td class="ma-col">'+v+'</td>';return;}}
 if(key==='ma'){{h+='<td class="ma-col">'+v+'</td>';return;}}
-      if(v==null && (key==='score'||key==='daily_return'||key==='年化收益率'||key==='盈利交易率'||key==='buy_signal_change'||key==='sell_signal_change'||key==='hold_progress')){{h+='<td>'+_bar(0,'#b0aea5','-')+'</td>';return;}}
+      if(v==null && (key==='score'||key==='daily_return'||key==='年化收益率'||key==='盈利交易率'||key==='hist_change'||key==='hold_progress')){{h+='<td>'+_bar(0,'#b0aea5','-')+'</td>';return;}}
       if(v==null && HIDDEN_KEYS.includes(key)){{h+='<td class="ma-col">-</td>';return;}}
       if(v==null){{h+='<td>-</td>';return;}}
       if(key==='score'){{var _r=_mn.score===_mx.score?0:(v-_mn.score)/(_mx.score-_mn.score)*100;var _sc=(function(){{var _m={{'优':'#606060','良':'#808080','中':'#a0a0a0','差':'#c0c0c0','劣':'#e0e0e0'}};var _s=String(r['策略表现']||'').replace(/[\\d.]+/g,'').trim();return _m[_s]||'#a0a0a0';}})();h+='<td>'+_bar(_r,_sc,v.toFixed(1))+'</td>';return;}}
       if(key==='daily_return'){{var _r=Math.min(Math.abs(v)/2,1)*100;var _c=v>=0?'#27ae60':'#e74c3c';h+='<td>'+_bar(_r,_c,v.toFixed(2)+'%')+'</td>';return;}}
       if(key==='年化收益率'){{var _r=Math.min(v/30,1)*100;h+='<td>'+_bar(_r,v>20?'#27ae60':'#8bc34a',v.toFixed(2)+'%')+'</td>';return;}}
       if(key==='盈利交易率'){{var _r=_mn['盈利交易率']===_mx['盈利交易率']?0:(v-_mn['盈利交易率'])/(_mx['盈利交易率']-_mn['盈利交易率'])*100;h+='<td>'+_bar(_r,v>40?'#27ae60':'#8bc34a',v.toFixed(1)+'%')+'</td>';return;}}
-      if(key==='close'||key==='buy_signal_close'||key==='sell_signal_close'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}
-      if(key==='buy_signal_change'||key==='sell_signal_change'){{
+      if(key==='close'||key==='signal_close'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}
+      if(key==='hist_change'){{
         var _pct=Math.min(Math.abs(v),50)/50*100,_cl=v>0?'#27ae60':'#e74c3c',_pm=v>0?'+':'';
         h+='<td style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+v.toFixed(2)+'%</span></td>';
         return;
@@ -689,7 +717,7 @@ if(key==='ma'){{h+='<td class="ma-col">'+v+'</td>';return;}}
       if(key==='dir'){{h+='<td class="ma-col '+(v===1?'dir-up':'dir-down')+'">'+(v===1?'↑ 多头':'↓ 空头')+'</td>';return;}}
       if(key==='signal'){{var _sn=v==='BUY'?'买入':v==='SELL'?'卖出':v==='HOLD'?'持有':'观察';var _sc=v==='BUY'?'tag-buy':v==='SELL'?'tag-sell':v==='HOLD'?'tag-hold':'tag-watch';h+='<td><span class="tag '+_sc+'">'+_sn+'</span></td>';return;}}
       if(key==='hold_progress'){{var _r=Math.min(v,1)*100;h+='<td class="ma-col">'+_bar(_r,'#b0aea5',(v*100).toFixed(2)+'%')+'</td>';return;}}
-      if(key==='buy_signal_time'||key==='sell_signal_time'||key==='datetime'){{h+='<td>'+(v||'-')+'</td>';return;}}
+      if(key==='signal_time'||key==='datetime'){{h+='<td>'+(v||'-')+'</td>';return;}}
       if(key==='盈利因子'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}if(key==='盈亏比'){{h+='<td class="ma-col">'+v.toFixed(2)+'</td>';return;}}
       var _lk={{"所属板块":80,"共振均线列表":50,stock_name:60,"策略表现":30,"回测周期":50,"年化收益率":60}};
       var _cls=HIDDEN_KEYS.includes(key)?' class="ma-col"':'';
