@@ -78,12 +78,10 @@ def load_data():
                 df["ma"] = df["ma"].astype(int)
                 # 信号值标准化：中文 → 英文
                 if "signal" in df.columns:
-                    df["signal"] = df["signal"].replace({
-                        "买入": "BUY",
-                        "卖出": "SELL",
-                        "持有": "HOLD",
-                        "观察": "WATCH",
-                    })
+                    _sig_map = {"买入": "BUY", "卖出": "SELL", "持有": "HOLD", "观察": "WATCH"}
+                    df["signal"] = df["signal"].replace(_sig_map)
+                if "hist_signal" in df.columns:
+                    df["hist_signal"] = df["hist_signal"].replace({"买入": "BUY", "卖出": "SELL"})
                 # 方向值标准化：中文 → 数值
                 if "dir" in df.columns:
                     df["dir"] = df["dir"].map({"多头": 1, "空头": -1}).astype(int)
@@ -626,9 +624,10 @@ function _renderSigTableBody(sig) {{
   rows.forEach(function(r){{
     var pd = D.price_map && D.price_map[r.symbol];
     if (!pd || !pd.d || !pd.d.length) return;
-    var sigTime = r.signal_time || null;
+    var sigTime = r.hist_time || null;
+    var histSig = r.hist_signal || null;
     var km = D.kline_map && D.kline_map[r.symbol];
-    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, sig, km);
+    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, histSig, km);
   }});
 }}
 function renderSignalSections() {{

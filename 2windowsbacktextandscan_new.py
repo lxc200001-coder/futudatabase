@@ -1725,9 +1725,11 @@ def _build_trade_cache():
                 tmp = pd.read_excel(fpath, sheet_name=sn, nrows=0)
                 if "开仓时间" in tmp.columns:
                     trades = pd.read_excel(fpath, sheet_name=sn)
-                    # 过滤强制结算（不计入正常平仓标记）
+                    # 强制结算：保留开仓，清除平仓数据
                     if "交易状态" in trades.columns:
-                        trades = trades[trades["交易状态"] != "未平仓(强制结算)"]
+                        mask = trades["交易状态"] == "未平仓(强制结算)"
+                        trades.loc[mask, "平仓时间"] = pd.NaT
+                        trades.loc[mask, "平仓价格"] = None
                     # 按最终选择均线周期过滤
                     ma = sel_ma.get(symbol)
                     if ma is not None:
