@@ -129,9 +129,44 @@ def _js(val):
     return val
 
 
+def _load_trade_cache():
+    """读取/构建统一交易记录缓存（避免逐个读取 xlsx）"""
+    cache_path = "trades/all_trades.parquet"
+    if os.path.exists(cache_path):
+        return pd.read_parquet(cache_path)
+
+    records = []
+    for f in os.listdir("trades"):
+        if not f.endswith("_trades.xlsx"):
+            continue
+        symbol = f.replace("_trades.xlsx", "")
+        fpath = os.path.join("trades", f)
+        try:
+            xl = pd.ExcelFile(fpath)
+            for sn in xl.sheet_names:
+                tmp = pd.read_excel(fpath, sheet_name=sn, nrows=0)
+                if "开仓时间" in tmp.columns:
+                    trades = pd.read_excel(fpath, sheet_name=sn)
+                    trades["股票代码"] = symbol
+                    records.append(trades)
+                    break
+        except Exception:
+            continue
+    if not records:
+        return pd.DataFrame(columns=["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"])
+    all_trades = pd.concat(records, ignore_index=True)
+    # 只保留需要的列
+    keep = ["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"]
+    all_trades = all_trades[[c for c in keep if c in all_trades.columns]]
+    all_trades.to_parquet(cache_path, index=False)
+    print(f"  交易记录缓存已生成: {cache_path} ({len(all_trades)} 条)")
+    return all_trades
+
+
 def load_kline_map(symbols, selected_ma=None):
     """加载个股周K线数据，从回测交易记录提取开平仓位置，返回K线+信号标记
     selected_ma: {symbol: ma_period} 按选定均线周期过滤交易"""
+    all_trades = _load_trade_cache()
     kline_map = {}
     for symbol in symbols:
         path = os.path.join(DATA_DIR, f"{symbol}_1w.parquet")
@@ -142,40 +177,25 @@ def load_kline_map(symbols, selected_ma=None):
         dates = df["datetime"].dt.strftime("%Y-%m-%d").tolist()
         date_set = set(dates)
 
-        # 从回测交易记录提取开/平仓信号
-        trade_path = os.path.join("trades", f"{symbol}_trades.xlsx")
+        # 从缓存中过滤该股票+选定均线周期的交易记录
         buy_coords, sell_coords = [], []
-        if os.path.exists(trade_path):
-            try:
-                # 查找包含交易明细的 sheet（按列名定位，不依赖 sheet 顺序）
-                xl = pd.ExcelFile(trade_path)
-                trades_df = None
-                for sn in xl.sheet_names:
-                    tmp = pd.read_excel(trade_path, sheet_name=sn, nrows=0)
-                    if "开仓时间" in tmp.columns:
-                        trades_df = pd.read_excel(trade_path, sheet_name=sn)
-                        break
-                if trades_df is None:
-                    continue  # 该股票无交易记录
-                # 按选定均线周期过滤
-                ma_val = selected_ma.get(symbol) if selected_ma else None
-                if ma_val is not None:
-                    trades_df = trades_df[trades_df["均线周期"] == ma_val]
-                for _, row in trades_df.iterrows():
-                    open_ts = row["开仓时间"]
-                    open_str = pd.Timestamp(open_ts).strftime("%Y-%m-%d")
-                    if open_str in date_set:
-                        idx = dates.index(open_str)
-                        buy_coords.append([idx, float(df["low"].iloc[idx])])
+        sym_trades = all_trades[all_trades["股票代码"] == symbol]
+        ma_val = selected_ma.get(symbol) if selected_ma else None
+        if ma_val is not None:
+            sym_trades = sym_trades[sym_trades["均线周期"] == ma_val]
 
-                    close_val = row["平仓时间"]
-                    if pd.notna(close_val):
-                        close_str = pd.Timestamp(close_val).strftime("%Y-%m-%d")
-                        if close_str in date_set:
-                            idx = dates.index(close_str)
-                            sell_coords.append([idx, float(df["high"].iloc[idx])])
-            except Exception as e:
-                print(f"  [{symbol}] 读取交易记录失败: {e}")
+        for _, row in sym_trades.iterrows():
+            open_str = pd.Timestamp(row["开仓时间"]).strftime("%Y-%m-%d")
+            if open_str in date_set:
+                idx = dates.index(open_str)
+                buy_coords.append([idx, float(df["low"].iloc[idx])])
+
+            close_val = row["平仓时间"]
+            if pd.notna(close_val):
+                close_str = pd.Timestamp(close_val).strftime("%Y-%m-%d")
+                if close_str in date_set:
+                    idx = dates.index(close_str)
+                    sell_coords.append([idx, float(df["high"].iloc[idx])])
 
         kline_map[symbol] = {
             "k": [[
