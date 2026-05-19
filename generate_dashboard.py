@@ -737,12 +737,13 @@ def main():
     out_dir = os.path.dirname(fpath) or "results"
     out_path = os.path.join(out_dir, "dashboard.html")
     # 同时输出到 docs/ 用于 GitHub Pages
-    docs_path = os.path.join("docs", "dashboard.html")
+    docs_path = os.path.join("docs", "index.html")
     with open(docs_path, "w", encoding="utf-8") as f:
         f.write(html)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"仪表盘已生成: {out_path}")
+    print(f"GitHub Pages: {docs_path}")
 
 
 if __name__ == "__main__":
