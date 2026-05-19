@@ -317,6 +317,7 @@ def generate_html(data):
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#faf9f5; color:#141413; }}
 .header {{ padding:24px 32px; text-align:center; }}
+.header .logo-wrap {{ display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:4px; }}
 .header h1 {{ font-size:20px; font-weight:600; color:#141413; }}
 .header p {{ font-size:13px; color:#b0aea5; margin-top:2px; }}
 .container {{ margin:0 auto; padding:20px; max-width:1400px; }}
@@ -377,7 +378,17 @@ tr:hover {{ background:#faf9f5; }}
 </head>
 <body>
 <div class="header">
-  <h1><strong style="font-weight:600;">低频周K趋势跟随</strong>-交易策略信号</h1>
+  <div class="logo-wrap">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="flex-shrink:0;">
+      <rect x="2" y="2" width="24" height="24" rx="6" fill="#2980b9"/>
+      <rect x="7" y="15" width="5" height="7" rx="0.6" fill="white" opacity="0.9"/>
+      <rect x="11.5" y="12" width="2" height="6" rx="0.6" fill="white" opacity="0.9"/>
+      <rect x="16" y="8" width="5" height="13" rx="0.6" fill="white"/>
+      <circle cx="20.7" cy="6" r="2" fill="#e74c3c" stroke="white" stroke-width="1"/>
+      <path d="M20.7 4.5v3M19.2 6h3" stroke="white" stroke-width="1" stroke-linecap="round"/>
+    </svg>
+    <h1><strong style="font-weight:600;">低频周K趋势跟随</strong>-交易策略信号</h1>
+  </div>
   <p>生成时间: {data["generated_at"]}</p>
 </div>
 <div class="container" style="padding-bottom:32px;">
