@@ -380,12 +380,16 @@ tr:hover {{ background:#faf9f5; }}
 <div class="header">
   <div class="logo-wrap">
     <svg width="30" height="30" viewBox="0 0 32 32" fill="none" style="flex-shrink:0;">
-      <circle cx="16" cy="16" r="15" stroke="#2980b9" stroke-width="1.8"/>
-      <path d="M6 24 L11 18 L15 20 L20 12 L24 15 L28 8" stroke="#2980b9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      <path d="M20 12 h4 v3" stroke="#2980b9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      <circle cx="28" cy="8" r="1.8" fill="#2980b9"/>
-      <rect x="7" y="19" width="3" height="5" rx="0.5" fill="#2980b9" opacity="0.35"/>
-      <rect x="16" y="13" width="3" height="9" rx="0.5" fill="#2980b9" opacity="0.35"/>
+      <circle cx="16" cy="16" r="14.5" stroke="#141413" stroke-width="1.4"/>
+      <path d="M10 23 C8 19, 7 14, 10 11 C13 8, 16 10, 17 12" stroke="#141413" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M17 12 C18 10, 20 9, 22 11 C24 13, 22 16, 20 18" stroke="#141413" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M13 15 C15 17, 18 16, 20 14" stroke="#141413" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M14 6 C18 6, 22 8, 21 12" stroke="#141413" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M9 24 C7 26, 7 28, 9 28" stroke="#141413" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M12 25 C11 27, 12 28, 13 28" stroke="#141413" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="9" cy="8" r="0.7" fill="#141413"/>
+      <circle cx="11.5" cy="6.5" r="0.7" fill="#141413"/>
+      <circle cx="14.5" cy="6.5" r="0.7" fill="#141413"/>
     </svg>
     <h1><strong style="font-weight:600;">低频周K趋势跟随</strong>-交易策略信号</h1>
   </div>
