@@ -379,13 +379,13 @@ tr:hover {{ background:#faf9f5; }}
 <body>
 <div class="header">
   <div class="logo-wrap">
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style="flex-shrink:0;">
-      <rect x="2" y="2" width="24" height="24" rx="6" fill="#2980b9"/>
-      <rect x="7" y="15" width="5" height="7" rx="0.6" fill="white" opacity="0.9"/>
-      <rect x="11.5" y="12" width="2" height="6" rx="0.6" fill="white" opacity="0.9"/>
-      <rect x="16" y="8" width="5" height="13" rx="0.6" fill="white"/>
-      <circle cx="20.7" cy="6" r="2" fill="#e74c3c" stroke="white" stroke-width="1"/>
-      <path d="M20.7 4.5v3M19.2 6h3" stroke="white" stroke-width="1" stroke-linecap="round"/>
+    <svg width="30" height="30" viewBox="0 0 32 32" fill="none" style="flex-shrink:0;">
+      <circle cx="16" cy="16" r="15" stroke="#2980b9" stroke-width="1.8"/>
+      <path d="M6 24 L11 18 L15 20 L20 12 L24 15 L28 8" stroke="#2980b9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M20 12 h4 v3" stroke="#2980b9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <circle cx="28" cy="8" r="1.8" fill="#2980b9"/>
+      <rect x="7" y="19" width="3" height="5" rx="0.5" fill="#2980b9" opacity="0.35"/>
+      <rect x="16" y="13" width="3" height="9" rx="0.5" fill="#2980b9" opacity="0.35"/>
     </svg>
     <h1><strong style="font-weight:600;">低频周K趋势跟随</strong>-交易策略信号</h1>
   </div>
