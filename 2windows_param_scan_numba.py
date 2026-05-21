@@ -1172,7 +1172,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
         ax.set_title(f"{code}  参数敏感性分析（均值±标准差）", fontsize=14, fontweight="bold", pad=16)
         ax.grid(axis="y", alpha=0.3)
         plt.tight_layout()
-        path = os.path.join(save_dir, f"{code_safe}_sensitivity.png")
+        path = os.path.join(save_dir, f"{code_safe}_参数敏感性分析.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         plt.close()
 
