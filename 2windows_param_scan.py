@@ -1103,7 +1103,7 @@ def run_trade():
     # =============================================
     # 写入汇总 Excel
     # =============================================
-    out = os.path.join(TRADE_DIR, "all_summary.xlsx")
+    out = os.path.join(TRADE_DIR, "param_scan_all_summary.xlsx")
 
     with pd.ExcelWriter(out, engine="openpyxl") as writer:
 
