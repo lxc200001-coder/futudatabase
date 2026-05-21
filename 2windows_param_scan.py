@@ -846,6 +846,10 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
         ax.set_ylabel("均线周期", fontsize=11)
         ax.tick_params(axis="x", rotation=45)
         ax.tick_params(axis="y", rotation=0)
+        ax.text(0.5, 1.02,
+                "▎黑/深灰/浅灰底 = 窗口内第1/2/3名   ▎★Y轴 = 最优参数   ▎行=均线周期 列=回测窗口 值越大颜色越暖（最大回撤除外）",
+                transform=ax.transAxes, ha="center", va="bottom",
+                fontsize=9, color="#666666")
         plt.tight_layout()
         path = os.path.join(save_dir, f"{code_safe}_{metric}.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
