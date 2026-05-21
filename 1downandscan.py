@@ -3,7 +3,6 @@ import time
 import requests
 import urllib3
 import pandas as pd
-import numpy as np
 
 from collections import deque
 from datetime import datetime
@@ -16,13 +15,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 配置
 # =========================================================
 DATA_DIR = "data"
-RESULT_DIR = "results"
 SYMBOL_FILE = "symbols.csv"
 
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(RESULT_DIR, exist_ok=True)
 
-MA_LIST = [5, 10, 20, 30, 60]
 
 # =========================================================
 # API限速
@@ -460,234 +456,6 @@ def run_download():
         print("\n无数据，跳过总表保存")
 
 
-# =========================================================
-# HA计算
-# =========================================================
-def calc_heikin_ashi(df):
-
-    ha_close = (df["open"] + df["high"] + df["low"] + df["close"]) / 4
-
-    ha_open = np.zeros(len(df))
-
-    ha_open[0] = (df["open"].iloc[0] + df["close"].iloc[0]) / 2
-
-    for i in range(1, len(df)):
-        ha_open[i] = (ha_open[i - 1] + ha_close.iloc[i - 1]) / 2
-
-    ha_dir = np.where(ha_close > ha_open, 1, -1)
-
-    return ha_close, ha_open, ha_dir
-
-
-# =========================================================
-# 指标计算
-# =========================================================
-def calc_signal(df, ma_len):
-
-    df = df.copy()
-
-    ha_close, _, _ = calc_heikin_ashi(df)
-
-    df["ha_close"] = ha_close
-
-    df["ma"] = df["ha_close"].rolling(ma_len, min_periods=ma_len).mean()
-
-    # MA相等时 = -1
-    df["dir"] = np.where(df["ma"] > df["ma"].shift(1), 1, -1)
-
-    df["buy"] = (df["dir"] == 1) & (df["dir"].shift(1) == -1)
-
-    df["sell"] = (df["dir"] == -1) & (df["dir"].shift(1) == 1)
-
-    return df
-
-
-# =========================================================
-# 获取最近信号
-# =========================================================
-def get_last_signal_info(df):
-
-    today = pd.Timestamp.today().normalize()
-
-    # BUY
-    buy_rows = df[df["buy"]]
-
-    if len(buy_rows) > 0:
-
-        last_buy = buy_rows.iloc[-1]
-
-        buy_time = pd.to_datetime(last_buy["datetime"])
-
-        buy_close = round(float(last_buy["close"]), 2)
-
-        buy_days = (today - buy_time.normalize()).days
-
-    else:
-
-        buy_time = pd.NaT
-        buy_close = None
-        buy_days = None
-
-    # SELL
-    sell_rows = df[df["sell"]]
-
-    if len(sell_rows) > 0:
-
-        last_sell = sell_rows.iloc[-1]
-
-        sell_time = pd.to_datetime(last_sell["datetime"])
-
-        sell_close = round(float(last_sell["close"]), 2)
-
-        sell_days = (today - sell_time.normalize()).days
-
-    else:
-
-        sell_time = pd.NaT
-        sell_close = None
-        sell_days = None
-
-    return (
-        buy_time,
-        buy_close,
-        buy_days,
-        sell_time,
-        sell_close,
-        sell_days
-    )
-
-
-# =========================================================
-# 指标扫描
-# =========================================================
-def run_scan():
-
-    symbols = load_symbols(SYMBOL_FILE)
-
-    results = []
-
-    for code in symbols:
-
-        path = os.path.join(DATA_DIR, f"{code}_1w.parquet")
-
-        if not os.path.exists(path):
-
-            print(code, "无数据")
-
-            continue
-
-        df = pd.read_parquet(path)
-
-        df = df.sort_values("datetime").reset_index(drop=True)
-
-        if len(df) < max(MA_LIST) + 5:
-
-            print(code, "数据不足")
-
-            continue
-
-        for ma in MA_LIST:
-
-            df_tmp = calc_signal(df, ma)
-
-            last = df_tmp.iloc[-1]
-
-            signal = "NONE"
-
-            if last["buy"]:
-                signal = "BUY"
-
-            elif last["sell"]:
-                signal = "SELL"
-
-            (
-                buy_time,
-                buy_close,
-                buy_days,
-                sell_time,
-                sell_close,
-                sell_days
-            ) = get_last_signal_info(df_tmp)
-
-            results.append({
-
-                "symbol": code,
-                "ma": ma,
-                "datetime": last["datetime"],
-                "close": round(last["close"], 2),
-                "ha_close": round(last["ha_close"], 2),
-                "ma_value": round(last["ma"], 2),
-                "dir": int(last["dir"]),
-                "signal": signal,
-
-                "buy_signal_time": buy_time,
-                "buy_signal_close": buy_close,
-                "buy_signal_days": buy_days,
-
-                "sell_signal_time": sell_time,
-                "sell_signal_close": sell_close,
-                "sell_signal_days": sell_days
-            })
-
-    # DataFrame
-
-    rename_map = {
-
-        "symbol": "股票代码",
-        "ma": "均线周期",
-        "datetime": "时间",
-        "close": "收盘价",
-        "ha_close": "HA收盘价",
-        "ma_value": "HA均线值",
-        "dir": "趋势方向",
-        "signal": "信号",
-
-        "buy_signal_time": "买入信号时间",
-        "buy_signal_close": "买入信号收盘价",
-        "buy_signal_days": "距离买入信号已过天数",
-
-        "sell_signal_time": "卖出信号时间",
-        "sell_signal_close": "卖出信号收盘价",
-        "sell_signal_days": "距离卖出信号已过天数"
-    }
-
-    df_result = pd.DataFrame(results)
-
-    signal_df = df_result[df_result["signal"] != "NONE"].copy()
-
-    # 控制台输出
-    print("\n==============================")
-    print("最新指标提醒")
-    print("==============================")
-
-    if len(signal_df) > 0:
-        print(signal_df)
-    else:
-        print("无最新信号")
-
-    # Excel输出
-    # 中文版本（用于展示）
-    df_all_cn = df_result.rename(columns=rename_map)
-    df_signal_cn = signal_df.rename(columns=rename_map)
-
-    # Excel输出
-    excel_path = os.path.join(
-        RESULT_DIR,
-        f"scan_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    )
-
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-
-        # 英文原始数据（方便回测/调试）
-        df_result.to_excel(writer, sheet_name="all_raw", index=False)
-        signal_df.to_excel(writer, sheet_name="signal_raw", index=False)
-
-        # 中文展示数据（给人看）
-        df_all_cn.to_excel(writer, sheet_name="all", index=False)
-        df_signal_cn.to_excel(writer, sheet_name="signal", index=False)
-
-    print("\n结果保存:", excel_path)
-
 
 # =========================================================
 # 主入口
@@ -699,6 +467,3 @@ if __name__ == "__main__":
 
     # 板块信息同步
     run_plate_sync()
-
-    # 指标扫描
-    run_scan()
