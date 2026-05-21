@@ -525,9 +525,8 @@ def generate_windows(df=None, end_date=None):
         windows.append((start, cur))
         cur += pd.DateOffset(years=STEP_YEARS)
 
-    # 确保最后一个窗口覆盖全部数据
-    if not windows or windows[-1][1] < end + pd.Timedelta(days=1):
-        windows.append((start, end + pd.Timedelta(days=1)))
+    # 追加一个完整步长窗口，替代非整年兜底
+    windows.append((start, cur))
 
     return windows
 
@@ -936,8 +935,8 @@ def _process_one_stock(code, windows=None):
         if window_trades_merged:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=FutureWarning)
-                pd.concat(window_trades_merged, ignore_index=True, sort=False).to_excel(
-                    writer, sheet_name="交易日志明细", index=False)
+                _tdf = pd.concat(window_trades_merged, ignore_index=True, sort=False)
+                _round_display(_tdf).to_excel(writer, sheet_name="交易日志明细", index=False)
 
         # =============================================
         # 参数扫描结果汇总
@@ -945,17 +944,20 @@ def _process_one_stock(code, windows=None):
         if window_summary_rows:
             ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
             apply_cn_mapping(ws_df)
-            ws_df.to_excel(writer, sheet_name="参数扫描结果汇总", index=False)
+            _round_display(ws_df, PCT_COLS).to_excel(writer, sheet_name="参数扫描结果汇总", index=False)
+            _set_pct_format(writer.sheets["参数扫描结果汇总"], ws_df, PCT_COLS)
 
             score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
             if not score_pivot.empty:
-                score_pivot.to_excel(writer, sheet_name="综合评分明细", index=False)
+                _round_display(score_pivot).to_excel(writer, sheet_name="综合评分明细", index=False)
             if not rank_pivot.empty:
-                rank_pivot.to_excel(writer, sheet_name="综合评分排名", index=False)
+                _round_display(rank_pivot).to_excel(writer, sheet_name="综合评分排名", index=False)
 
             stability_df = calc_param_stability(window_summary_rows)
             if not stability_df.empty:
-                stability_df.to_excel(writer, sheet_name="参数稳定性分析", index=False)
+                _stab_pct = ["盈利窗口占比", "年化收益率平均值"]
+                _round_display(stability_df, _stab_pct).to_excel(writer, sheet_name="参数稳定性分析", index=False)
+                _set_pct_format(writer.sheets["参数稳定性分析"], stability_df, _stab_pct)
                 stock_stability_dfs.append(stability_df)
 
                 best_stab_ma = (
@@ -965,7 +967,8 @@ def _process_one_stock(code, windows=None):
                 )
                 best_result = ws_df[ws_df["均线周期"] == best_stab_ma].copy()
                 if not best_result.empty:
-                    best_result.to_excel(writer, sheet_name="最优参数结果", index=False)
+                    _round_display(best_result, PCT_COLS).to_excel(writer, sheet_name="最优参数结果", index=False)
+                    _set_pct_format(writer.sheets["最优参数结果"], best_result, PCT_COLS)
 
         for ws_sheet in writer.sheets.values():
             _apply_sheet_format(ws_sheet)
@@ -1107,7 +1110,7 @@ def run_trade():
                             "交易次数", "盈利交易率", "盈利因子", "盈亏比",
                             "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
                             "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
-                            "初始资金", "最终资金", "窗口"]:
+                            "初始资金", "最终资金", "窗口", "窗口内有效数据周期"]:
                     if col in last:
                         row[col] = last[col]
             signal_rows.append(row)
@@ -1174,10 +1177,13 @@ def run_trade():
         signal_df["股票名称"] = None
         signal_df["所属板块"] = None
 
+    # 趋势方向/最新信号 转为中文
+    apply_cn_mapping(signal_df)
+
     # =============================================
     # 写入汇总 Excel
     # =============================================
-    out = os.path.join(TRADE_DIR, "param_scan_all_summary.xlsx")
+    out = os.path.join(TRADE_DIR, "all_summary_param_scan.xlsx")
 
     with pd.ExcelWriter(out, engine="openpyxl") as writer:
 
@@ -1236,7 +1242,7 @@ def run_trade():
         logic_rows = [
             # ── Sheet 说明 ──
             {"类型": "Sheet说明", "名称": "信号扫描",
-             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（BUY/SELL/HOLD/WATCH）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
+             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（买入/卖出/持有/观察）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
             {"类型": "Sheet说明", "名称": "参数扫描汇总",
              "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（含综合评分、窗口标签、收益/风险指标等）"},
             {"类型": "Sheet说明", "名称": "综合评分明细",
@@ -1262,7 +1268,7 @@ def run_trade():
              "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，作为该股票的最优参数"},
             # ── 策略表现 ──
             {"类型": "策略表现", "名称": "策略表现",
-             "统计逻辑": "综合评分与信号强度的可视化标签，综合评分高+BUY信号标记为「强势买入」，综合评分低+SELL信号标记为「弱势卖出」等"},
+             "统计逻辑": "综合评分分档标签：≥80为「1优」，≥60为「2良」，≥40为「3中」，≥20为「4差」，<20为「5劣」"},
             # ── 信号字段 ──
             {"类型": "信号字段", "名称": "时间",
              "统计逻辑": "K线时间戳，格式 yyyy-MM-dd"},
@@ -1273,9 +1279,9 @@ def run_trade():
             {"类型": "信号字段", "名称": "HA均线值",
              "统计逻辑": "HA收盘价的简单移动平均（SMA），周期=参数稳定性选出的最优均线周期"},
             {"类型": "信号字段", "名称": "趋势方向",
-             "统计逻辑": "MA值 > MA.shift(1) 为「多头↑」，否则为「空头↓」"},
+             "统计逻辑": "MA值 > MA.shift(1) 为「多头」，否则为「空头」"},
             {"类型": "信号字段", "名称": "最新信号",
-             "统计逻辑": "MA方向变化判断：dir 由 -1→1 为 BUY，1→-1 为 SELL；非信号状态时多头为 HOLD、空头为 WATCH"},
+             "统计逻辑": "MA方向变化判断：dir 由 -1→1 为买入，1→-1 为卖出；非信号状态时多头为持有、空头为观察"},
             {"类型": "信号字段", "名称": "最新信号时间",
              "统计逻辑": "最近一次 BUY/SELL 信号出现的 K 线时间"},
             {"类型": "信号字段", "名称": "最新信号收盘价",
@@ -1296,7 +1302,7 @@ def run_trade():
              "统计逻辑": "自最新信号以来的日均收益率 = (1 + 总涨跌幅)^(1/持有天数) − 1，衡量买入后的每日平均回报"},
             # ── 共振分析 ──
             {"类型": "共振分析", "名称": "均线趋势共振方向",
-             "统计逻辑": "统计 MA5/MA10/MA20/MA30/MA40 各周期方向，取多数方向作为共振方向；若多头占比≥80%标记为「共振多头↑↑↑」，空头占比≥80%标记为「共振空头↓↓↓」，否则为「方向分歧—」"},
+             "统计逻辑": "统计 MA5/MA10/MA20/MA30/MA40 各周期方向，全部为多头时标记为「多头共振」，全部为空头时标记为「空头共振」，否则为「无」"},
             {"类型": "共振分析", "名称": "共振均线数量",
              "统计逻辑": "与共振方向一致的均线周期数量"},
             {"类型": "共振分析", "名称": "共振均线列表",
@@ -1344,7 +1350,7 @@ def run_trade():
              "统计逻辑": "回测结束后账户总资金 = 初始资金 + 累计盈亏"},
             # ── 窗口信息 ──
             {"类型": "窗口信息", "名称": "窗口",
-             "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表"},
+             "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表；最后一个窗口延伸到下一个完整步长边界（如 ~2027-01-03）"},
             {"类型": "窗口信息", "名称": "窗口内有效数据周期",
              "统计逻辑": "该窗口实际数据的起止日期区间，格式 起始日期~结束日期；若股票上市晚于窗口起始，起始日期为数据首日"},
             # ── 参数选择 ──
