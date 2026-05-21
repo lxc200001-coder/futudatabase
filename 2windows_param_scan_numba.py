@@ -919,70 +919,24 @@ def calc_param_stability(summary_rows):
                  "年化收益率平均值", "年化收益率标准差",
                  "综合评分排名Top3占比", "综合评分排名平均值",
                  "综合评分排名标准差", "综合评分排名第一次数",
-                 "参数稳定性综合评分"]
+                 "参数稳定性综合评分", "是否最优"]
     stats.insert(0, "K线周期", bar_val)
     stats.insert(0, "股票代码", code_val)
 
-    return stats.reindex(columns=col_order)
+    stats = stats.reindex(columns=col_order)
 
-
-def build_cross_stock_stability(all_summary_rows):
-    """跨股票全市场参数稳定性分析。
-
-    输入：所有股票所有窗口的完整回测汇总行。
-    输出：按均线周期聚合，看各 MA 在全市场的综合表现。
-    """
-    df = pd.DataFrame(all_summary_rows)
-    if df.empty:
-        return pd.DataFrame()
-
-    # 排除评分全为0的窗口
-    valid = df.groupby(["股票代码", "窗口"])["综合评分"].transform("max") > 0
-    df = df[valid]
-    if df.empty:
-        return pd.DataFrame()
-
-    # 按均线周期聚合所有股票+所有窗口
-    stats = df.groupby("均线周期").agg(
-        覆盖股票数=("股票代码", "nunique"),
-        覆盖窗口数=("窗口", "nunique"),
-        综合评分平均值=("综合评分", "mean"),
-        综合评分标准差=("综合评分", "std"),
-        年化收益率平均值=("年化收益率", "mean"),
-        年化收益率中位数=("年化收益率", "median"),
-        夏普比率平均值=("夏普比率", "mean"),
-        最大回撤平均值=("最大回撤", "mean"),
-        盈利窗口占比=("年化收益率", lambda x: (x > 0).sum() / max(len(x), 1) * 100),
-        交易次数中位数=("交易次数", "median"),
-    ).reset_index()
-
-    # 全市场稳定性评分（归一化加权）
-    def _norm(series, higher_is_better=True):
-        lo, hi = series.min(), series.max()
-        if hi == lo:
-            return pd.Series(0.5, index=series.index)
-        return (series - lo) / (hi - lo) if higher_is_better else (hi - series) / (hi - lo)
-
-    score_n = _norm(stats["综合评分平均值"], higher_is_better=True)
-    cagr_n = _norm(stats["年化收益率平均值"], higher_is_better=True)
-    sharpe_n = _norm(stats["夏普比率平均值"], higher_is_better=True)
-    dd_n = _norm(stats["最大回撤平均值"], higher_is_better=False)
-    win_n = _norm(stats["盈利窗口占比"], higher_is_better=True)
-
-    stats["全市场稳定性评分"] = (
-        0.30 * score_n + 0.25 * cagr_n + 0.20 * sharpe_n + 0.15 * dd_n + 0.10 * win_n
+    # 标记最优参数（每股票一个最优）
+    stats["是否最优"] = ""
+    idx = (
+        stats
+        .sort_values(["参数稳定性综合评分", "综合评分排名标准差", "年化收益率平均值"],
+                      ascending=[False, True, False])
+        .head(1)
+        .index
     )
-    stats = stats.sort_values("全市场稳定性评分", ascending=False).reset_index(drop=True)
+    stats.loc[idx, "是否最优"] = "最优"
+    return stats
 
-    col_order = [
-        "均线周期", "覆盖股票数", "覆盖窗口数",
-        "综合评分平均值", "综合评分标准差",
-        "年化收益率平均值", "年化收益率中位数",
-        "夏普比率平均值", "最大回撤平均值",
-        "盈利窗口占比", "交易次数中位数",
-        "全市场稳定性评分",
-    ]
-    return stats.reindex(columns=col_order)
 
 
 def build_window_stability(summary_rows):
@@ -1148,9 +1102,6 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
         if pivot.empty:
             continue
 
-        # 计算行平均值
-        pivot["平均值"] = pivot.mean(axis=1)
-
         # 构建标注矩阵
         annot_df = pivot.copy().astype(str)
         for col in pivot.columns:
@@ -1164,7 +1115,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
             ax=ax, cbar_kws={"shrink": 0.8}
         )
 
-        # 每个窗口（含平均值）前3最优格标记：第1黑色、第2深灰、第3浅灰，数字白色
+        # 每个窗口前3最优格标记：第1黑色、第2深灰、第3浅灰，数字白色
         rank_colors = ['#000000', '#555555', '#999999']
         top3_lookup = {}
         for col_idx, col_name in enumerate(pivot.columns):
@@ -1243,9 +1194,6 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
     # 确保列按窗口顺序排列
     pivot = pivot[sorted(pivot.columns)]
 
-    # 计算行平均值
-    pivot["平均值"] = pivot.mean(axis=1)
-
     if pivot.empty:
         return
 
@@ -1297,6 +1245,115 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
     path = os.path.join(save_dir, f"{code_safe}_全窗口参数稳定性热力图.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
+
+
+def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
+    """生成全股票各窗口最优参数热力图。
+    行=股票代码, 列=窗口, 值=最优均线周期。
+    末尾3列为股性指标（不参与热力图上色）。
+    """
+    if all_ws is None or all_ws.empty:
+        return
+
+    best = all_ws[all_ws["是否最优"] == "最优"].copy()
+    if best.empty:
+        return
+
+    pivot = best.pivot_table(
+        index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
+    )
+    pivot = pivot[sorted(pivot.columns)]
+
+    if pivot.empty:
+        return
+
+    # --- 计算股性指标 ---
+    def _row_personality(r):
+        vals = r.dropna()
+        if len(vals) < 2:
+            return pd.Series([0, 0])
+        changes = int((np.diff(vals.values) != 0).sum())
+        std_val = vals.std(ddof=0)
+        return pd.Series([changes, std_val])
+
+    metrics_df = pivot.apply(_row_personality, axis=1)
+    changes_col = metrics_df.iloc[:, 0]
+    std_col = metrics_df.iloc[:, 1]
+
+    score_col = (changes_col.combine(std_col, lambda c, s: round(max(0, 100 - c * 5 - s * 2), 1)))
+
+    # 窗口列（热力图） + 3 个附加列
+    extra_cols = ["最优参数变动次数", "最优参数标准差", "股性评分"]
+    extra_data = pd.DataFrame({
+        "最优参数变动次数": changes_col,
+        "最优参数标准差": std_col.round(2),
+        "股性评分": score_col,
+    }, index=pivot.index)
+
+    n_stocks, n_windows = pivot.shape
+    n_extra = len(extra_cols)
+    fig_height = max(10, n_stocks * 0.22)
+    fig_width = max(12, n_windows * 0.55 + n_extra * 0.9)
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    annot = pivot.map(lambda v: f"{int(v)}" if pd.notna(v) else "")
+
+    sns.heatmap(
+        pivot, annot=annot, fmt="", cmap="YlOrRd",
+        linewidths=0.3, linecolor="#e0e0e0",
+        ax=ax, cbar_kws={"shrink": 0.6, "label": "最优均线周期"},
+    )
+
+    # --- 在热力图右侧绘制 3 个股性指标列（纯文本，不上色）---
+    # 获取热力图的坐标范围
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    cell_w = (x1 - x0) / n_windows
+    cell_h = (y1 - y0) / n_stocks
+
+    # 画浅灰背景区
+    bg_x = x1
+    bg_w = n_extra * cell_w
+    rect = patches.Rectangle(
+        (bg_x, y0), bg_w, y1 - y0,
+        facecolor="#f0f0f0", edgecolor="none", zorder=-1
+    )
+    ax.add_patch(rect)
+
+    # 竖分隔线
+    sep = patches.Rectangle(
+        (x1 - cell_w * 0.03, y0), cell_w * 0.06, y1 - y0,
+        facecolor="#d0d0d0", edgecolor="none", zorder=-1
+    )
+    ax.add_patch(sep)
+
+    # 添加文本
+    for ri in range(n_stocks):
+        for ei in range(n_extra):
+            val = extra_data.iloc[ri, ei]
+            label_str = f"{val}" if pd.notna(val) else ""
+            tx = x1 + (ei + 0.5) * cell_w
+            # heatmap y 轴从上到下，所以 ri=0 在最上面，对应 y1-cell_h/2
+            ty = y1 - (ri + 0.5) * cell_h
+            ax.text(tx, ty, label_str, ha="center", va="center",
+                    fontsize=6, fontfamily="monospace")
+
+    # 设置 x 轴标签包括窗口列 + 附加列
+    all_labels = list(pivot.columns) + extra_cols
+    ax.set_xticks(np.arange(len(all_labels)) + 0.5)
+    ax.set_xticklabels(all_labels, rotation=45, ha="right", fontsize=8)
+
+    ax.set_title("全股票各窗口最优参数变动情况", fontsize=16, fontweight="bold", pad=16)
+    ax.set_xlabel("")
+    ax.set_ylabel("股票代码", fontsize=12)
+    ax.tick_params(axis="y", rotation=0, labelsize=6)
+
+    plt.tight_layout()
+    path = os.path.join(save_dir, "all_全股票各窗口最优参数变动情况热力图.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"全股票最优参数热力图: {path}")
 
 
 # =========================================================
@@ -1380,6 +1437,7 @@ def _process_one_stock(code, windows=None):
         # =============================================
         # 参数扫描结果汇总
         # =============================================
+        window_stability_df = None
         if window_summary_rows:
             ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
             apply_cn_mapping(ws_df)
@@ -1392,24 +1450,8 @@ def _process_one_stock(code, windows=None):
             if not rank_pivot.empty:
                 _round_display(rank_pivot).to_excel(writer, sheet_name="综合评分排名", index=False)
 
-            stability_df = calc_param_stability(window_summary_rows)
             window_stability_df = build_window_stability(window_summary_rows) if window_summary_rows and len(window_summary_rows) > len(MA_LIST) else None
             best_stab_ma = None
-            if not stability_df.empty:
-                _stab_pct = ["盈利窗口占比", "年化收益率平均值"]
-                _round_display(stability_df, _stab_pct).to_excel(writer, sheet_name="参数稳定性分析", index=False)
-                _set_pct_format(writer.sheets["参数稳定性分析"], stability_df, _stab_pct)
-                stock_stability_dfs.append(stability_df)
-
-                best_stab_ma = (
-                    stability_df
-                    .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
-                    .iloc[0]["均线周期"]
-                )
-                best_result = ws_df[ws_df["均线周期"] == best_stab_ma].copy()
-                if not best_result.empty:
-                    _round_display(best_result, PCT_COLS).to_excel(writer, sheet_name="最优参数结果", index=False)
-                    _set_pct_format(writer.sheets["最优参数结果"], best_result, PCT_COLS)
 
             # --- 全窗口参数稳定性分析 ---
             if window_stability_df is not None and not window_stability_df.empty:
@@ -1418,6 +1460,36 @@ def _process_one_stock(code, windows=None):
                     writer, sheet_name="全窗口参数稳定性分析", index=False
                 )
                 _set_pct_format(writer.sheets["全窗口参数稳定性分析"], window_stability_df, _w_pct)
+
+                # 从最后一个窗口取最优均线周期（替代被删除的 calc_param_stability）
+                last_window = sorted(window_stability_df["窗口"].unique())[-1]
+                last_ws_df = window_stability_df[window_stability_df["窗口"] == last_window]
+                best_stab_ma = (
+                    last_ws_df
+                    .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
+                    .iloc[0]["均线周期"]
+                )
+
+                best_result = ws_df[ws_df["均线周期"] == best_stab_ma].copy()
+                if not best_result.empty:
+                    _round_display(best_result, PCT_COLS).to_excel(writer, sheet_name="最优参数结果", index=False)
+                    _set_pct_format(writer.sheets["最优参数结果"], best_result, PCT_COLS)
+
+                # --- 各窗口最优参数变动情况 ---
+                best_ma_per_window = window_stability_df[window_stability_df["是否最优"] == "最优"].copy()
+                if not best_ma_per_window.empty:
+                    pivot_best = best_ma_per_window.pivot_table(
+                        index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
+                    )
+                    pivot_best = pivot_best[sorted(pivot_best.columns)]
+                    # 计算股性指标
+                    vals = pivot_best.iloc[0].dropna()
+                    n_changes = int((np.diff(vals.values) != 0).sum()) if len(vals) >= 2 else 0
+                    std_val = round(vals.std(ddof=0), 2) if len(vals) > 0 else np.nan
+                    pivot_best["最优参数变动次数"] = n_changes
+                    pivot_best["最优参数标准差"] = std_val
+                    pivot_best["股性评分"] = round(max(0, 100 - n_changes * 5 - std_val * 2), 1)
+                    pivot_best.to_excel(writer, sheet_name="各窗口最优参数变动情况")
 
         for ws_sheet in writer.sheets.values():
             _apply_sheet_format(ws_sheet)
@@ -1538,22 +1610,19 @@ def run_trade():
 
     # 计算评分矩阵 + 稳定性分析（提前算好）
     score_all, rank_all = build_score_matrix(all_rows)
-    all_stability = stab_best = None
-    cross_stability = None
-
-    if stability_dfs:
-        all_stability = pd.concat(stability_dfs, ignore_index=True)
-        # 每只股票选参数稳定性综合评分最高的参数，并列时取标准差最小的
+    # 从全市场全窗口参数稳定性分析取最后一个窗口的最优参数（替代被删除的参数稳定性分析）
+    stab_best = None
+    if window_stability_dfs:
+        all_ws_stab = pd.concat(window_stability_dfs, ignore_index=True)
+        last_window = sorted(all_ws_stab["窗口"].unique())[-1]
+        last_ws = all_ws_stab[all_ws_stab["窗口"] == last_window]
         stab_best = (
-            all_stability
+            last_ws
             .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
             .groupby("股票代码", sort=False)
             .head(1)
             .reset_index(drop=True)
         )
-
-    # 跨股票全市场参数稳定性分析
-    cross_stability = build_cross_stock_stability(all_rows)
 
     # =============================================
     # 信号扫描：每只股票用稳定性最优的均线周期
@@ -1648,6 +1717,33 @@ def run_trade():
     apply_cn_mapping(signal_df)
 
     # =============================================
+    # 导出 TradingView 配置文件
+    # =============================================
+    tv_lines = []
+    missing_codes = []
+    for code in sorted(available):
+        match = None
+        if stab_best is not None:
+            m = stab_best[stab_best["股票代码"] == code]
+            if not m.empty:
+                match = int(m.iloc[0]["均线周期"])
+        if match is not None:
+            ticker = code.split(".", 1)[1] if "." in code else code
+            tv_lines.append(f'autoMAPool.put("{ticker}", {match})')
+        else:
+            missing_codes.append(code)
+
+    tv_path = os.path.join(TRADE_DIR, "tradingview_params.txt")
+    with open(tv_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(tv_lines) + "\n")
+    print(f"TradingView 配置文件: {tv_path} 共 {len(tv_lines)} 只股票")
+
+    if missing_codes:
+        print("以下股票未找到最优参数，已跳过:")
+        for c in missing_codes:
+            print(f"  {c}")
+
+    # =============================================
     # 写入汇总 Excel
     # =============================================
     out = os.path.join(TRADE_DIR, "all_summary_param_scan.xlsx")
@@ -1698,26 +1794,40 @@ def run_trade():
             rank_all_out = _round_display(rank_all)
             rank_all_out.to_excel(writer, sheet_name="综合评分排名", index=False)
 
-        # --- 5. 参数稳定性分析 ---
-        if all_stability is not None and not all_stability.empty:
-            stab_pct = ["盈利窗口占比", "年化收益率平均值"]
-            stab_out = _round_display(all_stability, stab_pct)
-            stab_out.to_excel(writer, sheet_name="参数稳定性分析", index=False)
-            _set_pct_format(writer.sheets["参数稳定性分析"], stab_out, stab_pct)
-
-        # --- 6. 全市场参数稳定性分析 ---
-        if cross_stability is not None and not cross_stability.empty:
-            cs_pct = ["年化收益率平均值", "年化收益率中位数", "最大回撤平均值", "盈利窗口占比"]
-            cs_out = _round_display(cross_stability, cs_pct)
-            cs_out.to_excel(writer, sheet_name="全市场参数稳定性分析", index=False)
-            _set_pct_format(writer.sheets["全市场参数稳定性分析"], cs_out, cs_pct)
-
-        # --- 7. 全市场全窗口参数稳定性分析 ---
+        # --- 5. 全市场全窗口参数稳定性分析 ---
         if window_stability_dfs:
             all_ws = pd.concat(window_stability_dfs, ignore_index=True)
             _ws_pct = ["盈利窗口占比", "年化收益率平均值"]
             _round_display(all_ws, _ws_pct).to_excel(writer, sheet_name="全市场全窗口参数稳定性分析", index=False)
             _set_pct_format(writer.sheets["全市场全窗口参数稳定性分析"], all_ws, _ws_pct)
+
+            # --- 各窗口最优参数变动情况 ---
+            best_all_ws = all_ws[all_ws["是否最优"] == "最优"].copy()
+            if not best_all_ws.empty:
+                pivot_best_all = best_all_ws.pivot_table(
+                    index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
+                )
+                pivot_best_all = pivot_best_all[sorted(pivot_best_all.columns)]
+
+                # 计算每只股票的最优参数变动次数和标准差
+                def _row_personality(r):
+                    vals = r.dropna()
+                    if len(vals) < 2:
+                        return pd.Series([0, 0])
+                    changes = int((np.diff(vals.values) != 0).sum())
+                    std_val = vals.std(ddof=0)
+                    return pd.Series([changes, std_val])
+
+                metrics_df = pivot_best_all.apply(_row_personality, axis=1)
+                pivot_best_all["最优参数变动次数"] = metrics_df.iloc[:, 0]
+                pivot_best_all["最优参数标准差"] = metrics_df.iloc[:, 1].round(2)
+
+                # 股性评分固定扣分（无需跨股票归一化）
+                pivot_best_all["股性评分"] = metrics_df.apply(
+                    lambda r: round(max(0, 100 - r.iloc[0] * 5 - r.iloc[1] * 2), 1), axis=1
+                )
+
+                pivot_best_all.to_excel(writer, sheet_name="各窗口最优参数变动情况")
 
         # --- 8. 统计逻辑 ---
         logic_rows = [
@@ -1730,12 +1840,14 @@ def run_trade():
              "统计逻辑": "透视表，行=股票代码+K线周期+均线周期，列=窗口时间区间，值=综合评分"},
             {"类型": "Sheet说明", "名称": "综合评分排名",
              "统计逻辑": "透视表，同上结构，值改为窗口内排名（每窗口每股票内的参数间排名，同分取最小排名）"},
-            {"类型": "Sheet说明", "名称": "参数稳定性分析",
-             "统计逻辑": "按均线周期聚合：窗口数量、综合评分排名平均值/第一次数/Top3占比/标准差、参数稳定性综合评分（加权归一化）"},
-            {"类型": "Sheet说明", "名称": "全市场参数稳定性分析",
-             "统计逻辑": "跨股票按均线周期聚合：覆盖股票数、综合评分平均值/标准差、年化收益率平均值/中位数、夏普比率平均值、最大回撤平均值、盈利窗口占比、全市场稳定性评分（归一化加权）"},
+            {"类型": "Sheet说明", "名称": "各窗口最优参数变动情况",
+             "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性综合评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
             {"类型": "Sheet说明", "名称": "全窗口参数稳定性分析",
              "统计逻辑": "个股层面，对每个累积窗口阶段计算参数稳定性（同参数稳定性分析逻辑，按窗口展开），排序=股票代码↑|窗口↑|均线周期↑"},
+            {"类型": "Sheet说明", "名称": "交易日志明细",
+             "统计逻辑": "每只股票每窗口每均线周期的完整交易记录（含开平仓时间、价格、盈亏、持仓天数等），用于逐笔验证回测逻辑"},
+            {"类型": "Sheet说明", "名称": "最优参数结果",
+             "统计逻辑": "参数稳定性综合评分最高的均线周期的完整回测指标，作为该股票的最优参数推荐"},
             {"类型": "Sheet说明", "名称": "全市场全窗口参数稳定性分析",
              "统计逻辑": "全市场所有股票的全窗口参数稳定性数据合并，排序=股票代码↑|窗口↑|均线周期↑"},
             {"类型": "", "名称": "", "统计逻辑": ""},
@@ -1748,11 +1860,11 @@ def run_trade():
             {"类型": "基本字段", "名称": "股票名称",
              "统计逻辑": "股票中文名称，来源于 symbols.csv"},
             {"类型": "基本字段", "名称": "所属板块",
-             "统计逻辑": "股票行业/板块分类（如科技、消费、金融等），来源于 symbols.csv"},
+             "统计逻辑": "股票行业/板块分类（如科技、消费、金融等），来源于富途板块数据 stocks_plates.parquet"},
             {"类型": "基本字段", "名称": "K线周期",
              "统计逻辑": "统一使用周K（1w）进行回测"},
             {"类型": "基本字段", "名称": "均线周期",
-             "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，作为该股票的最优参数"},
+             "统计逻辑": "全市场全窗口参数稳定性分析最后一个窗口中综合评分最高的均线周期，作为该股票的最优参数"},
             # ── 策略表现 ──
             {"类型": "策略表现", "名称": "策略表现",
              "统计逻辑": "综合评分分档标签：≥80为「1优」，≥60为「2良」，≥40为「3中」，≥20为「4差」，<20为「5劣」"},
@@ -1764,7 +1876,7 @@ def run_trade():
             {"类型": "信号字段", "名称": "HA收盘价",
              "统计逻辑": "Heikin Ashi 收盘价 = (HA开盘价 + HA最高价 + HA最低价 + HA收盘价) / 4，平滑后的价格用于计算MA"},
             {"类型": "信号字段", "名称": "HA均线值",
-             "统计逻辑": "HA收盘价的简单移动平均（SMA），周期=参数稳定性选出的最优均线周期"},
+             "统计逻辑": "HA收盘价的简单移动平均（SMA），周期=全市场全窗口参数稳定性分析选出的最优均线周期"},
             {"类型": "信号字段", "名称": "趋势方向",
              "统计逻辑": "MA值 > MA.shift(1) 为「多头」，否则为「空头」"},
             {"类型": "信号字段", "名称": "最新信号",
@@ -1873,6 +1985,13 @@ def run_trade():
             _apply_sheet_format(ws)
 
     print("全市场完成:", out)
+
+    # =============================================
+    # 全股票各窗口最优参数热力图
+    # =============================================
+    if window_stability_dfs:
+        all_ws_hm = pd.concat(window_stability_dfs, ignore_index=True)
+        generate_all_stock_best_ma_heatmap(all_ws_hm, save_dir=os.path.join(TRADE_DIR, "heatmaps"))
 
 # =========================================================
 # 富途自选股分组同步
