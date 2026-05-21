@@ -774,7 +774,7 @@ def build_score_matrix(summary_rows):
 # =========================================================
 # 参数扫描热力图
 # =========================================================
-def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
+def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
     """从窗口回测数据生成参数扫描热力图"""
     if not scan_rows:
         return
@@ -815,19 +815,32 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
             ax=ax, cbar_kws={"shrink": 0.8}
         )
 
-        # 每个窗口内为最优值格叠加半透明金色背景（回撤取最小，其他取最大）
+        # 每个窗口（含平均值）前3最优格标记：第1黑色、第2深灰、第3浅灰，数字白色
+        rank_colors = ['#000000', '#555555', '#999999']
+        top3_lookup = {}
         for col_idx, col_name in enumerate(pivot.columns):
-            if col_name == "平均值":
-                continue
             col_data = pivot[col_name].dropna()
             if col_data.empty:
                 continue
-            best_row = col_data.idxmin() if metric == "最大回撤" else col_data.idxmax()
-            row_idx = pivot.index.get_loc(best_row)
-            ax.add_patch(patches.Rectangle(
-                (col_idx + 0.02, row_idx + 0.02), 0.96, 0.96,
-                fill=True, color="gold", alpha=0.3, linewidth=0, zorder=2
-            ))
+            ranked = col_data.sort_values() if metric == "最大回撤" else col_data.sort_values(ascending=False)
+            for rank, (label, _) in enumerate(ranked.head(3).items()):
+                row_idx = pivot.index.get_loc(label)
+                top3_lookup[(col_idx, row_idx)] = rank
+                ax.add_patch(patches.Rectangle(
+                    (col_idx + 0.02, row_idx + 0.02), 0.96, 0.96,
+                    fill=True, color=rank_colors[rank], linewidth=0, zorder=2
+                ))
+        n_rows, n_cols = len(pivot.index), len(pivot.columns)
+        for t in ax.texts:
+            x, y = t.get_position()
+            col, row = round(x - 0.5), round(y - 0.5)
+            if 0 <= col < n_cols and 0 <= row < n_rows and (col, row) in top3_lookup:
+                t.set_color("white")
+
+        # Y轴标签：最优参数行加★
+        if best_ma is not None and best_ma in pivot.index:
+            labels = [str(ma) if ma != best_ma else f"★{ma}" for ma in pivot.index]
+            ax.set_yticklabels(labels, rotation=0)
         ax.set_title(f"{code}  {title} 参数扫描热力图", fontsize=14, fontweight="bold", pad=16)
         ax.set_xlabel("回测窗口", fontsize=11)
         ax.set_ylabel("均线周期", fontsize=11)
@@ -954,6 +967,7 @@ def _process_one_stock(code, windows=None):
                 _round_display(rank_pivot).to_excel(writer, sheet_name="综合评分排名", index=False)
 
             stability_df = calc_param_stability(window_summary_rows)
+            best_stab_ma = None
             if not stability_df.empty:
                 _stab_pct = ["盈利窗口占比", "年化收益率平均值"]
                 _round_display(stability_df, _stab_pct).to_excel(writer, sheet_name="参数稳定性分析", index=False)
@@ -994,7 +1008,7 @@ def _process_one_stock(code, windows=None):
     # 参数扫描热力图（用全部窗口数据）
     # =============================================
     if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, "heatmaps"))
+        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, "heatmaps"), best_ma=best_stab_ma)
 
     return stock_all_rows, stock_stability_dfs, signal_map
 
