@@ -31,14 +31,13 @@ def _apply_sheet_format(ws):
 # =========================================================
 DATA_DIR = "data"
 RESULT_DIR = "results"
-TRADE_DIR = "trades"
+TRADE_DIR = "param_scan"
 SYMBOL_FILE = "symbols.csv"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RESULT_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
-os.makedirs("tradingview", exist_ok=True)
-os.makedirs("heatmaps", exist_ok=True)
+os.makedirs(os.path.join(TRADE_DIR, "heatmaps"), exist_ok=True)
 
 MA_LIST = list(range(1, 61))  # 1~60，全覆盖参数扫描
 INITIAL_CASH = 10000
@@ -961,7 +960,7 @@ def _process_one_stock(code):
     # 参数扫描热力图（用全部窗口数据）
     # =============================================
     if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows)
+        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, "heatmaps"))
 
     return stock_all_rows, stock_stability_dfs, signal_map
 
