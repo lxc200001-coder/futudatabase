@@ -10,6 +10,7 @@ from openpyxl.styles import Alignment
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial"]
 plt.rcParams["axes.unicode_minus"] = False
 import seaborn as sns
@@ -799,15 +800,13 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
         if pivot.empty:
             continue
 
-        # 计算行平均值 + 找最优行（回撤取最小，其他取最大）
+        # 计算行平均值
         pivot["平均值"] = pivot.mean(axis=1)
-        best_ma = pivot["平均值"].idxmin() if metric == "最大回撤" else pivot["平均值"].idxmax()
 
-        # 构建自定义标注矩阵（最优行的平均值标星）
+        # 构建标注矩阵
         annot_df = pivot.copy().astype(str)
         for col in pivot.columns:
             annot_df[col] = pivot[col].apply(lambda v: f"{v:.1f}" if pd.notna(v) else "")
-        annot_df.loc[best_ma, "平均值"] = f"★ {pivot.loc[best_ma, '平均值']:.1f}"
 
         fig, ax = plt.subplots(figsize=(max(10, len(pivot.columns) * 0.7), max(7, len(pivot) * 0.45)))
         sns.heatmap(
@@ -816,6 +815,20 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
             linewidths=0.5, linecolor="#e0e0e0",
             ax=ax, cbar_kws={"shrink": 0.8}
         )
+
+        # 每个窗口内为最优值格叠加半透明金色背景（回撤取最小，其他取最大）
+        for col_idx, col_name in enumerate(pivot.columns):
+            if col_name == "平均值":
+                continue
+            col_data = pivot[col_name].dropna()
+            if col_data.empty:
+                continue
+            best_row = col_data.idxmin() if metric == "最大回撤" else col_data.idxmax()
+            row_idx = pivot.index.get_loc(best_row)
+            ax.add_patch(patches.Rectangle(
+                (col_idx + 0.02, row_idx + 0.02), 0.96, 0.96,
+                fill=True, color="gold", alpha=0.3, linewidth=0, zorder=2
+            ))
         ax.set_title(f"{code}  {title} 参数扫描热力图", fontsize=14, fontweight="bold", pad=16)
         ax.set_xlabel("回测窗口", fontsize=11)
         ax.set_ylabel("均线周期", fontsize=11)
@@ -1333,7 +1346,7 @@ def run_trade():
             {"类型": "窗口信息", "名称": "窗口",
              "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表"},
             {"类型": "窗口信息", "名称": "窗口内有效数据周期",
-             "统计逻辑": "该窗口内实际包含的数据行数 = (窗口结束 − 窗口起始)的自然日天数；若股票上市晚于窗口起始，有效数据天数会少于完整窗口"},
+             "统计逻辑": "该窗口实际数据的起止日期区间，格式 起始日期~结束日期；若股票上市晚于窗口起始，起始日期为数据首日"},
             # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
              "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，选作信号扫描使用的参数"},
@@ -1342,6 +1355,18 @@ def run_trade():
              "统计逻辑": "该均线周期参与计算的窗口总数"},
             {"类型": "参数稳定性", "名称": "盈利窗口占比",
              "统计逻辑": "盈利窗口数量 / 窗口数量 × 100%"},
+            {"类型": "参数稳定性", "名称": "盈利窗口数量",
+             "统计逻辑": "年化收益率 > 0 的窗口数量"},
+            {"类型": "参数稳定性", "名称": "年化收益率平均值",
+             "统计逻辑": "该均线周期在所有窗口中年化收益率的算术平均值"},
+            {"类型": "参数稳定性", "名称": "年化收益率标准差",
+             "统计逻辑": "该均线周期在所有窗口中年化收益率的标准差，衡量收益波动性"},
+            {"类型": "参数稳定性", "名称": "综合评分排名平均值",
+             "统计逻辑": "该均线周期在各窗口中综合评分排名的算术平均值，越低越好"},
+            {"类型": "参数稳定性", "名称": "综合评分排名标准差",
+             "统计逻辑": "该均线周期在各窗口中综合评分排名的标准差，越低越稳定"},
+            {"类型": "参数稳定性", "名称": "综合评分排名第一次数",
+             "统计逻辑": "该均线周期在各窗口中排名第一的次数，衡量夺冠能力"},
             {"类型": "参数稳定性", "名称": "参数稳定性综合评分",
              "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定"},
             {"类型": "参数稳定性", "名称": "综合评分排名Top3占比",
