@@ -787,9 +787,9 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
         if pivot.empty:
             continue
 
-        # 计算行平均值 + 找最优行
+        # 计算行平均值 + 找最优行（回撤取最小，其他取最大）
         pivot["平均值"] = pivot.mean(axis=1)
-        best_ma = pivot["平均值"].idxmax()
+        best_ma = pivot["平均值"].idxmin() if metric == "最大回撤" else pivot["平均值"].idxmax()
 
         # 构建自定义标注矩阵（最优行的平均值标星）
         annot_df = pivot.copy().astype(str)
@@ -1029,11 +1029,19 @@ def run_trade():
                 best_ma = int(match.iloc[0]["均线周期"])
         if best_ma in sig_map:
             row = sig_map[best_ma].copy()
-            # 从最后一个窗口取综合评分
+            # 从最后一个窗口取回测指标
             mask = (all_df["股票代码"] == code) & (all_df["均线周期"] == best_ma)
             sub = all_df[mask].sort_values("窗口")
             if not sub.empty:
-                row["综合评分"] = float(sub.iloc[-1].get("综合评分", 0))
+                last = sub.iloc[-1]
+                for col in ["综合评分", "收益率", "年化收益率", "买入持有收益率", "超额收益率",
+                            "最大回撤", "夏普比率", "卡尔玛比率",
+                            "交易次数", "盈利交易率", "盈利因子", "盈亏比",
+                            "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
+                            "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
+                            "初始资金", "最终资金", "回测周期", "窗口"]:
+                    if col in last:
+                        row[col] = last[col]
             signal_rows.append(row)
 
     if not signal_rows:
