@@ -1243,6 +1243,9 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
     # 确保列按窗口顺序排列
     pivot = pivot[sorted(pivot.columns)]
 
+    # 计算行平均值
+    pivot["平均值"] = pivot.mean(axis=1)
+
     if pivot.empty:
         return
 
