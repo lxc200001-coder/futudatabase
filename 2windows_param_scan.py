@@ -10,6 +10,8 @@ from openpyxl.styles import Alignment
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
 import seaborn as sns
 
 # 屏蔽pandas concat空列FutureWarning（不影响功能）
@@ -39,7 +41,7 @@ os.makedirs(RESULT_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
 os.makedirs(os.path.join(TRADE_DIR, "heatmaps"), exist_ok=True)
 
-MA_LIST = list(range(1, 61))  # 1~60，全覆盖参数扫描
+MA_LIST = list(range(2, 61))  # 2~60，全覆盖参数扫描
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
@@ -84,19 +86,6 @@ def calc_heikin_ashi(df):
         ha_open[i] = (ha_open[i - 1] + ha_close.iloc[i - 1]) / 2
 
     return ha_close, ha_open
-
-# =========================================================
-# 信号
-# =========================================================
-def calc_signal(df, ma_len):
-    df = df.copy()
-    df["ma"] = df["ha_close"].rolling(ma_len, min_periods=ma_len).mean()
-
-    df["dir"] = np.where(df["ma"] > df["ma"].shift(1), 1, -1)
-    df["buy"] = (df["dir"] == 1) & (df["dir"].shift(1) == -1)
-    df["sell"] = (df["dir"] == -1) & (df["dir"].shift(1) == 1)
-
-    return df
 
 # =========================================================
 # 最近信号
@@ -798,9 +787,19 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
         if pivot.empty:
             continue
 
+        # 计算行平均值 + 找最优行
+        pivot["平均值"] = pivot.mean(axis=1)
+        best_ma = pivot["平均值"].idxmax()
+
+        # 构建自定义标注矩阵（最优行的平均值标星）
+        annot_df = pivot.copy().astype(str)
+        for col in pivot.columns:
+            annot_df[col] = pivot[col].apply(lambda v: f"{v:.1f}" if pd.notna(v) else "")
+        annot_df.loc[best_ma, "平均值"] = f"★ {pivot.loc[best_ma, '平均值']:.1f}"
+
         fig, ax = plt.subplots(figsize=(max(10, len(pivot.columns) * 0.7), max(7, len(pivot) * 0.45)))
         sns.heatmap(
-            pivot, annot=True, fmt=".1f", cmap=cmap,
+            pivot, annot=annot_df, fmt="", cmap=cmap,
             center=0 if center else None,
             linewidths=0.5, linecolor="#e0e0e0",
             ax=ax, cbar_kws={"shrink": 0.8}
@@ -861,14 +860,18 @@ def _process_one_stock(code):
     window_trades_by_ma = {ma: [] for ma in MA_LIST}
     window_summary_rows = []
 
+    # 预计算 HA 和滚动均线（所有窗口起点相同，全量数据一次算完）
+    ha_close_full, _ = calc_heikin_ashi(df)
+    ma_cache = {}
+    for ma in MA_LIST:
+        ma_cache[ma] = ha_close_full.rolling(ma, min_periods=ma).mean()
+
     with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
 
         for ws, we in windows:
 
-            df_w = df[
-                (pd.to_datetime(df["datetime"]) >= ws) &
-                (pd.to_datetime(df["datetime"]) < we)
-            ].copy()
+            window_mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
+            df_w = df[window_mask].copy()
 
             if df_w.empty:
                 continue
@@ -878,12 +881,14 @@ def _process_one_stock(code):
             eff_end = pd.to_datetime(df_w["datetime"]).max()
             effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
-            ha_close_w, _ = calc_heikin_ashi(df_w)
-            df_w_ha = df_w.copy()
-            df_w_ha["ha_close"] = ha_close_w
-
             for ma in MA_LIST:
-                d = calc_signal(df_w_ha, ma)
+                d = df_w.copy()
+                d["ha_close"] = ha_close_full[window_mask]
+                d["ma"] = ma_cache[ma][window_mask]
+                d["dir"] = np.where(d["ma"] > d["ma"].shift(1), 1, -1)
+                d["buy"] = (d["dir"] == 1) & (d["dir"].shift(1) == -1)
+                d["sell"] = (d["dir"] == -1) & (d["dir"].shift(1) == 1)
+
                 trades = build_trades(d, ma)
 
                 if not trades.empty:
@@ -942,14 +947,16 @@ def _process_one_stock(code):
             _apply_sheet_format(ws_sheet)
 
     # =============================================
-    # 从全量数据计算当前信号（用于信号扫描）
+    # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
     # =============================================
     signal_map = {}
-    ha_close_full, _ = calc_heikin_ashi(df)
-    df_ha = df.copy()
-    df_ha["ha_close"] = ha_close_full
     for ma in MA_LIST:
-        d = calc_signal(df_ha, ma)
+        d = df.copy()
+        d["ha_close"] = ha_close_full
+        d["ma"] = ma_cache[ma]
+        d["dir"] = np.where(d["ma"] > d["ma"].shift(1), 1, -1)
+        d["buy"] = (d["dir"] == 1) & (d["dir"].shift(1) == -1)
+        d["sell"] = (d["dir"] == -1) & (d["dir"].shift(1) == 1)
         signal_info = get_last_signal_info(d)
         signal_info["K线周期"] = BAR_INTERVAL
         signal_info["均线周期"] = ma
@@ -976,7 +983,7 @@ def run_trade():
     stability_dfs = []
     all_signal_maps = {}
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
         future_to_code = {executor.submit(_process_one_stock, code): code for code in available}
         with tqdm(total=len(available), desc="回测进度", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(future_to_code):
@@ -1057,10 +1064,12 @@ def run_trade():
             return "5劣"
     signal_df["策略表现"] = signal_df["综合评分"].apply(_stock_nature)
 
-    # 均线趋势共振分析
-    last_window_label = sorted(all_df["窗口"].unique())[-1]
-    last_win_df = all_df[all_df["窗口"] == last_window_label]
-    trend_lookup = last_win_df.set_index(["股票代码", "均线周期"])["趋势方向"]
+    # 均线趋势共振分析（从 signal_map 构建趋势方向查询）
+    trend_records = []
+    for code, sig_map in all_signal_maps.items():
+        for ma, info in sig_map.items():
+            trend_records.append({"股票代码": code, "均线周期": ma, "趋势方向": info.get("趋势方向")})
+    trend_lookup = pd.DataFrame(trend_records).set_index(["股票代码", "均线周期"])["趋势方向"]
 
     def _calc_confluence(r):
         code = r["股票代码"]
@@ -1141,6 +1150,8 @@ def run_trade():
 
         # --- 6. 最优参数结果 ---
         if stab_best is not None and not stab_best.empty:
+            last_window_label = sorted(all_df["窗口"].unique())[-1]
+            last_win_df = all_df[all_df["窗口"] == last_window_label]
             best_results = last_win_df.merge(
                 stab_best[["股票代码", "均线周期"]],
                 on=["股票代码", "均线周期"], how="inner"
