@@ -34,12 +34,10 @@ def _apply_sheet_format(ws):
 # 配置
 # =========================================================
 DATA_DIR = "data"
-RESULT_DIR = "results"
-TRADE_DIR = "param_scan"
+TRADE_DIR = "param_scan_numba"
 SYMBOL_FILE = "symbols.csv"
 
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(RESULT_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
 os.makedirs(os.path.join(TRADE_DIR, "heatmaps"), exist_ok=True)
 
