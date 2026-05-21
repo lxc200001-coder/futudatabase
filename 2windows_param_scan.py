@@ -495,11 +495,18 @@ def calc_score_row(row):
 # =========================================================
 # 5年滚动窗口生成
 # =========================================================
-def generate_windows(df):
-    """生成累积扩展窗口：起点固定，终点每年步长递增，最后一个窗口覆盖全部数据"""
-    dates = pd.to_datetime(df["datetime"])
+def generate_windows(df=None, end_date=None):
+    """生成累积扩展窗口：起点固定，终点每年步长递增。
+       所有股票使用相同的 end_date 以保证窗口一致。
+       传 df 时（单个股票）取该股票数据的最后一天作为终点。"""
+    if end_date is None and df is not None:
+        dates = pd.to_datetime(df["datetime"])
+        end_date = dates.max()
+    elif end_date is None:
+        return []
+
     start = pd.Timestamp(WINDOW_START_DATE)
-    end = dates.max()
+    end = pd.Timestamp(end_date)
 
     windows = []
     cur = start + pd.DateOffset(years=STEP_YEARS)
@@ -509,7 +516,7 @@ def generate_windows(df):
         cur += pd.DateOffset(years=STEP_YEARS)
 
     # 确保最后一个窗口覆盖全部数据
-    if windows and windows[-1][1] < end + pd.Timedelta(days=1):
+    if not windows or windows[-1][1] < end + pd.Timedelta(days=1):
         windows.append((start, end + pd.Timedelta(days=1)))
 
     return windows
@@ -521,8 +528,6 @@ def build_summary(trades_df, ma_len, df):
 
     start = pd.to_datetime(df["datetime"].iloc[0])
     end = pd.to_datetime(df["datetime"].iloc[-1])
-
-    period = f"{start} ~ {end}"
 
     curve = equity_curve(df, trades_df)
 
@@ -562,7 +567,6 @@ def build_summary(trades_df, ma_len, df):
             "初始资金": INITIAL_CASH,
             "最终资金": INITIAL_CASH,
 
-            "回测周期": period
         }
 
     ret = (final / INITIAL_CASH - 1) * 100
@@ -626,7 +630,6 @@ def build_summary(trades_df, ma_len, df):
         "初始资金": INITIAL_CASH,
         "最终资金": round(float(final), 2),
 
-        "回测周期": period
     }
 
 # =========================================================
@@ -636,7 +639,7 @@ COLUMN_ORDER = [
     "股票代码", "K线周期", "均线周期", "综合评分"
 ]
 
-END_COLUMNS = ["回测周期", "窗口", "窗口内有效数据日期"]
+END_COLUMNS = ["窗口", "窗口内有效数据周期"]
 
 def reorder_columns(df):
     cols = df.columns.tolist()
@@ -839,7 +842,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code):
+def _process_one_stock(code, windows=None):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
     path = os.path.join(DATA_DIR, f"{code}_1w.parquet")
     if not os.path.exists(path):
@@ -854,7 +857,8 @@ def _process_one_stock(code):
     # =============================================
     # 累积扩展窗口回测（覆盖 MA_LIST 全部 60 个参数）
     # =============================================
-    windows = generate_windows(df)
+    if windows is None:
+        windows = generate_windows(df)
     window_trades_by_ma = {ma: [] for ma in MA_LIST}
     window_summary_rows = []
 
@@ -892,12 +896,12 @@ def _process_one_stock(code):
                 if not trades.empty:
                     trades_w = trades.copy()
                     trades_w["窗口"] = window_label
-                    trades_w["窗口内有效数据日期"] = effective_range
+                    trades_w["窗口内有效数据周期"] = effective_range
                     window_trades_by_ma[ma].append(trades_w)
 
                 summary = build_summary(trades, ma, df_w)
                 summary["窗口"] = window_label
-                summary["窗口内有效数据日期"] = effective_range
+                summary["窗口内有效数据周期"] = effective_range
                 summary["综合评分"] = calc_score_row(summary)
 
                 window_summary_rows.append(summary)
@@ -977,12 +981,25 @@ def run_trade():
     # 过滤出有数据文件的股票，用于进度条总计数
     available = [s for s in symbols if os.path.exists(os.path.join(DATA_DIR, f"{s}_1w.parquet"))]
 
+    # 扫描全市场数据，取最晚日期作为全局窗口终点
+    global_end = pd.Timestamp("2000-01-01")
+    for s in available:
+        try:
+            _tmp = pd.read_parquet(os.path.join(DATA_DIR, f"{s}_1w.parquet"), columns=["datetime"])
+            _max = pd.to_datetime(_tmp["datetime"]).max()
+            if _max > global_end:
+                global_end = _max
+        except Exception:
+            continue
+    windows = generate_windows(end_date=global_end)
+    print(f"全局窗口终点: {global_end.date()}, 共 {len(windows)} 个窗口")
+
     all_rows = []
     stability_dfs = []
     all_signal_maps = {}
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
-        future_to_code = {executor.submit(_process_one_stock, code): code for code in available}
+        future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in available}
         with tqdm(total=len(available), desc="回测进度", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(future_to_code):
                 code = future_to_code[future]
@@ -1039,7 +1056,7 @@ def run_trade():
                             "交易次数", "盈利交易率", "盈利因子", "盈亏比",
                             "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
                             "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
-                            "初始资金", "最终资金", "回测周期", "窗口"]:
+                            "初始资金", "最终资金", "窗口"]:
                     if col in last:
                         row[col] = last[col]
             signal_rows.append(row)
@@ -1128,7 +1145,7 @@ def run_trade():
             "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
             "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
             "初始资金", "最终资金",
-            "回测周期", "窗口"
+            "窗口", "窗口内有效数据周期"
         ]
         signal_out = signal_df[[c for c in _signal_cols if c in signal_df.columns]]
         signal_out.to_excel(writer, sheet_name="信号扫描", index=False)
@@ -1157,8 +1174,9 @@ def run_trade():
 
         # --- 6. 统计逻辑 ---
         logic_rows = [
+            # ── Sheet 说明 ──
             {"类型": "Sheet说明", "名称": "信号扫描",
-             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（BUY/SELL/HOLD/WATCH），多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
+             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（BUY/SELL/HOLD/WATCH）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
             {"类型": "Sheet说明", "名称": "参数扫描汇总",
              "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（含综合评分、窗口标签、收益/风险指标等）"},
             {"类型": "Sheet说明", "名称": "综合评分明细",
@@ -1168,16 +1186,111 @@ def run_trade():
             {"类型": "Sheet说明", "名称": "参数稳定性分析",
              "统计逻辑": "按均线周期聚合：窗口数量、综合评分排名平均值/第一次数/Top3占比/标准差、参数稳定性综合评分（加权归一化）"},
             {"类型": "", "名称": "", "统计逻辑": ""},
+            # ── 评分模型 ──
             {"类型": "评分模型", "名称": "综合评分",
              "统计逻辑": "Score = 0.30*CAGR + 0.25*Sharpe + 0.20*(1-最大回撤) + 0.15*盈利因子 + 0.05*盈利交易率 + 0.05*交易次数；子指标min-max归一化，CAGR:0-30, Sharpe:0-2, 回撤:0-50, 盈利因子:1-3, 盈利率:30-80, 交易次数:10-100，加权求和范围0~100"},
-            {"类型": "信号逻辑", "名称": "趋势方向",
-             "统计逻辑": "ma > ma.shift(1) 为多头，否则空头"},
-            {"类型": "信号逻辑", "名称": "最新信号",
-             "统计逻辑": "MA方向变化：dir由-1→1为BUY，1→-1为SELL；非信号状态时多头为HOLD、空头为WATCH"},
-            {"类型": "信号逻辑", "名称": "最新信号确认",
-             "统计逻辑": "BUY/SELL信号出现且距离最近一次信号天数<5为「待确认，周K未正式收盘」，否则为已确认"},
+            # ── 基本字段 ──
+            {"类型": "基本字段", "名称": "股票代码",
+             "统计逻辑": "富途格式股票代码，如 US.AAPL / HK.00700"},
+            {"类型": "基本字段", "名称": "股票名称",
+             "统计逻辑": "股票中文名称，来源于 symbols.csv"},
+            {"类型": "基本字段", "名称": "所属板块",
+             "统计逻辑": "股票行业/板块分类（如科技、消费、金融等），来源于 symbols.csv"},
+            {"类型": "基本字段", "名称": "K线周期",
+             "统计逻辑": "统一使用周K（1w）进行回测"},
+            {"类型": "基本字段", "名称": "均线周期",
+             "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，作为该股票的最优参数"},
+            # ── 策略表现 ──
+            {"类型": "策略表现", "名称": "策略表现",
+             "统计逻辑": "综合评分与信号强度的可视化标签，综合评分高+BUY信号标记为「强势买入」，综合评分低+SELL信号标记为「弱势卖出」等"},
+            # ── 信号字段 ──
+            {"类型": "信号字段", "名称": "时间",
+             "统计逻辑": "K线时间戳，格式 yyyy-MM-dd"},
+            {"类型": "信号字段", "名称": "收盘价",
+             "统计逻辑": "原始K线收盘价（未复权）"},
+            {"类型": "信号字段", "名称": "HA收盘价",
+             "统计逻辑": "Heikin Ashi 收盘价 = (HA开盘价 + HA最高价 + HA最低价 + HA收盘价) / 4，平滑后的价格用于计算MA"},
+            {"类型": "信号字段", "名称": "HA均线值",
+             "统计逻辑": "HA收盘价的简单移动平均（SMA），周期=参数稳定性选出的最优均线周期"},
+            {"类型": "信号字段", "名称": "趋势方向",
+             "统计逻辑": "MA值 > MA.shift(1) 为「多头↑」，否则为「空头↓」"},
+            {"类型": "信号字段", "名称": "最新信号",
+             "统计逻辑": "MA方向变化判断：dir 由 -1→1 为 BUY，1→-1 为 SELL；非信号状态时多头为 HOLD、空头为 WATCH"},
+            {"类型": "信号字段", "名称": "最新信号时间",
+             "统计逻辑": "最近一次 BUY/SELL 信号出现的 K 线时间"},
+            {"类型": "信号字段", "名称": "最新信号收盘价",
+             "统计逻辑": "最新信号时间对应的原始收盘价"},
+            {"类型": "信号字段", "名称": "最新信号确认",
+             "统计逻辑": "BUY/SELL信号且距离最近一次信号<5根K线为「待确认，周K未正式收盘」，否则为「已确认」"},
+            {"类型": "信号字段", "名称": "历史信号",
+             "统计逻辑": "倒数第二次出现的 BUY/SELL 信号方向"},
+            {"类型": "信号字段", "名称": "历史信号时间",
+             "统计逻辑": "倒数第二次信号出现的 K 线时间"},
+            {"类型": "信号字段", "名称": "历史信号收盘价",
+             "统计逻辑": "历史信号时间对应的原始收盘价"},
+            {"类型": "信号字段", "名称": "距离历史信号已过天数",
+             "统计逻辑": "当前最新K线日期 − 历史信号日期，单位自然日"},
+            {"类型": "信号字段", "名称": "距离历史信号收盘价涨跌幅",
+             "统计逻辑": "(当前收盘价 − 历史信号收盘价) / 历史信号收盘价 × 100%"},
+            {"类型": "信号字段", "名称": "持仓日化收益率",
+             "统计逻辑": "自最新信号以来的日均收益率 = (1 + 总涨跌幅)^(1/持有天数) − 1，衡量买入后的每日平均回报"},
+            # ── 共振分析 ──
+            {"类型": "共振分析", "名称": "均线趋势共振方向",
+             "统计逻辑": "统计 MA5/MA10/MA20/MA30/MA40 各周期方向，取多数方向作为共振方向；若多头占比≥80%标记为「共振多头↑↑↑」，空头占比≥80%标记为「共振空头↓↓↓」，否则为「方向分歧—」"},
+            {"类型": "共振分析", "名称": "共振均线数量",
+             "统计逻辑": "与共振方向一致的均线周期数量"},
+            {"类型": "共振分析", "名称": "共振均线列表",
+             "统计逻辑": "与共振方向一致的均线周期列表，如 MA5/MA10/MA20/MA30/MA40"},
+            # ── 回测指标 ──
+            {"类型": "回测指标", "名称": "收益率",
+             "统计逻辑": "最后一个窗口的总收益率 = (最终资金 − 初始资金) / 初始资金 × 100%"},
+            {"类型": "回测指标", "名称": "年化收益率",
+             "统计逻辑": "CAGR = (最终资金/初始资金)^(1/年数) − 1，年数 = 窗口实际天数/365"},
+            {"类型": "回测指标", "名称": "买入持有收益率",
+             "统计逻辑": "同期简单买入持有策略的收益率 = (窗口最后收盘价 − 窗口最初收盘价) / 窗口最初收盘价 × 100%"},
+            {"类型": "回测指标", "名称": "超额收益率",
+             "统计逻辑": "策略年化收益率 − 买入持有年化收益率，衡量策略相对基准的超额收益"},
+            {"类型": "回测指标", "名称": "最大回撤",
+             "统计逻辑": "资金曲线从峰值到谷底的最大跌幅 = max(1 − 当日资金/当日之前峰值资金) × 100%"},
+            {"类型": "回测指标", "名称": "夏普比率",
+             "统计逻辑": "Sharpe Ratio = (策略年化收益率 − 无风险利率) / 年化波动率，无风险利率取2%，衡量风险调整后收益；>1为良好，>2为优秀"},
+            {"类型": "回测指标", "名称": "卡尔玛比率",
+             "统计逻辑": "Calmar Ratio = 年化收益率 / 最大回撤（绝对值），衡量收益与最大回撤的比值；越高说明承担单位回撤获取的收益越多"},
+            {"类型": "回测指标", "名称": "交易次数",
+             "统计逻辑": "回测窗口内的总交易次数（每次买入+卖出算一回合），反映策略活跃度"},
+            {"类型": "回测指标", "名称": "盈利交易率",
+             "统计逻辑": "盈利交易次数 / 总交易次数 × 100%，衡量策略的胜率"},
+            {"类型": "回测指标", "名称": "盈利因子",
+             "统计逻辑": "总盈利 / 总亏损绝对值；>1表示整体盈利，>2表示盈利能力良好"},
+            {"类型": "回测指标", "名称": "盈亏比",
+             "统计逻辑": "平均盈利 / 平均亏损（绝对值），衡量单次盈利与亏损的比例；>2为良好"},
+            {"类型": "回测指标", "名称": "平均盈利",
+             "统计逻辑": "所有盈利交易的平均盈利金额"},
+            {"类型": "回测指标", "名称": "平均亏损",
+             "统计逻辑": "所有亏损交易的平均亏损金额（正数表示）"},
+            {"类型": "回测指标", "名称": "最大单笔盈利",
+             "统计逻辑": "所有盈利交易中最大的一笔盈利金额"},
+            {"类型": "回测指标", "名称": "最大单笔亏损",
+             "统计逻辑": "所有亏损交易中最大的一笔亏损金额（正数表示）"},
+            {"类型": "回测指标", "名称": "最大连续盈利次数",
+             "统计逻辑": "交易序列中连续盈利的最大次数，反映策略的一致性"},
+            {"类型": "回测指标", "名称": "最大连续亏损次数",
+             "统计逻辑": "交易序列中连续亏损的最大次数，反映策略的回撤深度"},
+            {"类型": "回测指标", "名称": "平均持仓天数",
+             "统计逻辑": "所有交易持仓天数的平均值 = 总持仓天数 / 交易次数"},
+            {"类型": "回测指标", "名称": "初始资金",
+             "统计逻辑": "回测起始资金，统一设定为 100,000"},
+            {"类型": "回测指标", "名称": "最终资金",
+             "统计逻辑": "回测结束后账户总资金 = 初始资金 + 累计盈亏"},
+            # ── 窗口信息 ──
+            {"类型": "窗口信息", "名称": "窗口",
+             "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表"},
+            {"类型": "窗口信息", "名称": "窗口内有效数据周期",
+             "统计逻辑": "该窗口内实际包含的数据行数 = (窗口结束 − 窗口起始)的自然日天数；若股票上市晚于窗口起始，有效数据天数会少于完整窗口"},
+            # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
-             "统计逻辑": "参数稳定性分析中综合评分最高的均线周期"},
+             "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，选作信号扫描使用的参数"},
+            # ── 参数稳定性 ──
             {"类型": "参数稳定性", "名称": "窗口数量",
              "统计逻辑": "该均线周期参与计算的窗口总数"},
             {"类型": "参数稳定性", "名称": "盈利窗口占比",
