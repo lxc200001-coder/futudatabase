@@ -64,6 +64,14 @@ TRADING_PERIOD = 52
 STEP_YEARS = 1
 WINDOW_START_DATE = "2000-01-03"
 
+# 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
+# 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
+PCT_COLS = [
+    "距离历史信号收盘价涨跌幅", "持仓日化收益率",
+    "收益率", "年化收益率", "买入持有收益率", "超额收益率",
+    "最大回撤", "盈利交易率",
+]
+
 # =========================================================
 # 股票列表
 # =========================================================
@@ -124,7 +132,8 @@ def get_last_signal_info(df):
         sell_days = None
 
     last = df.iloc[-1]
-    last_close = round(float(last["close"]), 2)
+    last_close = float(last["close"])
+
 
     # 取最后一次信号（买入或卖出，取较晚的那次）
     hist_signal = None
@@ -137,19 +146,19 @@ def get_last_signal_info(df):
         if lb >= ls:
             hist_signal = "买入"
             hist_time = lb
-            hist_close = round(float(buy_rows.iloc[-1]["close"]), 2)
+            hist_close = float(buy_rows.iloc[-1]["close"])
         else:
             hist_signal = "卖出"
             hist_time = ls
-            hist_close = round(float(sell_rows.iloc[-1]["close"]), 2)
+            hist_close = float(sell_rows.iloc[-1]["close"])
     elif len(buy_rows) > 0:
         hist_signal = "买入"
         hist_time = pd.to_datetime(buy_rows.iloc[-1]["datetime"])
-        hist_close = round(float(buy_rows.iloc[-1]["close"]), 2)
+        hist_close = float(buy_rows.iloc[-1]["close"])
     elif len(sell_rows) > 0:
         hist_signal = "卖出"
         hist_time = pd.to_datetime(sell_rows.iloc[-1]["datetime"])
-        hist_close = round(float(sell_rows.iloc[-1]["close"]), 2)
+        hist_close = float(sell_rows.iloc[-1]["close"])
 
     # 若选出的历史信号未确认（<5天），回退到上一次已确认的信号
     if hist_signal is not None:
@@ -161,11 +170,11 @@ def get_last_signal_info(df):
             if len(_cs) > 0 and (len(_cb) == 0 or pd.to_datetime(_cs.iloc[-1]["datetime"]) >= pd.to_datetime(_cb.iloc[-1]["datetime"])):
                 hist_signal = "卖出"
                 hist_time = pd.to_datetime(_cs.iloc[-1]["datetime"])
-                hist_close = round(float(_cs.iloc[-1]["close"]), 2)
+                hist_close = float(_cs.iloc[-1]["close"])
             elif len(_cb) > 0:
                 hist_signal = "买入"
                 hist_time = pd.to_datetime(_cb.iloc[-1]["datetime"])
-                hist_close = round(float(_cb.iloc[-1]["close"]), 2)
+                hist_close = float(_cb.iloc[-1]["close"])
             else:
                 hist_signal = None
                 hist_time = pd.NaT
@@ -173,8 +182,8 @@ def get_last_signal_info(df):
 
     if hist_signal is not None:
         hist_days = (today - hist_time.normalize()).days
-        hist_change = round((last_close - hist_close) / hist_close * 100, 2) if hist_close else None
-        hist_daily = round(hist_change / hist_days, 2) if hist_days and hist_days > 0 else None
+        hist_change = (last_close - hist_close) / hist_close * 100 if hist_close else None
+        hist_daily = hist_change / hist_days if hist_days and hist_days > 0 else None
     else:
         hist_change = None
         hist_daily = None
@@ -194,8 +203,8 @@ def get_last_signal_info(df):
     return {
         "时间": _opt_date(last["datetime"]),
         "收盘价": last_close,
-        "HA收盘价": round(float(last["ha_close"]), 2),
-        "HA均线值": round(float(last["ma"]), 2) if not pd.isna(last["ma"]) else None,
+        "HA收盘价": float(last["ha_close"]),
+        "HA均线值": float(last["ma"]) if not pd.isna(last["ma"]) else None,
         "趋势方向": int(last["dir"]),
         "最新信号": signal,
         "最新信号时间": _opt_date(last["datetime"]),
@@ -234,27 +243,27 @@ def _make_trade_record(code_val, ma_len, entry_price, position, entry_time, entr
         "均线周期": ma_len,
 
         "开仓时间": entry_time,
-        "开仓价格": round(float(entry_price), 2),
+        "开仓价格": float(entry_price),
         "买入股数": position,
 
         "平仓时间": exit_time,
-        "平仓价格": round(float(exit_price), 2),
+        "平仓价格": float(exit_price),
         "卖出股数": position,
 
         "交易状态": status,
         "订单盈亏类型": "盈利" if pnl > 0 else "亏损",
 
-        "收益金额": round(pnl, 4),
-        "收益率(%)": round(float(return_pct), 4),
+        "收益金额": pnl,
+        "收益率(%)": float(return_pct),
 
-        "买入手续费": round(buy_fee, 4),
-        "卖出手续费": round(sell_fee, 4),
-        "总手续费": round(total_fee, 4),
+        "买入手续费": buy_fee,
+        "卖出手续费": sell_fee,
+        "总手续费": total_fee,
 
-        "开仓前可用现金": round(cash_before_open, 2) if cash_before_open is not None else None,
-        "开仓后可用现金": round(cash_after_open, 2) if cash_after_open is not None else None,
-        "平仓前可用现金": round(cash_before_close, 2) if cash_before_close is not None else None,
-        "平仓后可用现金": round(cash_after_close, 2) if cash_after_close is not None else None,
+        "开仓前可用现金": cash_before_open if cash_before_open is not None else None,
+        "开仓后可用现金": cash_after_open if cash_after_open is not None else None,
+        "平仓前可用现金": cash_before_close if cash_before_close is not None else None,
+        "平仓后可用现金": cash_after_close if cash_after_close is not None else None,
 
         "持仓K线数": hold_kbars,
         "持仓天数": hold_days,
@@ -290,7 +299,7 @@ def build_trades(df, ma_len):
 
     for i in range(len(df)):
 
-        price = round(float(close_arr[i]), 2)
+        price = float(close_arr[i])
 
         if pd.isna(price) or price <= 0:
             continue
@@ -336,7 +345,7 @@ def build_trades(df, ma_len):
 
     if position > 0:
 
-        price = round(float(close_arr[-1]), 2)
+        price = float(close_arr[-1])
         time = datetime_arr[-1]
 
         cash_before_sell = available_cash
@@ -490,7 +499,7 @@ def calc_score_row(row):
         trade_score * 0.05
     )
 
-    return round(score, 2)
+    return score
 
 # =========================================================
 # 5年滚动窗口生成
@@ -603,32 +612,32 @@ def build_summary(trades_df, ma_len, df):
         "K线周期": BAR_INTERVAL,
         "均线周期": ma_len,
 
-        "收益率": round(float(ret), 2),
-        "年化收益率": round(float(cagr), 2),
-        "买入持有收益率": round(float(buy_hold), 2),
-        "超额收益率": round(float(alpha), 2),
+        "收益率": float(ret),
+        "年化收益率": float(cagr),
+        "买入持有收益率": float(buy_hold),
+        "超额收益率": float(alpha),
 
-        "最大回撤": round(float(mdd), 2),
-        "夏普比率": round(float(sh), 4),
-        "卡尔玛比率": round(float(calmar), 4),
+        "最大回撤": float(mdd),
+        "夏普比率": float(sh),
+        "卡尔玛比率": float(calmar),
 
         "交易次数": int(len(trades_df)),
-        "盈利交易率": round(float(win_rate), 2),
-        "盈利因子": round(float(pf), 4),
-        "盈亏比": round(float(payoff), 4),
+        "盈利交易率": float(win_rate),
+        "盈利因子": float(pf),
+        "盈亏比": float(payoff),
 
-        "平均盈利": round(float(avg_win), 4),
-        "平均亏损": round(float(avg_loss), 4),
-        "最大单笔盈利": round(float(max_win_trade), 4),
-        "最大单笔亏损": round(float(max_loss_trade), 4),
+        "平均盈利": float(avg_win),
+        "平均亏损": float(avg_loss),
+        "最大单笔盈利": float(max_win_trade),
+        "最大单笔亏损": float(max_loss_trade),
 
         "最大连续盈利次数": max_win_streak,
         "最大连续亏损次数": max_loss_streak,
 
-        "平均持仓天数": round(float(avg_hold), 2),
+        "平均持仓天数": float(avg_hold),
 
         "初始资金": INITIAL_CASH,
-        "最终资金": round(float(final), 2),
+        "最终资金": float(final),
 
     }
 
@@ -674,18 +683,18 @@ def calc_param_stability(summary_rows):
         盈利窗口数量=("年化收益率", lambda x: (x > 0).sum()),
         综合评分排名平均值=("窗口内排名", "mean"),
         综合评分排名第一次数=("窗口内排名", lambda x: (x == 1).sum()),
-        综合评分排名Top3占比=("窗口内排名", lambda x: round((x <= 3).sum() / max(len(x), 1) * 100, 1)),
+        综合评分排名Top3占比=("窗口内排名", lambda x: (x <= 3).sum() / max(len(x), 1) * 100),
         综合评分排名标准差=("窗口内排名", "std"),
         年化收益率平均值=("年化收益率", "mean"),
         年化收益率标准差=("年化收益率", "std")
     ).reset_index()
 
-    stats["盈利窗口占比"] = (stats["盈利窗口数量"] / stats["窗口数量"] * 100).round(1)
-    stats["年化收益率平均值"] = stats["年化收益率平均值"].round(2)
-    stats["年化收益率标准差"] = stats["年化收益率标准差"].fillna(0).round(2)
+    stats["盈利窗口占比"] = stats["盈利窗口数量"] / stats["窗口数量"] * 100
+    stats["年化收益率平均值"] = stats["年化收益率平均值"]
+    stats["年化收益率标准差"] = stats["年化收益率标准差"].fillna(0)
 
-    stats["综合评分排名平均值"] = stats["综合评分排名平均值"].round(2)
-    stats["综合评分排名标准差"] = stats["综合评分排名标准差"].fillna(0).round(4)
+    stats["综合评分排名平均值"] = stats["综合评分排名平均值"]
+    stats["综合评分排名标准差"] = stats["综合评分排名标准差"].fillna(0)
 
     # =========================================================
     # 参数稳定性综合评分（加权归一化，越高越好）
@@ -708,7 +717,7 @@ def calc_param_stability(summary_rows):
     stats["参数稳定性综合评分"] = (
         0.20 * avg_rank_n + 0.10 * top3_n + 0.15 * std_n +
         0.25 * cagr_n + 0.20 * win_rate_n + 0.10 * cagr_std_n
-    ).round(4)
+    )
 
     # 排序后重排列顺序
     col_order = ["股票代码", "K线周期", "均线周期", "窗口数量",
@@ -974,6 +983,35 @@ def _process_one_stock(code, windows=None):
     return stock_all_rows, stock_stability_dfs, signal_map
 
 
+def _round_display(df, pct_cols=None):
+    """输出前统一处理浮点列：
+    - 百分比字段 ÷100 → Excel 原生百分比格式
+    - 其余 float 列保留 2 位小数
+    不影响原始计算精度。
+    """
+    df = df.copy()
+    pct_set = set(pct_cols or [])
+    for col in df.select_dtypes(include=["float", "float64"]).columns:
+        if col in pct_set:
+            df[col] = (df[col] / 100.0).round(4)
+        else:
+            df[col] = df[col].round(2)
+    return df
+
+
+def _set_pct_format(ws, df, pct_cols):
+    """将指定列设为 Excel 百分比格式 0.00%"""
+    from openpyxl.utils import get_column_letter
+    col_map = {name: idx for idx, name in enumerate(df.columns, 1)}
+    for col_name in pct_cols:
+        if col_name not in col_map:
+            continue
+        col_letter = get_column_letter(col_map[col_name])
+        for cell in ws[col_letter]:
+            if cell.row > 1:
+                cell.number_format = '0.00%'
+
+
 def run_trade():
 
     symbols = load_symbols(SYMBOL_FILE)
@@ -1148,7 +1186,9 @@ def run_trade():
             "窗口", "窗口内有效数据周期"
         ]
         signal_out = signal_df[[c for c in _signal_cols if c in signal_df.columns]]
+        signal_out = _round_display(signal_out, PCT_COLS)
         signal_out.to_excel(writer, sheet_name="信号扫描", index=False)
+        _set_pct_format(writer.sheets["信号扫描"], signal_out, PCT_COLS)
         # 综合评分数据条
         _ws = writer.sheets["信号扫描"]
         _nr = len(signal_out) + 1
@@ -1158,19 +1198,26 @@ def run_trade():
 
         # --- 2. 参数扫描汇总 ---
         apply_cn_mapping(all_df)
-        all_df.to_excel(writer, sheet_name="参数扫描汇总", index=False)
+        all_df_out = _round_display(all_df, PCT_COLS)
+        all_df_out.to_excel(writer, sheet_name="参数扫描汇总", index=False)
+        _set_pct_format(writer.sheets["参数扫描汇总"], all_df_out, PCT_COLS)
 
         # --- 3. 综合评分明细 ---
         if not score_all.empty:
-            score_all.to_excel(writer, sheet_name="综合评分明细", index=False)
+            score_all_out = _round_display(score_all)
+            score_all_out.to_excel(writer, sheet_name="综合评分明细", index=False)
 
         # --- 4. 综合评分排名 ---
         if not rank_all.empty:
-            rank_all.to_excel(writer, sheet_name="综合评分排名", index=False)
+            rank_all_out = _round_display(rank_all)
+            rank_all_out.to_excel(writer, sheet_name="综合评分排名", index=False)
 
         # --- 5. 参数稳定性分析 ---
         if all_stability is not None and not all_stability.empty:
-            all_stability.to_excel(writer, sheet_name="参数稳定性分析", index=False)
+            stab_pct = ["盈利窗口占比", "年化收益率平均值"]
+            stab_out = _round_display(all_stability, stab_pct)
+            stab_out.to_excel(writer, sheet_name="参数稳定性分析", index=False)
+            _set_pct_format(writer.sheets["参数稳定性分析"], stab_out, stab_pct)
 
         # --- 6. 统计逻辑 ---
         logic_rows = [
