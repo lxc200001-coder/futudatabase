@@ -775,7 +775,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps"):
         ("综合评分", "综合评分", "RdYlGn", True),
         ("年化收益率", "年化收益率(%)", "RdYlGn", True),
         ("夏普比率", "夏普比率", "RdYlGn", True),
-        ("最大回撤", "最大回撤(%)", "OrRd_r", False),
+        ("最大回撤", "最大回撤(%)", "OrRd", False),
     ]
 
     for metric, title, cmap, center in metrics:
@@ -1100,6 +1100,24 @@ def run_trade():
         signal_df["股票名称"] = None
         signal_df["所属板块"] = None
 
+    # 将最优参数结果合并到信号扫描
+    if stab_best is not None and not stab_best.empty:
+        last_window_label = sorted(all_df["窗口"].unique())[-1]
+        last_win_df = all_df[all_df["窗口"] == last_window_label]
+        best_results = last_win_df.merge(
+            stab_best[["股票代码", "均线周期"]],
+            on=["股票代码", "均线周期"], how="inner"
+        )
+        if not best_results.empty:
+            apply_cn_mapping(best_results)
+            # 最优参数结果所有列（除股票代码）加"最优"前缀后合并到信号扫描
+            best_cols = [c for c in best_results.columns if c != "股票代码"]
+            rename_map = {c: f"最优{c}" for c in best_cols}
+            best_merge = best_results[["股票代码"] + best_cols].rename(columns=rename_map)
+            signal_df = signal_df.merge(best_merge, on="股票代码", how="left")
+    else:
+        best_results = None
+
     # =============================================
     # 写入汇总 Excel
     # =============================================
@@ -1109,7 +1127,8 @@ def run_trade():
 
         # --- 1. 信号扫描 ---
         _signal_cols = [
-            "股票代码", "股票名称", "所属板块", "K线周期", "均线周期", "综合评分", "策略表现",
+            "股票代码", "股票名称", "所属板块", "K线周期", "均线周期",
+            "综合评分", "策略表现",
             "时间", "收盘价", "HA收盘价", "HA均线值",
             "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
             "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
@@ -1123,7 +1142,9 @@ def run_trade():
             "初始资金", "最终资金",
             "回测周期", "窗口"
         ]
-        signal_out = signal_df[[c for c in _signal_cols if c in signal_df.columns]]
+        # 基础列 + 动态包含所有"最优"前缀列
+        signal_cols = _signal_cols + [c for c in signal_df.columns if c.startswith("最优")]
+        signal_out = signal_df[[c for c in signal_cols if c in signal_df.columns]]
         signal_out.to_excel(writer, sheet_name="信号扫描", index=False)
         # 综合评分数据条
         _ws = writer.sheets["信号扫描"]
@@ -1148,22 +1169,10 @@ def run_trade():
         if all_stability is not None and not all_stability.empty:
             all_stability.to_excel(writer, sheet_name="参数稳定性分析", index=False)
 
-        # --- 6. 最优参数结果 ---
-        if stab_best is not None and not stab_best.empty:
-            last_window_label = sorted(all_df["窗口"].unique())[-1]
-            last_win_df = all_df[all_df["窗口"] == last_window_label]
-            best_results = last_win_df.merge(
-                stab_best[["股票代码", "均线周期"]],
-                on=["股票代码", "均线周期"], how="inner"
-            )
-            if not best_results.empty:
-                apply_cn_mapping(best_results)
-                best_results.to_excel(writer, sheet_name="最优参数结果", index=False)
-
-        # --- 7. 统计逻辑 ---
+        # --- 6. 统计逻辑 ---
         logic_rows = [
             {"类型": "Sheet说明", "名称": "信号扫描",
-             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（BUY/SELL/HOLD/WATCH），多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
+             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（BUY/SELL/HOLD/WATCH）及最优参数的最新窗口回测指标，多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
             {"类型": "Sheet说明", "名称": "参数扫描汇总",
              "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（含综合评分、窗口标签、收益/风险指标等）"},
             {"类型": "Sheet说明", "名称": "综合评分明细",
@@ -1172,8 +1181,6 @@ def run_trade():
              "统计逻辑": "透视表，同上结构，值改为窗口内排名（每窗口每股票内的参数间排名，同分取最小排名）"},
             {"类型": "Sheet说明", "名称": "参数稳定性分析",
              "统计逻辑": "按均线周期聚合：窗口数量、综合评分排名平均值/第一次数/Top3占比/标准差、参数稳定性综合评分（加权归一化）"},
-            {"类型": "Sheet说明", "名称": "最优参数结果",
-             "统计逻辑": "从参数稳定性分析中取参数稳定性综合评分最高的均线周期，从最后一个窗口匹配回测结果"},
             {"类型": "", "名称": "", "统计逻辑": ""},
             {"类型": "评分模型", "名称": "综合评分",
              "统计逻辑": "Score = 0.30*CAGR + 0.25*Sharpe + 0.20*(1-最大回撤) + 0.15*盈利因子 + 0.05*盈利交易率 + 0.05*交易次数；子指标min-max归一化，CAGR:0-30, Sharpe:0-2, 回撤:0-50, 盈利因子:1-3, 盈利率:30-80, 交易次数:10-100，加权求和范围0~100"},
