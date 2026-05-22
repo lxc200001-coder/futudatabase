@@ -1077,7 +1077,7 @@ def build_score_matrix(summary_rows):
 # =========================================================
 # 参数扫描热力图
 # =========================================================
-def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
+def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, stock_name=""):
     """从窗口回测数据生成参数扫描热力图"""
     if not scan_rows:
         return
@@ -1086,6 +1086,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
         return
 
     code_safe = code.replace(".", "_")
+    stock_name_safe = stock_name.replace(".", "_").replace(" ", "_").replace("(", "_").replace(")", "_") if stock_name else "未知"
     metrics = [
         ("综合评分", "综合评分", "RdYlGn", True),
         ("年化收益率", "年化收益率(%)", "RdYlGn", True),
@@ -1141,7 +1142,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
         if best_ma is not None and best_ma in pivot.index:
             labels = [str(ma) if ma != best_ma else f"★{ma}" for ma in pivot.index]
             ax.set_yticklabels(labels, rotation=0)
-        ax.set_title(f"{code}  {title} 参数扫描热力图", fontsize=14, fontweight="bold", pad=16)
+        ax.set_title(f"{code} {stock_name} {title} 参数扫描热力图", fontsize=14, fontweight="bold", pad=16)
         ax.set_xlabel("回测窗口", fontsize=11)
         ax.set_ylabel("均线周期", fontsize=11)
         ax.tick_params(axis="x", rotation=45)
@@ -1151,7 +1152,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
                 transform=ax.transAxes, ha="center", va="bottom",
                 fontsize=9, color="#666666")
         plt.tight_layout()
-        path = os.path.join(save_dir, f"{code_safe}_{metric}.png")
+        path = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_{metric}.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         plt.close()
 
@@ -1169,15 +1170,15 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None):
         ax.axhline(0, color="#cccccc", linewidth=0.8, linestyle="--")
         ax.set_xlabel("均线周期", fontsize=11)
         ax.set_ylabel("综合评分", fontsize=11)
-        ax.set_title(f"{code}  参数敏感性分析（均值±标准差）", fontsize=14, fontweight="bold", pad=16)
+        ax.set_title(f"{code} {stock_name} 参数敏感性分析（均值±标准差）", fontsize=14, fontweight="bold", pad=16)
         ax.grid(axis="y", alpha=0.3)
         plt.tight_layout()
-        path = os.path.join(save_dir, f"{code_safe}_参数敏感性分析.png")
+        path = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_参数敏感性分析.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         plt.close()
 
 
-def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
+def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, stock_name=""):
     """生成全窗口参数稳定性热力图。
 
     行=均线周期, 列=窗口, 值=参数稳定性综合评分。
@@ -1186,6 +1187,7 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
     if ws_df is None or ws_df.empty:
         return
     code_safe = code.replace(".", "_")
+    stock_name_safe = stock_name.replace(".", "_").replace(" ", "_").replace("(", "_").replace(")", "_") if stock_name else "未知"
 
     pivot = ws_df.pivot_table(
         index="均线周期", columns="窗口", values="参数稳定性综合评分", aggfunc="first"
@@ -1230,7 +1232,7 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
             if pivot.index[row] == best:
                 t.set_color("white")
 
-    ax.set_title(f"{code}  全窗口参数稳定性热力图", fontsize=14, fontweight="bold", pad=16)
+    ax.set_title(f"{code} {stock_name} 全窗口参数稳定性热力图", fontsize=14, fontweight="bold", pad=16)
     ax.set_xlabel("窗口", fontsize=11)
     ax.set_ylabel("均线周期", fontsize=11)
     ax.tick_params(axis="x", rotation=45)
@@ -1242,7 +1244,7 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None):
         ax.set_yticklabels(labels, rotation=0)
 
     plt.tight_layout()
-    path = os.path.join(save_dir, f"{code_safe}_全窗口参数稳定性热力图.png")
+    path = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_全窗口参数稳定性热力图.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
 
@@ -1368,6 +1370,13 @@ def _process_one_stock(code, windows=None):
     df = df.sort_values("datetime")
     df["code"] = code
     out_file = os.path.join(TRADE_DIR, f"{code}_trades.xlsx")
+    stock_name = ""
+    _pp = os.path.join(DATA_DIR, "stocks_plates.parquet")
+    if os.path.exists(_pp):
+        _pn = pd.read_parquet(_pp)
+        _m = _pn[_pn["code"] == code]
+        if not _m.empty:
+            stock_name = str(_m.iloc[0].get("stock_name", ""))
     stock_all_rows = []
     stock_stability_dfs = []
 
@@ -1515,7 +1524,7 @@ def _process_one_stock(code, windows=None):
     # 参数扫描热力图（用全部窗口数据）
     # =============================================
     if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, "heatmaps"), best_ma=best_stab_ma)
+        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
 
     # --- 全窗口参数稳定性热力图 ---
     if window_stability_df is not None and not window_stability_df.empty:
@@ -1523,6 +1532,7 @@ def _process_one_stock(code, windows=None):
             code, window_stability_df,
             save_dir=os.path.join(TRADE_DIR, "heatmaps"),
             best_ma=best_stab_ma,
+            stock_name=stock_name,
         )
 
     return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df
