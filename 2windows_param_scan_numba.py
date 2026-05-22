@@ -1733,7 +1733,7 @@ def run_trade():
                 match = int(m.iloc[0]["均线周期"])
         if match is not None:
             ticker = code.split(".", 1)[1] if "." in code else code
-            tv_lines.append(f'autoMAPool.put("{ticker}", {match})')
+            tv_lines.append(f'    autoMAPool.put("{ticker}", {match})')
         else:
             missing_codes.append(code)
 
