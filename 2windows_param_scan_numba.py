@@ -1656,9 +1656,13 @@ def run_trade():
 
     signal_df = pd.DataFrame(signal_rows)
 
-    # 多头在前，空头在后，按综合评分降序
-    bull = signal_df[signal_df["趋势方向"] == 1].sort_values("综合评分", ascending=False)
-    bear = signal_df[signal_df["趋势方向"] != 1].sort_values("综合评分", ascending=False)
+    # 多头在前（已过天数升序、综合评分降序），空头在后（同）
+    bull = signal_df[signal_df["趋势方向"] == 1].sort_values(
+        ["距离历史信号已过天数", "综合评分"], ascending=[True, False]
+    )
+    bear = signal_df[signal_df["趋势方向"] != 1].sort_values(
+        ["距离历史信号已过天数", "综合评分"], ascending=[True, False]
+    )
     signal_df = pd.concat([bull, bear], ignore_index=True)
 
     # 策略表现分档
