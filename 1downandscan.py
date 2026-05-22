@@ -300,7 +300,7 @@ def fetch_stock_basicinfo_map(symbols, quote_ctx):
             for _, row in data.iterrows():
                 code = row["code"]
                 name_map[code] = row.get("name", "")
-                if row.get("stock_type") == "STOCK":
+                if row.get("stock_type") in ("STOCK", "ETF"):
                     stock_codes.append(code)
         else:
             print(f"获取名称失败: {market_prefix} {codes}")
