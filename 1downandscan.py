@@ -300,7 +300,7 @@ def fetch_stock_basicinfo_map(symbols, quote_ctx):
             for _, row in data.iterrows():
                 code = row["code"]
                 name_map[code] = row.get("name", "")
-                if row.get("stock_type") in ("STOCK", "ETF"):
+                if row.get("stock_type") == "STOCK":
                     stock_codes.append(code)
         else:
             print(f"获取名称失败: {market_prefix} {codes}")
@@ -335,8 +335,18 @@ def fetch_all_stock_plates(symbols, quote_ctx):
                     "update_time": datetime.now()
                 })
 
-    if not all_rows:
-        return pd.DataFrame()
+    # 补充无板块数据的标的（如ETF、未返回板块的普通股票），确保名称能进入 stocks_plates.parquet
+    found_codes = {r["code"] for r in all_rows}
+    for code in name_map:
+        if code not in found_codes:
+            all_rows.append({
+                "code": code,
+                "stock_name": name_map.get(code, ""),
+                "plate_code": "",
+                "plate_name": "",
+                "plate_type": "",
+                "update_time": datetime.now()
+            })
 
     df = pd.DataFrame(all_rows)
     df = df.drop_duplicates().sort_values(["code", "plate_type"]).reset_index(drop=True)
