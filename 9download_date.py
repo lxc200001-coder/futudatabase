@@ -1,7 +1,7 @@
 import os
-import sys
 import time
 import argparse
+import logging
 import requests
 import urllib3
 import pandas as pd
@@ -11,7 +11,9 @@ from collections import deque
 from datetime import datetime
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
-# 关闭 Binance SSL 警告
+# 关闭杂项日志
+logging.getLogger("futu").setLevel(logging.WARNING)
+logging.getLogger("baostock").setLevel(logging.WARNING)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =========================================================
@@ -19,8 +21,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_KTYPE = "week"     # 默认K线周期: day / week
-DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CN
+DEFAULT_KTYPE = "day"     # 默认K线周期: day / week
+DEFAULT_MARKET = "all"   # 默认市场: all / US / CN / CC / US,CC
 
 os.makedirs(DATA_DIR, exist_ok=True)
 for sub in ["us", "cn", "cc"]:
@@ -379,7 +381,7 @@ def fetch_all_stock_plates(symbols, quote_ctx):
                     "update_time": datetime.now()
                 })
 
-    # 补充无板块数据的标的（如ETF、未返回板块的普通股票），确保名称能进入 stocks_plates.parquet
+    # 补充无板块数据的标的（如ETF、未返回板块的普通股票）
     found_codes = {r["code"] for r in all_rows}
     for code in name_map:
         if code not in found_codes:
@@ -424,13 +426,13 @@ def fetch_cn_stock_industry(cn_symbols):
             rs = bs.query_stock_industry(bs_code)
             if rs.error_code == "0" and rs.next():
                 row_data = rs.get_row_data()
-                if len(row_data) >= 3 and row_data[1]:
+                # row_data: [更新日期, 股票代码, 股票名称, 行业名称, 行业分类]
+                if len(row_data) >= 4 and row_data[3]:
                     rows.append({
                         "code": code,
-                        "plate_name": row_data[1],
+                        "plate_name": row_data[3],
                         "plate_type": "INDUSTRY",
                     })
-                rs.reset()
     finally:
         bs.logout()
 
@@ -442,29 +444,20 @@ def fetch_cn_stock_industry(cn_symbols):
 
 
 # =========================================================
-# 保存板块信息
+# 板块同步主流程（直接返回 {code: plates_str}）
 # =========================================================
-def save_stock_plates(df):
-    """保存板块信息到 data_uscncc/stocks_plates.parquet"""
-    if df.empty:
-        print("无板块数据，跳过保存")
-        return
-    path = os.path.join(DATA_DIR, "stocks_plates.parquet")
-    df.to_parquet(path, index=False)
-    print(f"板块信息保存完成: {path} 共 {len(df)} 条")
+def run_plate_sync(selected_markets=None):
+    """同步板块/行业信息，返回 {code: plates_str}"""
+    if selected_markets is None:
+        selected_markets = ["us", "cn", "cc"]
 
-
-# =========================================================
-# 板块同步主流程
-# =========================================================
-def run_plate_sync():
-    """同步所有股票的板块/行业信息"""
     symbols = load_symbols(SYMBOL_FILE)
+    symbols = [c for c in symbols if get_market(c) in selected_markets]
     if not symbols:
         print("无可同步板块信息的标的，跳过")
-        return
+        return {}
 
-    all_dfs = []
+    plates_map = {}
 
     # US: 富途板块数据
     us_symbols = [c for c in symbols if get_market(c) == "us"]
@@ -474,7 +467,10 @@ def run_plate_sync():
         try:
             df_us = fetch_all_stock_plates(us_symbols, quote_ctx)
             if not df_us.empty:
-                all_dfs.append(df_us)
+                for _, row in df_us.iterrows():
+                    val = row.get("plates", "")
+                    if val:
+                        plates_map[row["code"]] = val
         finally:
             quote_ctx.close()
 
@@ -484,32 +480,49 @@ def run_plate_sync():
         print(f"\n同步 CN 行业分类 ({len(cn_symbols)} 只)...")
         df_cn = fetch_cn_stock_industry(cn_symbols)
         if not df_cn.empty:
-            # 补充 stock_name
-            name_map = {}
-            lg = bs.login()
-            if lg.error_code == "0":
-                try:
-                    for c in cn_symbols:
-                        bs_code = c.lower()
-                        rs = bs.query_stock_basic(bs_code)
-                        if rs.next():
-                            row_data = rs.get_row_data()
-                            if row_data and len(row_data) > 1:
-                                name_map[c] = row_data[1]
-                finally:
-                    bs.logout()
-            df_cn["stock_name"] = df_cn["code"].map(name_map)
-            df_cn["plate_code"] = ""
-            df_cn["plate_type_list"] = "INDUSTRY"
-            df_cn["update_time"] = datetime.now()
-            all_dfs.append(df_cn)
+            for _, row in df_cn.iterrows():
+                val = row.get("plate_name", "")
+                if val:
+                    plates_map[row["code"]] = val
 
-    if not all_dfs:
-        print("无板块数据，跳过保存")
-        return
+    if plates_map:
+        print(f"板块映射: {len(plates_map)} 只标的")
+    else:
+        print("无板块数据")
+    return plates_map
 
-    combined = pd.concat(all_dfs, ignore_index=True)
-    save_stock_plates(combined)
+
+def add_plates_to_parquets(ktype, plates_map):
+    """为已下载的 K 线 parquet 补充 plates 字段（无板块则留空）"""
+    suffix = f"1{ktype[0]}"
+    files = []
+    for market in ["us", "cn", "cc"]:
+        dir_path = os.path.join(DATA_DIR, market)
+        if not os.path.exists(dir_path):
+            continue
+        for fname in os.listdir(dir_path):
+            if not fname.endswith(f"_{suffix}.parquet"):
+                continue
+            files.append(os.path.join(dir_path, fname))
+
+    for path in files:
+        df = pd.read_parquet(path)
+        if "plates" in df.columns:
+            continue
+        code = df["code"].iloc[0]
+        df["plates"] = plates_map.get(code, "")
+        df.to_parquet(path, index=False)
+        if df["plates"].iloc[0]:
+            print(f"  补充板块: {code} → {df['plates'].iloc[0]}")
+
+    # 总表也补上
+    all_path = os.path.join(DATA_DIR, f"all_{suffix}.parquet")
+    if os.path.exists(all_path):
+        df = pd.read_parquet(all_path)
+        if "plates" not in df.columns:
+            df["plates"] = df["code"].map(plates_map).fillna("")
+            df.to_parquet(all_path, index=False)
+            print(f"  总表补充板块完成")
 
 
 # =========================================================
@@ -585,8 +598,9 @@ def run_download(ktype="week", selected_markets=None):
     all_dfs = []
 
     for i, code in enumerate(symbols, 1):
+        name = name_map.get(code, "")
         print("\n================================================")
-        print(f"{i}/{len(symbols)} 下载: {code}  {name_map.get(code, '')}")
+        print(f"{i}/{len(symbols)} 下载: {code}  {name}")
         print("================================================")
 
         start = get_start_date(code)
@@ -644,7 +658,9 @@ if __name__ == "__main__":
     else:
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
 
+    # 先下载 K 线数据
     run_download(ktype=args.ktype, selected_markets=selected_markets)
 
-    # 同步板块/行业信息
-    run_plate_sync()
+    # 再同步板块/行业信息，并补写到 K 线 parquet
+    plates_map = run_plate_sync(selected_markets=selected_markets)
+    add_plates_to_parquets(args.ktype, plates_map)
