@@ -21,8 +21,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_KTYPE = "day"     # 默认K线周期: day / week
-DEFAULT_MARKET = "CN"   # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_KTYPE = "week"     # 默认K线周期: day / week
+DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
 
 os.makedirs(DATA_DIR, exist_ok=True)
 for sub in ["us", "cn", "cc"]:
