@@ -1463,113 +1463,87 @@ def _process_one_stock(code, windows=None):
     for ma in MA_LIST:
         ma_cache[ma] = ha_close_full.rolling(ma, min_periods=ma).mean()
 
-    with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+    for ws, we in windows:
 
-        for ws, we in windows:
+        window_mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
+        df_w = df[window_mask].copy()
 
-            window_mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
-            df_w = df[window_mask].copy()
+        if df_w.empty:
+            continue
 
-            if df_w.empty:
-                continue
+        window_label = f"{ws.date()}~{we.date()}"
+        eff_start = pd.to_datetime(df_w["datetime"]).min()
+        eff_end = pd.to_datetime(df_w["datetime"]).max()
+        effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
-            window_label = f"{ws.date()}~{we.date()}"
-            eff_start = pd.to_datetime(df_w["datetime"]).min()
-            eff_end = pd.to_datetime(df_w["datetime"]).max()
-            effective_range = f"{eff_start.date()}~{eff_end.date()}"
+        for ma in MA_LIST:
+            df_w["ha_close"] = ha_close_full[window_mask]
+            df_w["ma"] = ma_cache[ma][window_mask]
+            df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
+            df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
+            df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
 
-            for ma in MA_LIST:
-                df_w["ha_close"] = ha_close_full[window_mask]
-                df_w["ma"] = ma_cache[ma][window_mask]
-                df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
-                df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
-                df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
+            trades, equity_arr = _build_trades_numba(df_w, ma)
 
-                trades, equity_arr = _build_trades_numba(df_w, ma)
+            if not trades.empty:
+                trades["窗口"] = window_label
+                trades["窗口内有效数据周期"] = effective_range
+                window_trades_by_ma[ma].append(trades)
 
-                if not trades.empty:
-                    trades["窗口"] = window_label
-                    trades["窗口内有效数据周期"] = effective_range
-                    window_trades_by_ma[ma].append(trades)
+            summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
+            summary["窗口"] = window_label
+            summary["窗口内有效数据周期"] = effective_range
+            summary["综合评分"] = calc_score_row(summary)
 
-                summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
-                summary["窗口"] = window_label
-                summary["窗口内有效数据周期"] = effective_range
-                summary["综合评分"] = calc_score_row(summary)
+            window_summary_rows.append(summary)
+            stock_all_rows.append(summary)
 
-                window_summary_rows.append(summary)
-                stock_all_rows.append(summary)
+    # =============================================
+    # 交易日志明细 -> 写 parquet（替代 Excel，避免 worker 中慢速 I/O）
+    # =============================================
+    window_trades_merged = [t for ma in MA_LIST for t in window_trades_by_ma[ma] if not t.empty]
+    if window_trades_merged:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            _tdf = pd.concat(window_trades_merged, ignore_index=True, sort=False)
+            os.makedirs(os.path.dirname(out_file), exist_ok=True)
+            _tdf.to_parquet(out_file.replace(".xlsx", "_trades.parquet"))
 
-        # =============================================
-        # 交易日志明细
-        # =============================================
-        window_trades_merged = [t for ma in MA_LIST for t in window_trades_by_ma[ma] if not t.empty]
-        if window_trades_merged:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=FutureWarning)
-                _tdf = pd.concat(window_trades_merged, ignore_index=True, sort=False)
-                _round_display(_tdf).to_excel(writer, sheet_name="交易日志明细", index=False)
+    # =============================================
+    # 参数扫描结果汇总（计算在内存中，Excel 由主进程统一写入）
+    # =============================================
+    window_stability_df = None
+    best_stab_ma = None
+    if window_summary_rows:
+        ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
+        apply_cn_mapping(ws_df)
 
-        # =============================================
-        # 参数扫描结果汇总
-        # =============================================
-        window_stability_df = None
-        if window_summary_rows:
-            ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
-            apply_cn_mapping(ws_df)
-            _round_display(ws_df, PCT_COLS).to_excel(writer, sheet_name="参数扫描结果汇总", index=False)
-            _set_pct_format(writer.sheets["参数扫描结果汇总"], ws_df, PCT_COLS)
+        score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
 
-            score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
-            if not score_pivot.empty:
-                _round_display(score_pivot).to_excel(writer, sheet_name="综合评分明细", index=False)
-            if not rank_pivot.empty:
-                _round_display(rank_pivot).to_excel(writer, sheet_name="综合评分排名", index=False)
+        window_stability_df = build_window_stability(window_summary_rows) if window_summary_rows and len(window_summary_rows) > len(MA_LIST) else None
 
-            window_stability_df = build_window_stability(window_summary_rows) if window_summary_rows and len(window_summary_rows) > len(MA_LIST) else None
-            best_stab_ma = None
+        if window_stability_df is not None and not window_stability_df.empty:
+            last_window = sorted(window_stability_df["窗口"].unique())[-1]
+            last_ws_df = window_stability_df[window_stability_df["窗口"] == last_window]
+            best_stab_ma = (
+                last_ws_df
+                .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
+                .iloc[0]["均线周期"]
+            )
 
-            # --- 全窗口参数稳定性分析 ---
-            if window_stability_df is not None and not window_stability_df.empty:
-                _w_pct = ["盈利窗口占比", "年化收益率平均值"]
-                _round_display(window_stability_df, _w_pct).to_excel(
-                    writer, sheet_name="全窗口参数稳定性分析", index=False
-                )
-                _set_pct_format(writer.sheets["全窗口参数稳定性分析"], window_stability_df, _w_pct)
+    # =============================================
+    # 参数扫描热力图（PNG 写入开销小，保留在 worker 中）
+    # =============================================
+    if window_summary_rows:
+        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
 
-                # 从最后一个窗口取最优均线周期（替代被删除的 calc_param_stability）
-                last_window = sorted(window_stability_df["窗口"].unique())[-1]
-                last_ws_df = window_stability_df[window_stability_df["窗口"] == last_window]
-                best_stab_ma = (
-                    last_ws_df
-                    .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
-                    .iloc[0]["均线周期"]
-                )
-
-
-                best_result = ws_df[ws_df["均线周期"] == best_stab_ma].copy()
-                if not best_result.empty:
-                    _round_display(best_result, PCT_COLS).to_excel(writer, sheet_name="最优参数结果", index=False)
-                    _set_pct_format(writer.sheets["最优参数结果"], best_result, PCT_COLS)
-
-                # --- 各窗口最优参数变动情况 ---
-                best_ma_per_window = window_stability_df[window_stability_df["是否最优"] == "最优"].copy()
-                if not best_ma_per_window.empty:
-                    pivot_best = best_ma_per_window.pivot_table(
-                        index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
-                    )
-                    pivot_best = pivot_best[sorted(pivot_best.columns)]
-                    # 计算股性指标
-                    vals = pivot_best.iloc[0].dropna()
-                    n_changes = int((np.diff(vals.values) != 0).sum()) if len(vals) >= 2 else 0
-                    std_val = round(vals.std(ddof=0), 2) if len(vals) > 0 else np.nan
-                    pivot_best["最优参数变动次数"] = n_changes
-                    pivot_best["最优参数标准差"] = std_val
-                    pivot_best["股性评分"] = round(max(0, 100 - n_changes * 5 - std_val * 2), 1)
-                    pivot_best.to_excel(writer, sheet_name="各窗口最优参数变动情况")
-
-        for ws_sheet in writer.sheets.values():
-            _apply_sheet_format(ws_sheet)
+    if window_stability_df is not None and not window_stability_df.empty:
+        generate_stability_heatmap(
+            code, window_stability_df,
+            save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"),
+            best_ma=best_stab_ma,
+            stock_name=stock_name,
+        )
 
     # =============================================
     # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
@@ -1594,22 +1568,7 @@ def _process_one_stock(code, windows=None):
         signal_info["市场"] = _market_val
         signal_map[ma] = signal_info
 
-    # =============================================
-    # 参数扫描热力图（用全部窗口数据）
-    # =============================================
-    if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
-
-    # --- 全窗口参数稳定性热力图 ---
-    if window_stability_df is not None and not window_stability_df.empty:
-        generate_stability_heatmap(
-            code, window_stability_df,
-            save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"),
-            best_ma=best_stab_ma,
-            stock_name=stock_name,
-        )
-
-    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df
+    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file
 
 
 def _round_display(df, pct_cols=None):
@@ -1770,6 +1729,69 @@ SIGNAL_COLS = [
     "初始资金", "最终资金",
     "窗口", "窗口内有效数据周期",
 ]
+
+
+def _write_stock_excel(out_file, all_rows, window_stability_df):
+    """从 parquet + 内存数据写回落个股 Excel（在主进程串行调用）。"""
+    trades_path = out_file.replace(".xlsx", "_trades.parquet")
+    if not os.path.exists(trades_path) and not all_rows:
+        return
+
+    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
+        if os.path.exists(trades_path):
+            _tdf = pd.read_parquet(trades_path)
+            _round_display(_tdf).to_excel(writer, sheet_name="交易日志明细", index=False)
+            os.remove(trades_path)
+
+        if all_rows:
+            ws_df = reorder_columns(pd.DataFrame(all_rows))
+            apply_cn_mapping(ws_df)
+            _round_display(ws_df, PCT_COLS).to_excel(writer, sheet_name="参数扫描结果汇总", index=False)
+            _set_pct_format(writer.sheets["参数扫描结果汇总"], ws_df, PCT_COLS)
+
+            score_pivot, rank_pivot = build_score_matrix(all_rows)
+            if not score_pivot.empty:
+                _round_display(score_pivot).to_excel(writer, sheet_name="综合评分明细", index=False)
+            if not rank_pivot.empty:
+                _round_display(rank_pivot).to_excel(writer, sheet_name="综合评分排名", index=False)
+
+            if window_stability_df is not None and not window_stability_df.empty:
+                _w_pct = ["盈利窗口占比", "年化收益率平均值"]
+                _round_display(window_stability_df, _w_pct).to_excel(
+                    writer, sheet_name="全窗口参数稳定性分析", index=False
+                )
+                _set_pct_format(writer.sheets["全窗口参数稳定性分析"], window_stability_df, _w_pct)
+
+                last_window = sorted(window_stability_df["窗口"].unique())[-1]
+                last_ws_df = window_stability_df[window_stability_df["窗口"] == last_window]
+                best_stab_ma = (
+                    last_ws_df
+                    .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
+                    .iloc[0]["均线周期"]
+                )
+
+                best_result = ws_df[ws_df["均线周期"] == best_stab_ma].copy()
+                if not best_result.empty:
+                    _round_display(best_result, PCT_COLS).to_excel(writer, sheet_name="最优参数结果", index=False)
+                    _set_pct_format(writer.sheets["最优参数结果"], best_result, PCT_COLS)
+
+                best_ma_per_window = window_stability_df[window_stability_df["是否最优"] == "最优"].copy()
+                if not best_ma_per_window.empty:
+                    pivot_best = best_ma_per_window.pivot_table(
+                        index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
+                    )
+                    pivot_best = pivot_best[sorted(pivot_best.columns)]
+                    vals = pivot_best.iloc[0].dropna()
+                    n_changes = int((np.diff(vals.values) != 0).sum()) if len(vals) >= 2 else 0
+                    std_val = round(vals.std(ddof=0), 2) if len(vals) > 0 else 0.0
+                    pivot_best["最优参数变动次数"] = n_changes
+                    pivot_best["最优参数标准差"] = std_val
+                    pivot_best["股性评分"] = round(max(0, 100 - n_changes * 5 - std_val * 2), 1)
+                    pivot_best.to_excel(writer, sheet_name="各窗口最优参数变动情况")
+
+        for ws_sheet in writer.sheets.values():
+            _apply_sheet_format(ws_sheet)
 
 
 def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
@@ -2042,7 +2064,7 @@ def run_trade():
         market_signal_maps = {}
         market_window_stability = []
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
             future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
             _results = {}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
@@ -2055,17 +2077,23 @@ def run_trade():
                     finally:
                         pbar.update(1)
 
+            stock_excel_files = []
             for code in sorted(_results.keys()):
                 result = _results[code]
                 if isinstance(result, Exception):
                     tqdm.write(f"  失败: {code} {result}")
                 else:
-                    s_all, s_stab, sig_map, s_ws = result
+                    s_all, s_stab, sig_map, s_ws, out_f = result
                     market_rows.extend(s_all)
                     market_signal_maps[code] = sig_map
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
+                    stock_excel_files.append((out_f, s_all, s_ws))
                     tqdm.write(f"  完成: {code}")
+
+            # ---- 主进程统一写个股 Excel（串行，不阻塞 worker）----
+            for out_f, s_all, s_ws in stock_excel_files:
+                _write_stock_excel(out_f, s_all, s_ws)
 
         # ---- 本市场汇总 ----
         if not market_rows:
