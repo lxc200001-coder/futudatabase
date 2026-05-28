@@ -1804,7 +1804,33 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             _round_display(_ws, _wpct).to_excel(writer, sheet_name="全窗口参数稳定性分析", index=False)
             _set_pct_format(writer.sheets["全窗口参数稳定性分析"], _ws, _wpct)
 
-        # --- 6. 统计逻辑 ---
+        # --- 6. 各窗口最优参数变动情况 ---
+        if window_stability_dfs:
+            _ws2 = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
+            best_all_ws = _ws2[_ws2["是否最优"] == "最优"].copy()
+            if not best_all_ws.empty:
+                pivot_best_all = best_all_ws.pivot_table(
+                    index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
+                )
+                pivot_best_all = pivot_best_all[sorted(pivot_best_all.columns)]
+
+                def _row_personality(r):
+                    vals = r.dropna()
+                    if len(vals) < 2:
+                        return pd.Series([0, 0])
+                    changes = int((np.diff(vals.values) != 0).sum())
+                    std_val = vals.std(ddof=0)
+                    return pd.Series([changes, std_val])
+
+                metrics_df = pivot_best_all.apply(_row_personality, axis=1)
+                pivot_best_all["最优参数变动次数"] = metrics_df.iloc[:, 0]
+                pivot_best_all["最优参数标准差"] = metrics_df.iloc[:, 1].round(2)
+                pivot_best_all["股性评分"] = metrics_df.apply(
+                    lambda r: round(max(0, 100 - r.iloc[0] * 5 - r.iloc[1] * 2), 1), axis=1
+                )
+                pivot_best_all.to_excel(writer, sheet_name="各窗口最优参数变动情况")
+
+        # --- 7. 统计逻辑 ---
         logic_rows = [
             # ── Sheet 说明 ──
             {"类型": "Sheet说明", "名称": "信号扫描",
@@ -1817,6 +1843,8 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "透视表，同上结构，值改为窗口内排名（每窗口每股票内的参数间排名，同分取最小排名）"},
             {"类型": "Sheet说明", "名称": "全窗口参数稳定性分析",
              "统计逻辑": "个股层面，对每个累积窗口阶段计算参数稳定性（同参数稳定性分析逻辑，按窗口展开），排序=股票代码↑|窗口↑|均线周期↑"},
+            {"类型": "Sheet说明", "名称": "各窗口最优参数变动情况",
+             "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性综合评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
             {"类型": "Sheet说明", "名称": "交易日志明细",
              "统计逻辑": "每只股票每窗口每均线周期的完整交易记录（含开平仓时间、价格、盈亏、持仓天数等），用于逐笔验证回测逻辑"},
             {"类型": "Sheet说明", "名称": "最优参数结果",
@@ -1929,6 +1957,9 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表"},
             {"类型": "窗口信息", "名称": "窗口内有效数据周期",
              "统计逻辑": "该窗口实际数据的起止日期区间，格式 起始日期~结束日期；若股票上市晚于窗口起始，起始日期为数据首日"},
+            # ── 参数选择 ──
+            {"类型": "参数选择", "名称": "最优均线周期",
+             "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，选作信号扫描使用的参数"},
             # ── 参数稳定性 ──
             {"类型": "参数稳定性", "名称": "窗口数量",
              "统计逻辑": "该均线周期参与计算的窗口总数"},
