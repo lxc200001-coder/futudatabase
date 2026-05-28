@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from openpyxl.styles import Alignment
-from numba import njit
+from numba import njit, prange
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -263,6 +263,95 @@ def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
         equity[-1] = max(realized_cash, 1e-6)
 
     return trades[:trade_count], equity, trade_count
+
+
+@njit(parallel=True)
+def _numba_all_ma(close, ha_close, ma_list, initial_cash, fee_rate):
+    """并行计算所有 MA 周期的回测。"""
+    n_ma = len(ma_list)
+    n = len(close)
+    max_trades = n
+    all_trades = np.zeros((n_ma, max_trades, 13))
+    all_equity = np.zeros((n_ma, n))
+    all_n_trades = np.zeros(n_ma, dtype=np.int64)
+
+    for ma_idx in prange(n_ma):
+        ma_len = ma_list[ma_idx]
+        ma = np.zeros(n)
+        running_sum = 0.0
+        for t in range(n):
+            running_sum += ha_close[t]
+            if t >= ma_len - 1:
+                if t >= ma_len:
+                    running_sum -= ha_close[t - ma_len]
+                ma[t] = running_sum / ma_len
+            else:
+                ma[t] = np.nan
+
+        buy = np.zeros(n, dtype=np.int8)
+        sell = np.zeros(n, dtype=np.int8)
+        prev_dir = 0
+        for t in range(1, n):
+            if np.isnan(ma[t]) or np.isnan(ma[t - 1]):
+                continue
+            curr_dir = 1 if ma[t] > ma[t - 1] else -1
+            if prev_dir != 0:
+                if curr_dir == 1 and prev_dir == -1:
+                    buy[t] = 1
+                elif curr_dir == -1 and prev_dir == 1:
+                    sell[t] = 1
+            prev_dir = curr_dir
+
+        trades, equity, n_trades = _numba_backtest(close, buy, sell, initial_cash, fee_rate)
+        all_trades[ma_idx, :n_trades] = trades[:n_trades]
+        all_equity[ma_idx] = equity
+        all_n_trades[ma_idx] = n_trades
+
+    return all_trades, all_equity, all_n_trades
+
+
+def _trades_arr_to_df(trades_arr, n_trades, datetime_arr, code_val, market_val, ma_len):
+    """将 numpy trade array 转换为和 _build_trades_numba 相同结构的 DataFrame。"""
+    if n_trades == 0:
+        return pd.DataFrame()
+    backtest_period = f"{pd.Timestamp(datetime_arr[0]).date()} ~ {pd.Timestamp(datetime_arr[-1]).date()}"
+    records = []
+    for j in range(n_trades):
+        t = trades_arr[j]
+        entry_idx = int(t[2])
+        exit_idx = int(t[4])
+        entry_time = pd.Timestamp(datetime_arr[entry_idx])
+        exit_time = pd.Timestamp(datetime_arr[exit_idx])
+        entry_price_val = t[0]
+        position_val = int(t[1])
+        buy_fee = t[5]
+        sell_fee = t[6]
+        pnl = t[7]
+        total_fee = buy_fee + sell_fee
+        cost_basis = entry_price_val * position_val + buy_fee
+        return_pct = pnl / cost_basis * 100 if cost_basis > 0 else 0
+        hold_kbars = exit_idx - entry_idx
+        hold_days = (exit_time - entry_time).days
+        is_force = t[12] == 1
+        cash_before_buy = t[8] if t[8] != 0 else None
+        cash_after_buy = t[9] if t[9] != 0 else None
+        cash_before_sell = t[10]
+        cash_after_sell = t[11]
+        records.append({
+            "股票代码": code_val, "市场": market_val,
+            "K线类型": KTYPE_DISPLAY, "K线周期": BAR_INTERVAL, "均线周期": ma_len,
+            "开仓时间": entry_time, "开仓价格": float(entry_price_val), "买入股数": position_val,
+            "平仓时间": exit_time, "平仓价格": float(t[3]), "卖出股数": position_val,
+            "交易状态": "未平仓(强制结算)" if is_force else "已平仓",
+            "订单盈亏类型": "盈利" if pnl > 0 else "亏损",
+            "收益金额": pnl, "收益率(%)": float(return_pct),
+            "买入手续费": buy_fee, "卖出手续费": sell_fee, "总手续费": total_fee,
+            "开仓前可用现金": cash_before_buy, "开仓后可用现金": cash_after_buy,
+            "平仓前可用现金": cash_before_sell, "平仓后可用现金": cash_after_sell,
+            "持仓K线数": hold_kbars, "持仓天数": hold_days,
+            "回测周期": backtest_period,
+        })
+    return pd.DataFrame(records)
 
 
 def _build_trades_numba(df, ma_len):
@@ -1476,21 +1565,32 @@ def _process_one_stock(code, windows=None):
         eff_end = pd.to_datetime(df_w["datetime"]).max()
         effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
-        for ma in MA_LIST:
-            df_w["ha_close"] = ha_close_full[window_mask]
-            df_w["ma"] = ma_cache[ma][window_mask]
-            df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
-            df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
-            df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
+        # 并行计算所有 MA 周期的回测
+        close_arr = df_w["close"].values.astype(np.float64)
+        ha_close_w = ha_close_full[window_mask].values.astype(np.float64)
+        all_trades_arr, all_equity_arr, all_n_trades = _numba_all_ma(
+            close_arr, ha_close_w, np.array(MA_LIST, dtype=np.int64),
+            INITIAL_CASH, FEE_RATE,
+        )
 
-            trades, equity_arr = _build_trades_numba(df_w, ma)
+        code_val = df_w["code"].iloc[0]
+        market_val = str(df_w.get("market", pd.Series([""])).iloc[0]) if "market" in df_w.columns else ""
+        datetime_arr = df_w["datetime"].values
 
-            if not trades.empty:
-                trades["窗口"] = window_label
-                trades["窗口内有效数据周期"] = effective_range
-                window_trades_by_ma[ma].append(trades)
+        for idx, ma in enumerate(MA_LIST):
+            n_trades = all_n_trades[idx]
+            equity_arr = all_equity_arr[idx]
+            trades_df = _trades_arr_to_df(
+                all_trades_arr[idx], n_trades, datetime_arr,
+                code_val, market_val, ma,
+            )
 
-            summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
+            if not trades_df.empty:
+                trades_df["窗口"] = window_label
+                trades_df["窗口内有效数据周期"] = effective_range
+                window_trades_by_ma[ma].append(trades_df)
+
+            summary = build_summary(trades_df, ma, df_w, equity_arr=equity_arr)
             summary["窗口"] = window_label
             summary["窗口内有效数据周期"] = effective_range
             summary["综合评分"] = calc_score_row(summary)
@@ -2064,7 +2164,7 @@ def run_trade():
         market_signal_maps = {}
         market_window_stability = []
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, os.cpu_count() // 3)) as executor:
             future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
             _results = {}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
