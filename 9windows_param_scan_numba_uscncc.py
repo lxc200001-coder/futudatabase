@@ -1668,6 +1668,9 @@ def _process_one_stock(code, windows=None):
         signal_info["市场"] = _market_val
         signal_map[ma] = signal_info
 
+    # 在当前 worker 中写个股 Excel（4 个 worker 并行写，比主进程串行快 4 倍）
+    _write_stock_excel(out_file, stock_all_rows, window_stability_df)
+
     return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file
 
 
@@ -2177,7 +2180,6 @@ def run_trade():
                     finally:
                         pbar.update(1)
 
-            stock_excel_files = []
             for code in sorted(_results.keys()):
                 result = _results[code]
                 if isinstance(result, Exception):
@@ -2188,12 +2190,7 @@ def run_trade():
                     market_signal_maps[code] = sig_map
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
-                    stock_excel_files.append((out_f, s_all, s_ws))
                     tqdm.write(f"  完成: {code}")
-
-            # ---- 主进程统一写个股 Excel（串行，不阻塞 worker）----
-            for out_f, s_all, s_ws in stock_excel_files:
-                _write_stock_excel(out_f, s_all, s_ws)
 
         # ---- 本市场汇总 ----
         if not market_rows:
