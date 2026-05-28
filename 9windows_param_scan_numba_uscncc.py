@@ -1731,67 +1731,6 @@ SIGNAL_COLS = [
 ]
 
 
-def _write_stock_excel(out_file, all_rows, window_stability_df):
-    """从 parquet + 内存数据写回落个股 Excel（在主进程串行调用）。"""
-    trades_path = out_file.replace(".xlsx", "_trades.parquet")
-    if not os.path.exists(trades_path) and not all_rows:
-        return
-
-    os.makedirs(os.path.dirname(out_file), exist_ok=True)
-    with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
-        if os.path.exists(trades_path):
-            _tdf = pd.read_parquet(trades_path)
-            _round_display(_tdf).to_excel(writer, sheet_name="交易日志明细", index=False)
-            os.remove(trades_path)
-
-        if all_rows:
-            ws_df = reorder_columns(pd.DataFrame(all_rows))
-            apply_cn_mapping(ws_df)
-            _round_display(ws_df, PCT_COLS).to_excel(writer, sheet_name="参数扫描结果汇总", index=False)
-            _set_pct_format(writer.sheets["参数扫描结果汇总"], ws_df, PCT_COLS)
-
-            score_pivot, rank_pivot = build_score_matrix(all_rows)
-            if not score_pivot.empty:
-                _round_display(score_pivot).to_excel(writer, sheet_name="综合评分明细", index=False)
-            if not rank_pivot.empty:
-                _round_display(rank_pivot).to_excel(writer, sheet_name="综合评分排名", index=False)
-
-            if window_stability_df is not None and not window_stability_df.empty:
-                _w_pct = ["盈利窗口占比", "年化收益率平均值"]
-                _round_display(window_stability_df, _w_pct).to_excel(
-                    writer, sheet_name="全窗口参数稳定性分析", index=False
-                )
-                _set_pct_format(writer.sheets["全窗口参数稳定性分析"], window_stability_df, _w_pct)
-
-                last_window = sorted(window_stability_df["窗口"].unique())[-1]
-                last_ws_df = window_stability_df[window_stability_df["窗口"] == last_window]
-                best_stab_ma = (
-                    last_ws_df
-                    .sort_values(["参数稳定性综合评分", "综合评分排名标准差"], ascending=[False, True])
-                    .iloc[0]["均线周期"]
-                )
-
-                best_result = ws_df[ws_df["均线周期"] == best_stab_ma].copy()
-                if not best_result.empty:
-                    _round_display(best_result, PCT_COLS).to_excel(writer, sheet_name="最优参数结果", index=False)
-                    _set_pct_format(writer.sheets["最优参数结果"], best_result, PCT_COLS)
-
-                best_ma_per_window = window_stability_df[window_stability_df["是否最优"] == "最优"].copy()
-                if not best_ma_per_window.empty:
-                    pivot_best = best_ma_per_window.pivot_table(
-                        index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
-                    )
-                    pivot_best = pivot_best[sorted(pivot_best.columns)]
-                    vals = pivot_best.iloc[0].dropna()
-                    n_changes = int((np.diff(vals.values) != 0).sum()) if len(vals) >= 2 else 0
-                    std_val = round(vals.std(ddof=0), 2) if len(vals) > 0 else 0.0
-                    pivot_best["最优参数变动次数"] = n_changes
-                    pivot_best["最优参数标准差"] = std_val
-                    pivot_best["股性评分"] = round(max(0, 100 - n_changes * 5 - std_val * 2), 1)
-                    pivot_best.to_excel(writer, sheet_name="各窗口最优参数变动情况")
-
-        for ws_sheet in writer.sheets.values():
-            _apply_sheet_format(ws_sheet)
 
 
 def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
@@ -2077,7 +2016,6 @@ def run_trade():
                     finally:
                         pbar.update(1)
 
-            stock_excel_files = []
             for code in sorted(_results.keys()):
                 result = _results[code]
                 if isinstance(result, Exception):
@@ -2088,21 +2026,13 @@ def run_trade():
                     market_signal_maps[code] = sig_map
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
-                    stock_excel_files.append((out_f, s_all, s_ws))
                     tqdm.write(f"  完成: {code}")
-
-            # ---- 主进程统一写个股 Excel（串行，不阻塞 worker）----
-            for out_f, s_all, s_ws in stock_excel_files:
-                _write_stock_excel(out_f, s_all, s_ws)
 
         # ---- 本市场汇总 ----
         if not market_rows:
             continue
 
         market_df = pd.DataFrame(market_rows)
-
-        # 计算本市场评分矩阵
-        score_mkt, rank_mkt = build_score_matrix(market_rows)
 
         # 稳定性分析取最优参数
         stab_mkt = None
@@ -2122,11 +2052,6 @@ def run_trade():
         signal_mkt = _build_signal_scan(market_df, market_signal_maps, stab_mkt, all_signal_maps)
 
         if not signal_mkt.empty:
-            # 写入本市场 Excel
-            mkt_dir = os.path.join(TRADE_DIR, mkt)
-            mkt_out = os.path.join(mkt_dir, f"all_summary_{mkt}.xlsx")
-            _write_summary_excel(mkt_out, signal_mkt, market_df, score_mkt, rank_mkt,
-                                market_window_stability, mkt.upper())
             # 本市场全股票热力图
             if market_window_stability:
                 all_ws_mkt = pd.concat(market_window_stability, ignore_index=True)
