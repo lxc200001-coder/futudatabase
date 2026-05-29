@@ -129,6 +129,7 @@ if __name__ == "__main__":
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
 PCT_COLS = [
+    "预计持仓进度",
     "距离历史信号收盘价涨跌幅", "持仓日化收益率",
     "收益率", "年化收益率", "买入持有收益率", "超额收益率",
     "最大回撤", "盈利交易率",
@@ -439,7 +440,12 @@ def get_last_signal_info(df):
     if hist_signal is not None:
         hist_days = (today - hist_time.normalize()).days
         hist_change = (last_close - hist_close) / hist_close * 100 if hist_close else None
-        hist_daily = hist_change / hist_days if hist_days and hist_days > 0 else None
+        # 持仓日化收益率：空头趋势反转符号（做空视角下跌为盈、上涨为亏）
+        _dir = int(last["dir"])
+        if hist_change is not None and _dir == -1:
+            hist_daily = (-hist_change) / hist_days if hist_days and hist_days > 0 else None
+        else:
+            hist_daily = hist_change / hist_days if hist_days and hist_days > 0 else None
     else:
         hist_change = None
         hist_daily = None
@@ -1673,6 +1679,27 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
             row["共振均线数量"] = 0
             row["共振均线列表"] = ""
 
+        # 预计持仓进度 = 距离历史信号已过天数 / 平均持仓天数（仅多头有效）
+        _elapsed = row.get("距离历史信号已过天数")
+        _avg_hold = row.get("平均持仓天数")
+        if row.get("趋势方向") == 1 and _elapsed is not None and _avg_hold is not None and _avg_hold > 0:
+            row["预计持仓进度"] = round(min(_elapsed / _avg_hold * 100, 100), 2)
+        else:
+            row["预计持仓进度"] = None
+
+        # 窗口内有效数据天数 = 解析 "窗口内有效数据周期" 日期范围
+        _win_period = row.get("窗口内有效数据周期", "")
+        if isinstance(_win_period, str) and "~" in _win_period:
+            try:
+                parts = _win_period.split("~")
+                _d1 = pd.Timestamp(parts[0])
+                _d2 = pd.Timestamp(parts[1])
+                row["窗口内有效数据天数"] = (_d2 - _d1).days
+            except Exception:
+                row["窗口内有效数据天数"] = None
+        else:
+            row["窗口内有效数据天数"] = None
+
         rows.append(row)
 
     if not rows:
@@ -1715,6 +1742,7 @@ SIGNAL_COLS = [
     "时间", "收盘价", "HA收盘价", "HA均线值",
     "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
     "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
+    "预计持仓进度",
     "距离历史信号收盘价涨跌幅", "持仓日化收益率",
     "均线趋势共振方向", "共振均线数量", "共振均线列表",
     "收益率", "年化收益率", "买入持有收益率", "超额收益率",
@@ -1723,7 +1751,7 @@ SIGNAL_COLS = [
     "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
     "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
     "初始资金", "最终资金",
-    "窗口", "窗口内有效数据周期",
+    "窗口", "窗口内有效数据周期", "窗口内有效数据天数",
 ]
 
 
@@ -1738,6 +1766,21 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
         sig_out = _round_display(sig_out, PCT_COLS)
         sig_out.to_excel(writer, sheet_name="信号扫描", index=False)
         _set_pct_format(writer.sheets["信号扫描"], sig_out, PCT_COLS)
+
+        # 预计持仓进度列：实心填充数据条
+        if "预计持仓进度" in sig_out.columns:
+            from openpyxl.formatting.rule import DataBarRule
+            from openpyxl.utils import get_column_letter
+            _col_letter = get_column_letter(list(sig_out.columns).index("预计持仓进度") + 1)
+            _nrows = len(sig_out)
+            if _nrows > 0:
+                _rule = DataBarRule(start_type="min", end_type="max",
+                                    color="5B9BD5",  # 蓝色实心填充
+                                    showValue=True,
+                                    minLength=None, maxLength=None)
+                writer.sheets["信号扫描"].conditional_formatting.add(
+                    f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
+                )
 
         # --- 2. 回测汇总 ---
         all_out = reorder_columns(all_df)
@@ -1851,10 +1894,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "历史信号时间对应的原始收盘价"},
             {"类型": "信号字段", "名称": "距离历史信号已过天数",
              "统计逻辑": "当前最新K线日期 − 历史信号日期，单位自然日"},
+            {"类型": "信号字段", "名称": "预计持仓进度",
+             "统计逻辑": "仅多头计算 = min(已过天数 / 平均持仓天数 × 100%, 100%)，反映当前持仓占平均持仓周期的进度"},
             {"类型": "信号字段", "名称": "距离历史信号收盘价涨跌幅",
              "统计逻辑": "(当前收盘价 − 历史信号收盘价) / 历史信号收盘价 × 100%"},
             {"类型": "信号字段", "名称": "持仓日化收益率",
-             "统计逻辑": "自最新信号以来的日均收益率 = (1 + 总涨跌幅)^(1/持有天数) − 1，衡量买入后的每日平均回报"},
+             "统计逻辑": "自最新信号以来的日均收益率 = 总涨跌幅% / 持有天数；多头趋势直接计算，空头趋势反转符号（做空视角下跌为盈、上涨为亏）"},
             # ── 共振分析 ──
             {"类型": "共振分析", "名称": "均线趋势共振方向",
              "统计逻辑": "统计最优参数以下所有均线周期方向，全部为多头时标记为「多头共振」，全部为空头时标记为「空头共振」，否则为「无」"},
@@ -1908,6 +1953,8 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表"},
             {"类型": "窗口信息", "名称": "窗口内有效数据周期",
              "统计逻辑": "该窗口实际数据的起止日期区间，格式 起始日期~结束日期；若股票上市晚于窗口起始，起始日期为数据首日"},
+            {"类型": "窗口信息", "名称": "窗口内有效数据天数",
+             "统计逻辑": "从窗口内有效数据周期解析出的实际天数 = 结束日期 − 起始日期"},
             # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
              "统计逻辑": "参数稳定性分析中综合评分最高的均线周期，选作信号扫描使用的参数"},
