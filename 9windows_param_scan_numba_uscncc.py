@@ -748,41 +748,20 @@ def normalize(x, min_v, max_v):
 
 def calc_score_row(row):
 
-    # 收益类
     cagr_score = normalize(row.get("年化收益率", 0), 0, 30) * 100
     sharpe_score = normalize(row.get("夏普比率", 0), 0, 2) * 100
-    alpha_score = normalize(row.get("超额收益率", 0), 0, 30) * 100
-    calmar_score = normalize(row.get("卡尔玛比率", 0), 0, 3) * 100
-
-    # 风险类
     dd_score = (1 - normalize(row.get("最大回撤", 0), 0, 50)) * 100
     pf_score = normalize(row.get("盈利因子", 0), 1, 3) * 100
-    payoff_score = normalize(row.get("盈亏比", 0), 1, 3) * 100
     win_score = normalize(row.get("盈利交易率", 0), 30, 80) * 100
-    loss_streak_score = (1 - normalize(row.get("最大连续亏损次数", 0), 1, 15)) * 100
-
-    # 一致性类
-    win_streak_score = normalize(row.get("最大连续盈利次数", 0), 1, 15) * 100
     trade_score = normalize(min(row.get("交易次数", 0), 100), 10, 100) * 100
-    hold_score = normalize(min(row.get("平均持仓天数", 0), 120), 1, 120) * 100
-
-    # 数据可靠性
-    data_days_score = normalize(min(row.get("窗口内有效数据天数", 0), 1095), 0, 1095) * 100
 
     score = (
-        cagr_score * 0.15 +
-        sharpe_score * 0.12 +
-        alpha_score * 0.10 +
-        calmar_score * 0.08 +
-        dd_score * 0.08 +
-        pf_score * 0.08 +
-        payoff_score * 0.08 +
-        win_streak_score * 0.06 +
-        loss_streak_score * 0.06 +
+        cagr_score * 0.30 +
+        sharpe_score * 0.25 +
+        dd_score * 0.20 +
+        pf_score * 0.15 +
         win_score * 0.05 +
-        trade_score * 0.04 +
-        data_days_score * 0.04 +
-        hold_score * 0.02
+        trade_score * 0.05
     )
 
     return score
@@ -1517,7 +1496,6 @@ def _process_one_stock(code, windows=None):
             summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
             summary["窗口"] = window_label
             summary["窗口内有效数据周期"] = effective_range
-            summary["窗口内有效数据天数"] = (eff_end - eff_start).days
             summary["策略评分"] = calc_score_row(summary)
 
             window_summary_rows.append(summary)
@@ -1870,7 +1848,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "", "名称": "", "统计逻辑": ""},
             # ── 评分模型 ──
             {"类型": "评分模型", "名称": "策略评分",
-             "统计逻辑": "Score = CAGR×0.15 + Sharpe×0.12 + 超额收益率×0.10 + 卡尔玛×0.08 + (1-最大回撤)×0.08 + 盈利因子×0.08 + 盈亏比×0.08 + 最大连续盈利次数×0.06 + (1-最大连续亏损次数归一化)×0.06 + 盈利交易率×0.05 + 交易次数×0.04 + 窗口内有效数据天数归一化×0.04 + 平均持仓天数×0.02；min-max归一化范围：CAGR/超额收益率0~30%, Sharpe 0~2, 卡尔玛/盈亏比/盈利因子 1~3, 回撤 0~50%, 盈利交易率 30~80%, 连续盈利/亏损次数 1~15, 交易次数 10~100, 有效数据天数 0~1095, 持仓天数 1~120；加权求和范围0~100"},
+             "统计逻辑": "Score = 0.30*CAGR + 0.25*Sharpe + 0.20*(1-最大回撤) + 0.15*盈利因子 + 0.05*盈利交易率 + 0.05*交易次数；子指标min-max归一化，CAGR:0-30, Sharpe:0-2, 回撤:0-50, 盈利因子:1-3, 盈利率:30-80, 交易次数:10-100，加权求和范围0~100"},
             {"类型": "评分模型", "名称": "参数稳定性综合评分",
              "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定；输出保留3位小数"},
             # ── 基本字段 ──
