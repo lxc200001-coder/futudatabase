@@ -85,7 +85,9 @@ def get_market(code):
         return "cc"
     if code.startswith(("SH.", "SZ.")):
         return "cn"
-    return "us"
+    if code.startswith("US."):
+        return "us"
+    raise ValueError(f"未知代码前缀: {code}")
 
 
 MARKET_LABEL = {"us": "美股", "cn": "A股", "cc": "加密货币"}

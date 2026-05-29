@@ -61,8 +61,9 @@ def _market_subdir(code):
         return "cc"
     elif code.startswith(("SH.", "SZ.")):
         return "cn"
-    else:
+    elif code.startswith("US."):
         return "us"
+    raise ValueError(f"未知代码前缀: {code}")
 
 
 def _find_data_file(code):
@@ -71,8 +72,10 @@ def _find_data_file(code):
         market = "cc"
     elif code.startswith(("SH.", "SZ.")):
         market = "cn"
-    else:
+    elif code.startswith("US."):
         market = "us"
+    else:
+        raise ValueError(f"未知代码前缀: {code}")
     path = os.path.join(DATA_DIR, market, f"{code}{FILE_SUFFIX}.parquet")
     return path if os.path.exists(path) else None
 
@@ -92,7 +95,6 @@ KLINE_MAP = {
 }
 BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
 MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
-KTYPE_DISPLAY = KLINE_MAP[BAR_INTERVAL]["display"]
 FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
 TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
 STEP_YEARS = 1
@@ -121,7 +123,6 @@ if __name__ == "__main__":
     else:
         BAR_INTERVAL = "1D"
     MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
-    KTYPE_DISPLAY = KLINE_MAP[BAR_INTERVAL]["display"]
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
 
@@ -314,7 +315,6 @@ def _build_trades_numba(df, ma_len):
         records.append({
             "股票代码": code_val,
             "市场": market_val,
-            "K线类型": KTYPE_DISPLAY,
             "K线周期": BAR_INTERVAL,
             "均线周期": ma_len,
 
@@ -497,7 +497,6 @@ def _make_trade_record(code_val, ma_len, entry_price, position, entry_time, entr
     return {
         "股票代码": code_val,
         "市场": market_val,
-        "K线类型": KTYPE_DISPLAY,
         "K线周期": BAR_INTERVAL,
         "均线周期": ma_len,
 
@@ -811,7 +810,6 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         return {
             "股票代码": df["code"].iloc[0],
             "市场": market_val,
-            "K线类型": KTYPE_DISPLAY,
             "K线周期": BAR_INTERVAL,
             "均线周期": ma_len,
 
@@ -876,7 +874,6 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
     return {
         "股票代码": df["code"].iloc[0],
         "市场": market_val,
-        "K线类型": KTYPE_DISPLAY,
         "K线周期": BAR_INTERVAL,
         "均线周期": ma_len,
 
@@ -913,7 +910,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
 # 列排序
 # =========================================================
 COLUMN_ORDER = [
-    "股票代码", "市场", "K线类型", "K线周期", "均线周期", "综合评分"
+    "股票代码", "市场", "K线周期", "均线周期", "综合评分"
 ]
 
 END_COLUMNS = ["窗口", "窗口内有效数据周期"]
@@ -1557,7 +1554,6 @@ def _process_one_stock(code, windows=None):
         d["buy"] = (d["dir"] == 1) & (d["dir"].shift(1) == -1)
         d["sell"] = (d["dir"] == -1) & (d["dir"].shift(1) == 1)
         signal_info = get_last_signal_info(d)
-        signal_info["K线类型"] = KTYPE_DISPLAY
         signal_info["K线周期"] = BAR_INTERVAL
         signal_info["均线周期"] = ma
         signal_info["股票代码"] = code
@@ -1714,7 +1710,7 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
 
 
 SIGNAL_COLS = [
-    "股票代码", "股票名称", "所属板块", "K线周期", "均线周期",
+    "市场", "股票代码", "股票名称", "所属板块", "K线周期", "均线周期",
     "综合评分", "策略表现",
     "时间", "收盘价", "HA收盘价", "HA均线值",
     "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
@@ -1825,8 +1821,6 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "股票行业/板块分类，来源于 parquet 数据文件"},
             {"类型": "基本字段", "名称": "市场",
              "统计逻辑": "US=美股, CN=A股, CC=加密货币"},
-            {"类型": "基本字段", "名称": "K线类型",
-             "统计逻辑": "日K 或 周K，由 --ktype 参数控制"},
             {"类型": "基本字段", "名称": "K线周期",
              "统计逻辑": "1D=日K, 1W=周K"},
             {"类型": "基本字段", "名称": "均线周期",
@@ -1982,8 +1976,9 @@ def run_trade():
             return "cc"
         elif code.startswith(("SH.", "SZ.")):
             return "cn"
-        else:
+        elif code.startswith("US."):
             return "us"
+        raise ValueError(f"未知代码前缀: {code}")
 
     market_order = ["us", "cc", "cn"]
     market_groups = {m: [s for s in available if _market_group(s) == m] for m in market_order}
