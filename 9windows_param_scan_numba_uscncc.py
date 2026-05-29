@@ -1739,12 +1739,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
         sig_out.to_excel(writer, sheet_name="信号扫描", index=False)
         _set_pct_format(writer.sheets["信号扫描"], sig_out, PCT_COLS)
 
-        # --- 2. 参数扫描汇总 ---
+        # --- 2. 回测汇总 ---
         all_out = reorder_columns(all_df)
         apply_cn_mapping(all_out)
         all_out = _round_display(all_out, PCT_COLS)
-        all_out.to_excel(writer, sheet_name="参数扫描汇总", index=False)
-        _set_pct_format(writer.sheets["参数扫描汇总"], all_out, PCT_COLS)
+        all_out.to_excel(writer, sheet_name="回测汇总", index=False)
+        _set_pct_format(writer.sheets["回测汇总"], all_out, PCT_COLS)
 
         # --- 3. 综合评分明细 ---
         if score_matrix is not None and not score_matrix.empty:
@@ -1792,7 +1792,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             # ── Sheet 说明 ──
             {"类型": "Sheet说明", "名称": "信号扫描",
              "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（买入/卖出/持有/观察）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按综合评分降序排列；均线趋势共振分析检测各周期方向一致性"},
-            {"类型": "Sheet说明", "名称": "参数扫描汇总",
+            {"类型": "Sheet说明", "名称": "回测汇总",
              "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（含综合评分、窗口标签、收益/风险指标等）"},
             {"类型": "Sheet说明", "名称": "综合评分明细",
              "统计逻辑": "透视表，行=股票代码+K线周期+均线周期，列=窗口时间区间，值=综合评分"},
@@ -1802,10 +1802,6 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "个股层面，对每个累积窗口阶段计算参数稳定性（同参数稳定性分析逻辑，按窗口展开），排序=股票代码↑|窗口↑|均线周期↑"},
             {"类型": "Sheet说明", "名称": "各窗口最优参数变动情况",
              "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性综合评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
-            {"类型": "Sheet说明", "名称": "交易日志明细",
-             "统计逻辑": "每只股票每窗口每均线周期的完整交易记录（含开平仓时间、价格、盈亏、持仓天数等），用于逐笔验证回测逻辑"},
-            {"类型": "Sheet说明", "名称": "最优参数结果",
-             "统计逻辑": "参数稳定性综合评分最高的均线周期的完整回测指标，作为该股票的最优参数推荐"},
             {"类型": "", "名称": "", "统计逻辑": ""},
             # ── 评分模型 ──
             {"类型": "评分模型", "名称": "综合评分",
