@@ -2053,6 +2053,7 @@ def run_trade():
 
         if not signal_mkt.empty:
             # 本市场全股票热力图
+            mkt_dir = os.path.join(TRADE_DIR, mkt)
             if market_window_stability:
                 all_ws_mkt = pd.concat(market_window_stability, ignore_index=True)
                 generate_all_stock_best_ma_heatmap(
