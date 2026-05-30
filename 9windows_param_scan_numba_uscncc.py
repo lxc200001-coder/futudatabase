@@ -1526,8 +1526,9 @@ def _process_one_stock(code, windows=None):
         window_stability_df = build_window_stability(window_summary_rows) if window_summary_rows and len(window_summary_rows) > len(MA_LIST) else None
 
         if window_stability_df is not None and not window_stability_df.empty:
-            last_window = sorted(window_stability_df["窗口"].unique())[-1]
-            last_ws_df = window_stability_df[window_stability_df["窗口"] == last_window]
+            _windows = sorted(window_stability_df["窗口"].unique())
+            _target = _windows[-2] if len(_windows) >= 2 else _windows[-1]
+            last_ws_df = window_stability_df[window_stability_df["窗口"] == _target]
             best_stab_ma = (
                 last_ws_df
                 .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
@@ -1863,7 +1864,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "基本字段", "名称": "K线周期",
              "统计逻辑": "1D=日K, 1W=周K"},
             {"类型": "基本字段", "名称": "均线周期",
-             "统计逻辑": "全市场全窗口参数稳定性分析最后一个窗口中策略评分最高的均线周期，作为该股票的最优参数"},
+             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）策略评分最高的均线周期，作为该股票的最优参数，跳过最后一个未完整窗口"},
             # ── 策略表现 ──
             {"类型": "策略表现", "名称": "策略表现",
              "统计逻辑": "策略评分分档标签：≥80为「1优」，≥60为「2良」，≥40为「3中」，≥20为「4差」，<20为「5劣」"},
@@ -1957,7 +1958,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "从窗口内有效数据周期解析出的实际天数 = 结束日期 − 起始日期"},
             # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
-             "统计逻辑": "参数稳定性分析中策略评分最高的均线周期，选作信号扫描使用的参数"},
+             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）策略评分最高的均线周期，选作信号扫描使用的参数"},
             # ── 参数稳定性 ──
             {"类型": "参数稳定性", "名称": "窗口数量",
              "统计逻辑": "该均线周期参与计算的窗口总数"},
@@ -2076,8 +2077,9 @@ def run_trade():
         stab_mkt = None
         if market_window_stability:
             all_ws_mkt = pd.concat(market_window_stability, ignore_index=True)
-            last_window_mkt = sorted(all_ws_mkt["窗口"].unique())[-1]
-            last_ws_mkt = all_ws_mkt[all_ws_mkt["窗口"] == last_window_mkt]
+            _wins_mkt = sorted(all_ws_mkt["窗口"].unique())
+            _target = _wins_mkt[-2] if len(_wins_mkt) >= 2 else _wins_mkt[-1]
+            last_ws_mkt = all_ws_mkt[all_ws_mkt["窗口"] == _target]
             stab_mkt = (
                 last_ws_mkt
                 .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
@@ -2115,8 +2117,9 @@ def run_trade():
     stab_best = None
     if window_stability_dfs:
         all_ws_stab = pd.concat(window_stability_dfs, ignore_index=True)
-        last_window = sorted(all_ws_stab["窗口"].unique())[-1]
-        last_ws = all_ws_stab[all_ws_stab["窗口"] == last_window]
+        _wins = sorted(all_ws_stab["窗口"].unique())
+        _target_ws = _wins[-2] if len(_wins) >= 2 else _wins[-1]
+        last_ws = all_ws_stab[all_ws_stab["窗口"] == _target_ws]
         stab_best = (
             last_ws
             .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
