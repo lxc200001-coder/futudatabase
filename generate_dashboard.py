@@ -85,6 +85,12 @@ def load_data():
                 # 方向值标准化：中文 → 数值
                 if "dir" in df.columns:
                     df["dir"] = df["dir"].map({"多头": 1, "空头": -1}).astype(int)
+
+                # Excel 百分比字段存储为 ÷100 后的值，乘回 100 供 JS 直接使用
+                for _f in ["hist_change", "daily_return", "年化收益率", "盈利交易率"]:
+                    if _f in df.columns:
+                        df[_f] = df[_f] * 100
+
                 print(f"读取 all_summary.xlsx → 信号扫描: {len(df)} 行")
                 return df, summary_path
         except Exception as e:
