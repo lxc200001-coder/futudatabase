@@ -1853,16 +1853,18 @@ def _process_one_stock(code, windows=None, mode="window"):
 
     # ---- Sequential 模式：走连续回测分支 ----
     if mode == "sequential":
-        seq_rows, seq_trades, sig_map, _ = _run_sequential(
+        seq_rows, seq_trades, _sig_outer, _ = _run_sequential(
             code, df, windows, stock_name, stock_plates
         )
         if not seq_rows:
             return [], [], {}, None, None
+        # _sig_outer 是 {code: {ma: signal_info}}，提取内层 {ma: signal_info}
+        sig_map = _sig_outer.get(code, {})
 
         # 写交易日志 parquet
         if not seq_trades.empty:
             os.makedirs(os.path.dirname(out_file), exist_ok=True)
-            seq_trades.to_parquet(out_file.replace(".xlsx", "_sequential_trades.parquet"))
+            seq_trades.to_parquet(os.path.join(os.path.dirname(out_file), f"{code}_sequential_trades.parquet"))
 
         # 构建 window_stability 用于参数稳定性分析（汇总训练+测试数据用最新 MA）
         ws_df = None
