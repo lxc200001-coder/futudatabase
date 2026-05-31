@@ -1835,10 +1835,10 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code, windows=None):
+def _process_one_stock(code, windows=None, mode="window"):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map, window_stability_df, out_file).
 
-    根据 MODE 使用不同回测策略：window = 窗口独立，sequential = 连续回测。
+    根据 mode 使用不同回测策略：window = 窗口独立，sequential = 连续回测。
     """
     path = _find_data_file(code)
     if not path:
@@ -1851,7 +1851,7 @@ def _process_one_stock(code, windows=None):
     stock_plates = str(df["plates"].iloc[0]) if "plates" in df.columns else ""
 
     # ---- Sequential 模式：走连续回测分支 ----
-    if MODE == "sequential":
+    if mode == "sequential":
         seq_rows, seq_trades, sig_map, _ = _run_sequential(
             code, df, windows, stock_name, stock_plates
         )
@@ -2467,7 +2467,7 @@ def run_trade():
         market_window_stability = []
 
         with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
-            future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
+            future_to_code = {executor.submit(_process_one_stock, code, windows, MODE): code for code in group}
             _results = {}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
                 for future in concurrent.futures.as_completed(future_to_code):
