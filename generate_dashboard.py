@@ -174,8 +174,8 @@ def build_json_data(signals):
     # 7. 按信号分类的个股列表
     SIG_COLS = ["symbol", "hist_change", "close", "hist_days", "score"]
     SIG_LABELS = ["代码", "涨跌幅", "收盘价", "已过天数", "评分"]
-    ROW2_COLS = ["stock_name", "", "hist_close", "hist_time", ""]
-    ROW2_LABELS = ["股票名称", "", "信号价", "信号时间", ""]
+    ROW2_COLS = ["stock_name", "", "hist_close", "hist_time", "策略表现"]
+    ROW2_LABELS = ["股票名称", "", "信号价", "信号时间", "策略表现"]
 
     # 有效信号：已确认用最新信号，待确认回退到历史信号分板块
     def _eff_signal(r):
@@ -211,6 +211,7 @@ def build_json_data(signals):
             row["stock_name"] = _js(r.get("stock_name", ""))
             row["hist_close"] = _js(r.get("hist_close"))
             row["hist_time"] = _js(r.get("hist_time"))
+            row["策略表现"] = _js(r.get("策略表现", ""))
             rows.append(row)
         rows.sort(key=lambda x: (x.get("hist_days") or 9999, -(x.get("score") or 0)))
         return rows, cols
@@ -298,6 +299,9 @@ th {{ text-align:left; padding:8px 12px; background:#faf9f5; border-bottom:1px s
 th:hover {{ background:#f0efe9; }}
 thead th {{ position:sticky; top:0; z-index:3; background:#faf9f5; }}
 td {{ padding:7px 12px; border-bottom:1px solid #f0efe9; }}
+tr.row1 td {{ border-bottom:none; padding-bottom:2px; }}
+tr.row1 + tr.dr td {{ padding-top:2px; }}
+.sig-table td:first-child {{ max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
 tr:hover {{ background:#faf9f5; }}
 .sig-grid td:first-child, .sig-grid th:first-child {{ position:sticky; left:0; z-index:1; background:#fff; }}
 .sig-grid th:first-child {{ z-index:4; }}
@@ -566,7 +570,7 @@ function _renderSigTableBody(sig) {{
   rows.forEach(function(r){{
     var symClean = r.symbol.replace(/\\./g,'_');
     // --- 第1行：代码 涨跌幅 收盘价 已过天数 评分 ---
-    h += '<tr class="dr" onclick="toggleChart(this)">';
+    h += '<tr class="dr row1" onclick="toggleChart(this)">';
     st.cols.forEach(function(c){{
       var v = r[c];
       if (c === 'close') v = v != null ? v.toFixed(2) : '-';
@@ -575,23 +579,34 @@ function _renderSigTableBody(sig) {{
         if (v == null) {{ v = '-'; }}
         else {{
           var _nv=Number(v);
-          var _pct=Math.min(Math.abs(_nv),50)/50*100;var _cl=_nv>=0?'#27ae60':'#e74c3c';var _pm=_nv>0?'+':(_nv<0?'':'+');
-          v='<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+_nv.toFixed(2)+'%</span>';
+          var _pct=Math.min(Math.abs(_nv),100);var _cl=_nv>=0?'#27ae60':'#e74c3c';
+          v='<span style="display:inline-flex;align-items:center;"><span style="width:80px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span></span>';
         }}
       }}
       else v = v != null ? v : '-';
-      h += '<td>' + (c === 'symbol' ? '<strong>' + v.replace(/^(US|CC)\./,'') + '</strong>' : v) + '</td>';
+      var _td = (c === 'symbol' ? '<strong>' + v.replace(/^(US|CC)\./,'') + '</strong>' : v);
+      h += (c === st.cols[0]) ? '<td title="'+r[c]+'">'+_td+'</td>' : '<td>'+_td+'</td>';
     }});
     h += '</tr>';
     // --- 第2行：股票名称 空 信号价 信号时间 空 ---
     h += '<tr class="dr" onclick="toggleChart(this)" style="font-size:11px;color:#888;">';
-    st.row2_cols.forEach(function(c){{
+    st.row2_cols.forEach(function(c, i){{
       if (c) {{
         var v = r[c];
         if (c === 'hist_close') v = v != null ? v.toFixed(2) : '-';
         else if (c === 'hist_time') v = v || '-';
+        else if (c === '策略表现') {{
+          var _pc={{'优':'tag-excellent','良':'tag-good','中':'tag-medium','差':'tag-poor','劣':'tag-bad'}};
+          var _pl=String(v||'').replace(/[\d.]+/g,'').trim();
+          v=_pl?'<span class="tag '+(_pc[_pl]||'tag-medium')+'">'+_pl+'</span>':'-';
+          h += '<td>'+v+'</td>'; return;
+        }}
         else v = v != null ? v : '-';
-        h += '<td>' + v + '</td>';
+        h += (i === 0) ? '<td title="'+v+'">'+v+'</td>' : '<td>'+v+'</td>';
+      }} else if (i === 1 && r.hist_change != null) {{
+        var _nv=Number(r.hist_change);
+        var _pm=_nv>0?'+':(_nv<0?'':'');
+        h += '<td style="font-size:12px;color:'+(_nv>=0?'#27ae60':'#e74c3c')+'">'+_pm+_nv.toFixed(2)+'%</td>';
       }} else {{
         h += '<td></td>';
       }}
@@ -620,7 +635,7 @@ function renderSignalSections() {{
     sigSort[sig] = {{multi: true, keys: [{{key:'hist_days', dir:1}}, {{key:'score', dir:-1}}], rows: sec.rows.slice(), cols: sec.cols, labels: sec.labels, row2_cols: sec.row2_cols, row2_labels: sec.row2_labels}};
     var sigColor = sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6';
     h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+sigColor+'"><h3 style="display:flex;justify-content:space-between;align-items:center;"><span>'+SIG_NAMES[sig]+'信号 <span style="color:'+sigColor+'">'+sec.rows.length+'</span></span><span class="toggle-all" onclick="toggleAllCharts(\\''+sig+'\\')" style="font-size:12px;cursor:pointer;color:#b0aea5;user-select:none;flex-shrink:0;">展开走势图</span></h3>';
-    h+='<div style="overflow-x:auto;"><table style="font-size:12px;width:100%;">';
+    h+='<div style="overflow-x:auto;"><table class="sig-table" style="font-size:12px;width:100%;">';
     h+='<thead id="sigHead-'+sig+'"><tr>';
     sec.labels.forEach(function(l, i){{ h+='<th onclick="sortSig(\\''+sig+'\\',\\''+sec.cols[i]+'\\')">'+l+'</th>'; }});
     h+='</tr></thead><tbody id="sigBody-'+sig+'"></tbody></table></div></div>';
@@ -658,7 +673,7 @@ function renderOverviewTable() {{
   ['score','盈利交易率'].forEach(function(k){{_mn[k]=Infinity;_mx[k]=-Infinity;}});
   rows.forEach(function(r){{['score','盈利交易率'].forEach(function(k){{var v=r[k];if(v!=null){{_mn[k]=Math.min(_mn[k],v);_mx[k]=Math.max(_mx[k],v);}}}});}});
   ['score','盈利交易率'].forEach(function(k){{if(_mn[k]===Infinity){{_mn[k]=0;_mx[k]=0;}}}});
-  function _bar(p,cl,txt){{return '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+p.toFixed(0)+'%;height:100%;background:'+cl+';border-radius:5px"></span></span>'+txt+'</span>';}}
+  function _bar(p,cl,txt){{return '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:80px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+p.toFixed(0)+'%;height:100%;background:'+cl+';border-radius:5px"></span></span>'+txt+'</span>';}}
   var h='<table style="font-size:12px;width:100%;"><thead><tr>';
   OVERVIEW_COLS.forEach(function(c){{h+='<th onclick="ovSort(\\''+c[0]+'\\')"'+(HIDDEN_KEYS.includes(c[0])?' class="ma-col"':'')+'>'+c[1]+(OV_KEY===c[0]?(OV_DIR>0?' ▲':' ▼'):'')+'</th>';}});
   h+='</tr></thead><tbody>';
@@ -679,8 +694,8 @@ if(key==='ma'){{h+='<td class="ma-col">'+v+'</td>';return;}}
       if(key==='盈利交易率'){{var _r=_mn['盈利交易率']===_mx['盈利交易率']?0:(v-_mn['盈利交易率'])/(_mx['盈利交易率']-_mn['盈利交易率'])*100;h+='<td>'+_bar(_r,v>40?'#27ae60':'#8bc34a',v.toFixed(1)+'%')+'</td>';return;}}
       if(key==='close'||key==='signal_close'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}
       if(key==='hist_change'){{
-        var _pct=Math.min(Math.abs(v),50)/50*100,_cl=v>0?'#27ae60':'#e74c3c',_pm=v>0?'+':'';
-        h+='<td style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+v.toFixed(2)+'%</span></td>';
+        var _pct=Math.min(Math.abs(v),100),_cl=v>0?'#27ae60':'#e74c3c',_pm=v>0?'+':'';
+        h+='<td style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:80px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+v.toFixed(2)+'%</span></td>';
         return;
       }}
       if(key==='dir'){{h+='<td class="ma-col '+(v===1?'dir-up':'dir-down')+'">'+(v===1?'↑ 多头':'↓ 空头')+'</td>';return;}}
