@@ -302,6 +302,7 @@ td {{ padding:7px 12px; border-bottom:1px solid #f0efe9; }}
 tr.row1 td {{ border-bottom:none; padding-bottom:2px; }}
 tr.row1 + tr.dr td {{ padding-top:2px; }}
 .sig-table td:first-child {{ max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+.sig-table .tag {{ padding:1px 6px; }}
 tr:hover {{ background:#faf9f5; }}
 .sig-grid td:first-child, .sig-grid th:first-child {{ position:sticky; left:0; z-index:1; background:#fff; }}
 .sig-grid th:first-child {{ z-index:4; }}
@@ -599,7 +600,7 @@ function _renderSigTableBody(sig) {{
           var _pc={{'优':'tag-excellent','良':'tag-good','中':'tag-medium','差':'tag-poor','劣':'tag-bad'}};
           var _pl=String(v||'').replace(/[\d.]+/g,'').trim();
           v=_pl?'<span class="tag '+(_pc[_pl]||'tag-medium')+'">'+_pl+'</span>':'-';
-          h += '<td>'+v+'</td>'; return;
+          h += '<td style="white-space:nowrap;overflow:hidden;">'+v+'</td>'; return;
         }}
         else v = v != null ? v : '-';
         h += (i === 0) ? '<td title="'+v+'">'+v+'</td>' : '<td>'+v+'</td>';
