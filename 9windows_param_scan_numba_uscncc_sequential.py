@@ -1861,7 +1861,7 @@ def _process_one_stock(code, windows=None, mode="window"):
         # 写交易日志 parquet
         if not seq_trades.empty:
             os.makedirs(os.path.dirname(out_file), exist_ok=True)
-            seq_trades.to_parquet(out_file.replace(".xlsx", "_trades.parquet"))
+            seq_trades.to_parquet(out_file.replace(".xlsx", "_sequential_trades.parquet"))
 
         # 构建 window_stability 用于参数稳定性分析（汇总训练+测试数据用最新 MA）
         ws_df = None
