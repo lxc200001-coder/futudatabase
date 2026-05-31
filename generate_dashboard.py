@@ -133,73 +133,6 @@ def _js(val):
     return val
 
 
-def _load_trade_cache():
-    """读取交易记录缓存（由回测脚本生成，分散在个股 parquet 中）"""
-    trade_files = sorted(glob.glob(os.path.join(TRADE_DIR, "*", "*_trades.parquet")))
-    if trade_files:
-        dfs = []
-        for f in trade_files:
-            try:
-                _df = pd.read_parquet(f)
-                if not _df.empty:
-                    dfs.append(_df)
-            except Exception:
-                pass
-        if dfs:
-            return pd.concat(dfs, ignore_index=True, sort=False)
-    return pd.DataFrame(columns=["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"])
-
-
-def load_kline_map(symbols):
-    """加载个股周K线数据，从回测交易记录提取开平仓位置，返回K线+信号标记"""
-    all_trades = _load_trade_cache()
-    def _market_dir(code):
-        if code.startswith("CC."): return "cc"
-        if code.startswith(("SH.", "SZ.")): return "cn"
-        return "us"
-
-    kline_map = {}
-    for symbol in symbols:
-        path = os.path.join(DATA_DIR, _market_dir(symbol), f"{symbol}_1w.parquet")
-        if not os.path.exists(path):
-            continue
-        df = pd.read_parquet(path)
-        df = df.sort_values("datetime").tail(156).reset_index(drop=True)
-        dates = df["datetime"].dt.strftime("%Y-%m-%d").tolist()
-        date_set = set(dates)
-
-        # 从缓存中过滤该股票的交易记录
-        buy_coords, sell_coords = [], []
-        sym_trades = all_trades[all_trades["股票代码"] == symbol]
-
-        for _, row in sym_trades.iterrows():
-            open_str = pd.Timestamp(row["开仓时间"]).strftime("%Y-%m-%d")
-            if open_str in date_set:
-                idx = dates.index(open_str)
-                buy_coords.append([idx, float(df["low"].iloc[idx])])
-
-            close_val = row["平仓时间"]
-            if pd.notna(close_val):
-                close_str = pd.Timestamp(close_val).strftime("%Y-%m-%d")
-                if close_str in date_set:
-                    idx = dates.index(close_str)
-                    sell_coords.append([idx, float(df["high"].iloc[idx])])
-
-        kline_map[symbol] = {
-            "k": [[
-                dates[i],
-                float(_js(df["open"].iloc[i])),
-                float(_js(df["high"].iloc[i])),
-                float(_js(df["low"].iloc[i])),
-                float(_js(df["close"].iloc[i])),
-                float(_js(df["volume"].iloc[i])),
-            ] for i in range(len(df))],
-            "b": buy_coords,
-            "s": sell_coords,
-        }
-    return kline_map
-
-
 def build_json_data(signals):
 
     # 2. 是否有评分数据
@@ -288,11 +221,9 @@ def build_json_data(signals):
         signal_sections[sig] = {"rows": rows, "cols": cols, "labels": SIG_LABELS,
                                 "row2_cols": ROW2_COLS, "row2_labels": ROW2_LABELS}
 
-    # 8. 个股周K线数据
     symbols = signals["symbol"].unique().tolist()
-    kline_map = load_kline_map(symbols)
 
-    # 9. 个股收盘价数据（信号表格下的迷你走势图）
+    # 8. 个股收盘价数据（信号表格下的迷你走势图）
     all_dates = set()
     sym_data = {}
     for sym in symbols:
@@ -326,7 +257,6 @@ def build_json_data(signals):
         "has_score": has_score,
         "table_cols": TABLE_COLS,
         "signal_sections": signal_sections,
-        "kline_map": kline_map,
         "price_map": price_map,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -571,7 +501,7 @@ function sortSig(sig, key) {{
   _renderSigTableBody(sig);
 }}
 var MINI_CHARTS = {{}};
-function renderMiniChart(domId, pd, sigTime, sigType, km) {{
+function renderMiniChart(domId, pd, sigTime, sigType) {{
   try {{
     var chart = echarts.init(document.getElementById(domId));
     var s = {{type:'line',data:pd.c,smooth:true,showSymbol:false,lineStyle:{{color:'#2980b9',width:1}},areaStyle:{{color:'rgba(41,128,185,0.12)'}}}};
@@ -678,8 +608,7 @@ function _renderSigTableBody(sig) {{
     if (!pd || !pd.d || !pd.d.length) return;
     var sigTime = r.hist_time || null;
     var histSig = r.hist_signal || null;
-    var km = D.kline_map && D.kline_map[r.symbol];
-    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, histSig, km);
+    renderMiniChart('mc-'+sig+'-'+r.symbol.replace(/\\./g,'_'), pd, sigTime, histSig);
   }});
   if (tb) tb.querySelectorAll('.mc').forEach(function(div){{ var c=MINI_CHARTS[div.id]; if (c) c.resize(); }});
 }}
