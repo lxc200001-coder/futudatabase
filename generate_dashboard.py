@@ -239,8 +239,10 @@ def build_json_data(signals):
     bubble_data.sort(key=lambda x: x["score"], reverse=True)
 
     # 7. 按信号分类的个股列表
-    SIG_COLS = ["symbol", "hist_change", "close", "hist_close", "hist_time", "hist_days", "score"]
-    SIG_LABELS = ["代码", "涨跌幅", "收盘价", "信号价", "信号时间", "已过天数", "评分"]
+    SIG_COLS = ["symbol", "hist_change", "close", "hist_days", "score"]
+    SIG_LABELS = ["代码", "涨跌幅", "收盘价", "已过天数", "评分"]
+    ROW2_COLS = ["stock_name", "", "hist_close", "hist_time", ""]
+    ROW2_LABELS = ["股票名称", "", "信号价", "信号时间", ""]
 
     # 有效信号：已确认用最新信号，待确认回退到历史信号分板块
     def _eff_signal(r):
@@ -272,6 +274,10 @@ def build_json_data(signals):
             row = {c: _js(r[c]) for c in cols}
             # 隐藏字段：迷你走势图彩色大头针需要
             row["hist_signal"] = _js(r.get("hist_signal"))
+            # 第2行数据
+            row["stock_name"] = _js(r.get("stock_name", ""))
+            row["hist_close"] = _js(r.get("hist_close"))
+            row["hist_time"] = _js(r.get("hist_time"))
             rows.append(row)
         rows.sort(key=lambda x: (x.get("hist_days") or 9999, -(x.get("score") or 0)))
         return rows, cols
@@ -279,7 +285,8 @@ def build_json_data(signals):
     signal_sections = {}
     for sig in ["BUY", "SELL", "HOLD", "WATCH"]:
         rows, cols = _signal_rows(sig, SIG_COLS)
-        signal_sections[sig] = {"rows": rows, "cols": cols, "labels": SIG_LABELS}
+        signal_sections[sig] = {"rows": rows, "cols": cols, "labels": SIG_LABELS,
+                                "row2_cols": ROW2_COLS, "row2_labels": ROW2_LABELS}
 
     # 8. 个股周K线数据
     symbols = signals["symbol"].unique().tolist()
@@ -589,8 +596,9 @@ function renderMiniChart(domId, pd, sigTime, sigType, km) {{
   }}catch(e){{}}
 }}
 function toggleChart(el) {{
-  var cr=el.nextElementSibling;
-  if(!cr||!cr.classList.contains('cr'))return;
+  var cr=el;
+  while(cr&&!cr.classList.contains('cr'))cr=cr.nextElementSibling;
+  if(!cr)return;
   var hidden=cr.style.display==='none';
   cr.style.display=hidden?'':'none';
   if(hidden){{var mc=cr.querySelector('.mc');if(mc){{var k=mc.id;MINI_CHARTS[k]&&MINI_CHARTS[k].resize();}}}}
@@ -627,10 +635,11 @@ function _renderSigTableBody(sig) {{
   var h = '';
   rows.forEach(function(r){{
     var symClean = r.symbol.replace(/\\./g,'_');
+    // --- 第1行：代码 涨跌幅 收盘价 已过天数 评分 ---
     h += '<tr class="dr" onclick="toggleChart(this)">';
     st.cols.forEach(function(c){{
       var v = r[c];
-      if (c === 'close' || c === 'hist_close') v = v != null ? v.toFixed(2) : '-';
+      if (c === 'close') v = v != null ? v.toFixed(2) : '-';
       else if (c === 'score') v = v != null ? v.toFixed(1) : '-';
       else if (c === 'hist_change') {{
         if (v == null) {{ v = '-'; }}
@@ -640,11 +649,25 @@ function _renderSigTableBody(sig) {{
           v='<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+_nv.toFixed(2)+'%</span>';
         }}
       }}
-      else if (c === 'hist_time') v = v || '-';
       else v = v != null ? v : '-';
       h += '<td>' + (c === 'symbol' ? '<strong>' + v.replace(/^(US|CC)\./,'') + '</strong>' : v) + '</td>';
     }});
     h += '</tr>';
+    // --- 第2行：股票名称 空 信号价 信号时间 空 ---
+    h += '<tr class="dr" onclick="toggleChart(this)" style="font-size:11px;color:#888;">';
+    st.row2_cols.forEach(function(c){{
+      if (c) {{
+        var v = r[c];
+        if (c === 'hist_close') v = v != null ? v.toFixed(2) : '-';
+        else if (c === 'hist_time') v = v || '-';
+        else v = v != null ? v : '-';
+        h += '<td>' + v + '</td>';
+      }} else {{
+        h += '<td></td>';
+      }}
+    }});
+    h += '</tr>';
+    // --- 走势图行 ---
     h += '<tr class="cr" id="cr-'+sig+'-'+symClean+'" style="display:none;"><td colspan="'+st.cols.length+'" style="padding:0 12px 6px;"><div class="mc" id="mc-'+sig+'-'+symClean+'" style="height:90px;width:100%;"></div></td></tr>';
   }});
   document.getElementById('sigBody-' + sig).innerHTML = h;
@@ -665,7 +688,7 @@ function renderSignalSections() {{
   ['BUY','SELL','HOLD','WATCH'].forEach(function(sig){{
     var sec = D.signal_sections[sig];
     if (!sec || !sec.rows.length) {{ var c0=sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6'; h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+c0+'"><h3>'+SIG_NAMES[sig]+'信号 <span style="color:'+c0+'">0</span></h3><p style="color:#aaa;font-size:13px;padding:12px 0;">暂无数据</p></div>'; return; }}
-    sigSort[sig] = {{multi: true, keys: [{{key:'hist_days', dir:1}}, {{key:'score', dir:-1}}], rows: sec.rows.slice(), cols: sec.cols, labels: sec.labels}};
+    sigSort[sig] = {{multi: true, keys: [{{key:'hist_days', dir:1}}, {{key:'score', dir:-1}}], rows: sec.rows.slice(), cols: sec.cols, labels: sec.labels, row2_cols: sec.row2_cols, row2_labels: sec.row2_labels}};
     var sigColor = sig==='BUY'?'#27ae60':sig==='SELL'?'#e74c3c':sig==='HOLD'?'#2980b9':'#95a5a6';
     h+='<div class="chart-box" style="min-width:0;border-top:4px solid '+sigColor+'"><h3 style="display:flex;justify-content:space-between;align-items:center;"><span>'+SIG_NAMES[sig]+'信号 <span style="color:'+sigColor+'">'+sec.rows.length+'</span></span><span class="toggle-all" onclick="toggleAllCharts(\\''+sig+'\\')" style="font-size:12px;cursor:pointer;color:#b0aea5;user-select:none;flex-shrink:0;">展开走势图</span></h3>';
     h+='<div style="overflow-x:auto;"><table style="font-size:12px;width:100%;">';
