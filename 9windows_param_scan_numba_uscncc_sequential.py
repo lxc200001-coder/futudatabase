@@ -116,8 +116,8 @@ if __name__ == "__main__":
                         help=f"K线周期: day=日K, week=周K (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--mode", choices=["window", "sequential"], default="window",
-                        help="回测模式: window=窗口独立(默认), sequential=连续回测")
+    parser.add_argument("--mode", choices=["window", "sequential"], default="sequential",
+                        help="回测模式: window=窗口独立, sequential=连续回测(默认)")
     _CLI_ARGS = parser.parse_args()
 
     # 只用改 BAR_INTERVAL，其余从 KLINE_MAP 自动推导
