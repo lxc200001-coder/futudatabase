@@ -99,7 +99,7 @@ FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
 TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
 STEP_YEARS = 1
 WINDOW_START_DATE = "2000-01-03"
-MODE = "window"     # 回测模式: window / sequential
+MODE = "sequential"     # 回测模式: window / sequential
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
 if __name__ == "__main__":
