@@ -449,6 +449,7 @@ def get_last_signal_info(df):
     else:
         hist_change = None
         hist_daily = None
+        hist_days = None
 
     # 最新信号确认
     if signal in ("BUY", "SELL") and (
