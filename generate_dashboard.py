@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-DATA_DIR = "data"
+DATA_DIR = "data_uscncc"
+TRADE_DIR = "results_uscncc"
 
 # 中->英列名映射（all_summary.xlsx 信号扫描 sheet → 内部使用）
 COL_MAP = {
@@ -24,7 +25,7 @@ COL_MAP = {
     "最新信号时间": "signal_time",
     "最新信号收盘价": "signal_close",
     "最新信号确认": "signal_confirm",
-    "综合评分": "score",
+    "策略评分": "score",
     "历史信号": "hist_signal",
     "历史信号时间": "hist_time",
     "历史信号收盘价": "hist_close",
@@ -42,7 +43,7 @@ TABLE_COLS = [
     ("datetime", "时间"),
     ("close", "收盘价"),
     ("signal", "信号"),
-    ("score", "综合评分"),
+    ("score", "策略评分"),
     ("hold_progress", "预计持仓进度"),
     ("daily_return", "日化收益率"),
     ("dir", "方向"),
@@ -54,12 +55,11 @@ TABLE_COLS = [
 
 def load_data():
     """优先加载 all_summary.xlsx，其次 fallback 到 scan_result"""
-    # 尝试 all_summary.xlsx（可能在 trades/ 或 results/）
+    # 尝试 all_summary_param_scan_xxx.xlsx
     summary_path = None
-    for p in ["trades/all_summary.xlsx", "results/all_summary.xlsx"]:
-        if os.path.exists(p):
-            summary_path = p
-            break
+    files = sorted(glob.glob(os.path.join(TRADE_DIR, "all_summary_param_scan_*.xlsx")))
+    if files:
+        summary_path = files[-1]
     if summary_path is not None:
         try:
             xl = pd.ExcelFile(summary_path)
@@ -128,19 +128,33 @@ def _js(val):
 
 
 def _load_trade_cache():
-    """读取交易记录缓存（由回测脚本生成）"""
-    cache_path = "trades/all_trades.parquet"
-    if os.path.exists(cache_path):
-        return pd.read_parquet(cache_path)
+    """读取交易记录缓存（由回测脚本生成，分散在个股 parquet 中）"""
+    trade_files = sorted(glob.glob(os.path.join(TRADE_DIR, "*", "*_trades.parquet")))
+    if trade_files:
+        dfs = []
+        for f in trade_files:
+            try:
+                _df = pd.read_parquet(f)
+                if not _df.empty:
+                    dfs.append(_df)
+            except Exception:
+                pass
+        if dfs:
+            return pd.concat(dfs, ignore_index=True, sort=False)
     return pd.DataFrame(columns=["股票代码", "均线周期", "开仓时间", "开仓价格", "平仓时间", "平仓价格"])
 
 
 def load_kline_map(symbols):
     """加载个股周K线数据，从回测交易记录提取开平仓位置，返回K线+信号标记"""
     all_trades = _load_trade_cache()
+    def _market_dir(code):
+        if code.startswith("CC."): return "cc"
+        if code.startswith(("SH.", "SZ.")): return "cn"
+        return "us"
+
     kline_map = {}
     for symbol in symbols:
-        path = os.path.join(DATA_DIR, f"{symbol}_1w.parquet")
+        path = os.path.join(DATA_DIR, _market_dir(symbol), f"{symbol}_1w.parquet")
         if not os.path.exists(path):
             continue
         df = pd.read_parquet(path)
@@ -269,7 +283,8 @@ def build_json_data(signals):
     all_dates = set()
     sym_data = {}
     for sym in symbols:
-        path = os.path.join(DATA_DIR, f"{sym}_1w.parquet")
+        _m = "cn" if sym.startswith(("SH.", "SZ.")) else "cc" if sym.startswith("CC.") else "us"
+        path = os.path.join(DATA_DIR, _m, f"{sym}_1w.parquet")
         if not os.path.exists(path):
             continue
         pdf = pd.read_parquet(path)
