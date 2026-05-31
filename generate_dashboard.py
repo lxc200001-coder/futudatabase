@@ -301,7 +301,8 @@ thead th {{ position:sticky; top:0; z-index:3; background:#faf9f5; }}
 td {{ padding:7px 12px; border-bottom:1px solid #f0efe9; }}
 tr.row1 td {{ border-bottom:none; padding-bottom:2px; }}
 tr.row1 + tr.dr td {{ padding-top:2px; }}
-.sig-table td:first-child {{ max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+.sig-table td:first-child {{ max-width:45px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+.sig-table tr.row1 td:first-child {{ max-width:none; }}
 .sig-table .tag {{ padding:1px 6px; }}
 tr:hover {{ background:#faf9f5; }}
 .sig-grid td:first-child, .sig-grid th:first-child {{ position:sticky; left:0; z-index:1; background:#fff; }}
@@ -581,7 +582,7 @@ function _renderSigTableBody(sig) {{
         else {{
           var _nv=Number(v);
           var _pct=Math.min(Math.abs(_nv),100);var _cl=_nv>=0?'#27ae60':'#e74c3c';
-          v='<span style="display:inline-flex;align-items:center;"><span style="width:80px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span></span>';
+          v='<span style="display:inline-flex;align-items:center;"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span></span>';
         }}
       }}
       else v = v != null ? v : '-';
@@ -674,7 +675,7 @@ function renderOverviewTable() {{
   ['score','盈利交易率'].forEach(function(k){{_mn[k]=Infinity;_mx[k]=-Infinity;}});
   rows.forEach(function(r){{['score','盈利交易率'].forEach(function(k){{var v=r[k];if(v!=null){{_mn[k]=Math.min(_mn[k],v);_mx[k]=Math.max(_mx[k],v);}}}});}});
   ['score','盈利交易率'].forEach(function(k){{if(_mn[k]===Infinity){{_mn[k]=0;_mx[k]=0;}}}});
-  function _bar(p,cl,txt){{return '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:80px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+p.toFixed(0)+'%;height:100%;background:'+cl+';border-radius:5px"></span></span>'+txt+'</span>';}}
+  function _bar(p,cl,txt){{return '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+p.toFixed(0)+'%;height:100%;background:'+cl+';border-radius:5px"></span></span>'+txt+'</span>';}}
   var h='<table style="font-size:12px;width:100%;"><thead><tr>';
   OVERVIEW_COLS.forEach(function(c){{h+='<th onclick="ovSort(\\''+c[0]+'\\')"'+(HIDDEN_KEYS.includes(c[0])?' class="ma-col"':'')+'>'+c[1]+(OV_KEY===c[0]?(OV_DIR>0?' ▲':' ▼'):'')+'</th>';}});
   h+='</tr></thead><tbody>';
@@ -696,7 +697,7 @@ if(key==='ma'){{h+='<td class="ma-col">'+v+'</td>';return;}}
       if(key==='close'||key==='signal_close'){{h+='<td>'+v.toFixed(2)+'</td>';return;}}
       if(key==='hist_change'){{
         var _pct=Math.min(Math.abs(v),100),_cl=v>0?'#27ae60':'#e74c3c',_pm=v>0?'+':'';
-        h+='<td style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:80px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+v.toFixed(2)+'%</span></td>';
+        h+='<td style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:40px;height:10px;background:#f0f0f0;border-radius:5px;overflow:hidden;display:inline-block"><span style="display:block;width:'+_pct.toFixed(0)+'%;height:100%;background:'+_cl+';border-radius:5px"></span></span>'+_pm+v.toFixed(2)+'%</span></td>';
         return;
       }}
       if(key==='dir'){{h+='<td class="ma-col '+(v===1?'dir-up':'dir-down')+'">'+(v===1?'↑ 多头':'↓ 空头')+'</td>';return;}}
