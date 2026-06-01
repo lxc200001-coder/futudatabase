@@ -1284,10 +1284,14 @@ def _walk_forward_select(train_summary_rows):
         _target = _windows[-2] if len(_windows) >= 2 else _windows[-1]
         target_df = ws_df[ws_df["窗口"] == _target]
         if not target_df.empty:
-            best = (target_df
-                    .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
-                    .iloc[0]["均线周期"])
-            return int(best)
+            # 过滤：只考虑出现在至少半数窗口中的 MA（排除只出现过1次的 MA）
+            _min_wins = max(2, len(_windows) // 2)
+            target_df = target_df[target_df.get("窗口数量", 0) >= _min_wins]
+            if not target_df.empty:
+                best = (target_df
+                        .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                        .iloc[0]["均线周期"])
+                return int(best)
 
     # 兜底：单窗口时直接用策略评分最高的 MA
     df = pd.DataFrame(train_summary_rows)
