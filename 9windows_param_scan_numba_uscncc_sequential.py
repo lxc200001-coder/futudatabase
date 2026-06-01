@@ -1453,7 +1453,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
             _test_slice = f"{_prev_we.date()}~{we.date()}" if _prev_we else window_label
             trades_df["当前测试窗口"] = _test_slice
             trades_df["训练窗口选出的最优MA"] = _next_ma if _next_ma is not None else current_ma
-            _ma_changed = "是" if _prev_test_ma is not None and _next_ma != _prev_test_ma else "否"
+            _ma_changed = "是" if _prev_test_ma is not None and _next_ma == _prev_test_ma else "否"
             trades_df["是否与上周期一致"] = _ma_changed
             trades_df["是否存在未平仓"] = "是" if position_shares > 0 else "否"
             trades_df["过渡期最优MA"] = _prev_ma if in_transition else 0
