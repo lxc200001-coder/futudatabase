@@ -1359,6 +1359,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
 
     # 跨窗口跟踪变量
     _prev_test_ma = None
+    _prev_we = train_windows[-1][1] if train_windows else None
     _train_label = f"{train_windows[0][0].date()}~{train_windows[-1][1].date()}" if train_windows else ""
 
     # ========== 测试期 ==========
@@ -1449,7 +1450,8 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
             trades_df["窗口内有效数据周期"] = effective_range
             trades_df["均线周期"] = current_ma
             trades_df["训练窗口"] = _train_label
-            trades_df["当前测试窗口"] = window_label
+            _test_slice = f"{_prev_we.date()}~{we.date()}" if _prev_we else window_label
+            trades_df["当前测试窗口"] = _test_slice
             trades_df["训练窗口选出的最优MA"] = _next_ma if _next_ma is not None else current_ma
             _ma_changed = "是" if _prev_test_ma is not None and _next_ma != _prev_test_ma else "否"
             trades_df["是否与上周期一致"] = _ma_changed
@@ -1459,6 +1461,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
 
         # 更新跨窗口跟踪（无论本期是否有交易）
         _prev_test_ma = _next_ma if _next_ma is not None else current_ma
+        _prev_we = we
 
         # 更新训练窗口标签（训练集递增）
         if train_summary_all:
