@@ -1315,10 +1315,8 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
     if not _valid_windows:
         return [], pd.DataFrame(), {}, None
 
-    n_windows = len(_valid_windows)
-    train_count = 5 if n_windows > 5 else max(1, n_windows // 2)
-    train_windows = _valid_windows[:train_count]
-    test_windows = _valid_windows[train_count:]
+    train_windows = _valid_windows[:1]     # 第 1 个有数据的窗口 = 起始训练窗口
+    test_windows = _valid_windows[1:]      # 后续窗口 = 测试窗口
 
     all_trades = []       # 所有交易记录（连续）
     all_summary_rows = []  # 每窗口一条 summary（测试期）
