@@ -1531,7 +1531,7 @@ def _process_one_stock(code, windows=None):
             last_ws_df = window_stability_df[window_stability_df["窗口"] == _target]
             best_stab_ma = (
                 last_ws_df
-                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"], ascending=[False, True, False])
                 .iloc[0]["均线周期"]
             )
 
@@ -2082,7 +2082,7 @@ def run_trade():
             last_ws_mkt = all_ws_mkt[all_ws_mkt["窗口"] == _target]
             stab_mkt = (
                 last_ws_mkt
-                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"], ascending=[False, True, False])
                 .groupby("股票代码", sort=False)
                 .head(1)
                 .reset_index(drop=True)
@@ -2122,7 +2122,7 @@ def run_trade():
         last_ws = all_ws_stab[all_ws_stab["窗口"] == _target_ws]
         stab_best = (
             last_ws
-            .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+            .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"], ascending=[False, True, False])
             .groupby("股票代码", sort=False)
             .head(1)
             .reset_index(drop=True)

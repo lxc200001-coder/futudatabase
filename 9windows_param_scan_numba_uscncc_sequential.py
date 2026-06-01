@@ -1289,7 +1289,7 @@ def _walk_forward_select(train_summary_rows):
             target_df = target_df[target_df.get("窗口数量", 0) >= _min_wins]
             if not target_df.empty:
                 best = (target_df
-                        .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                        .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"], ascending=[False, True, False])
                         .iloc[0]["均线周期"])
                 return int(best)
 
@@ -1968,7 +1968,7 @@ def _process_one_stock(code, windows=None, mode="window"):
             _wlist = sorted(window_stability_df["窗口"].unique())
             _target = _wlist[-2] if len(_wlist) >= 2 else _wlist[-1]
             _best_row = (window_stability_df[window_stability_df["窗口"] == _target]
-                         .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True]))
+                         .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"], ascending=[False, True, False]))
             if not _best_row.empty:
                 _last_ma = int(_best_row.iloc[0]["均线周期"])
         if _last_ma is None:
