@@ -1306,7 +1306,7 @@ def _overlap(ws, we, ds, de):
     return ws < de and we > ds
 
 
-def _run_sequential(code, df, windows, stock_name, stock_plates):
+def _run_sequential(code, df, windows, stock_name, stock_plates, stock_all_rows=None):
     """连续回测主循环。
 
     用 walk-forward 方式：前 T 个窗口为训练集（全 MA 测试，不交易），
@@ -1339,35 +1339,34 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
 
     train_summary_all = []  # 累积训练数据（全 MA）
 
-    # ========== 训练期 ==========
-    for ws, we in train_windows:
-        mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
-        df_w = df[mask].copy()
-        if df_w.empty:
-            continue
-
-        window_label = f"{ws.date()}~{we.date()}"
-        eff_start = pd.to_datetime(df_w["datetime"]).min()
-        eff_end = pd.to_datetime(df_w["datetime"]).max()
-        effective_range = f"{eff_start.date()}~{eff_end.date()}"
-
-        window_ma_summaries = []
-        for ma in MA_LIST:
-            df_w["ha_close"] = ha_close_full[mask]
-            df_w["ma"] = ma_cache[ma][mask]
-            df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
-            df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
-            df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
-
-            trades, equity_arr = _build_trades_numba(df_w, ma)
-
-            summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
-            summary["窗口"] = window_label
-            summary["窗口内有效数据周期"] = effective_range
-            summary["策略评分"] = calc_score_row(summary)
-            window_ma_summaries.append(summary)
-
-        train_summary_all.extend(window_ma_summaries)
+    # ========== 训练期（从窗口模式数据中提取）==========
+    if stock_all_rows is not None:
+        _train_wins_set = set(f"{ws.date()}~{we.date()}" for ws, we in train_windows)
+        train_summary_all = [dict(r) for r in stock_all_rows if r.get("窗口") in _train_wins_set]
+    else:
+        # 兼容无 stock_all_rows 的旧路径
+        for ws, we in train_windows:
+            mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
+            df_w = df[mask].copy()
+            if df_w.empty:
+                continue
+            window_label = f"{ws.date()}~{we.date()}"
+            eff_start = pd.to_datetime(df_w["datetime"]).min()
+            eff_end = pd.to_datetime(df_w["datetime"]).max()
+            effective_range = f"{eff_start.date()}~{eff_end.date()}"
+            for ma in MA_LIST:
+                _sig_df = df_w.copy()
+                _sig_df["ha_close"] = ha_close_full[mask]
+                _sig_df["ma"] = ma_cache[ma][mask]
+                _sig_df["dir"] = np.where(_sig_df["ma"] > _sig_df["ma"].shift(1), 1, -1)
+                _sig_df["buy"] = (_sig_df["dir"] == 1) & (_sig_df["dir"].shift(1) == -1)
+                _sig_df["sell"] = (_sig_df["dir"] == -1) & (_sig_df["dir"].shift(1) == 1)
+                _t, _e = _build_trades_numba(_sig_df, ma)
+                _s = build_summary(_t, ma, _sig_df, equity_arr=_e)
+                _s["窗口"] = window_label
+                _s["窗口内有效数据周期"] = effective_range
+                _s["策略评分"] = calc_score_row(_s)
+                train_summary_all.append(_s)
 
     # 训练结束后选第一个 MA
     current_ma = _walk_forward_select(train_summary_all)
@@ -1397,23 +1396,6 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
         eff_start = pd.to_datetime(df_w["datetime"]).min()
         eff_end = pd.to_datetime(df_w["datetime"]).max()
         effective_range = f"{eff_start.date()}~{eff_end.date()}"
-
-        # 用累积训练集重新选 MA（测试窗口也跑全部 MA 用于更新训练数据）
-        _win_ma_summaries = []
-        for _ma in MA_LIST:
-            _sig_df = df_w.copy()
-            _sig_df["ha_close"] = ha_close_full[mask]
-            _sig_df["ma"] = ma_cache[_ma][mask]
-            _sig_df["dir"] = np.where(_sig_df["ma"] > _sig_df["ma"].shift(1), 1, -1)
-            _sig_df["buy"] = (_sig_df["dir"] == 1) & (_sig_df["dir"].shift(1) == -1)
-            _sig_df["sell"] = (_sig_df["dir"] == -1) & (_sig_df["dir"].shift(1) == 1)
-            _t, _e = _build_trades_numba(_sig_df, _ma)
-            _s = build_summary(_t, _ma, _sig_df, equity_arr=_e)
-            _s["窗口"] = window_label
-            _s["窗口内有效数据周期"] = effective_range
-            _s["窗口内有效数据天数"] = (eff_end - eff_start).days
-            _s["策略评分"] = calc_score_row(_s)
-            _win_ma_summaries.append(_s)
 
         _next_ma = _walk_forward_select(train_summary_all)
 
@@ -1533,8 +1515,10 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
         summary["策略评分"] = calc_score_row(summary)
         all_summary_rows.append(summary)
 
-        # ---- 更新训练数据（追加本窗口全部 MA 的结果）----
-        train_summary_all.extend(_win_ma_summaries)
+        # ---- 更新训练数据（从窗口模式数据中追加本窗口的全部 MA 结果）----
+        if stock_all_rows is not None:
+            _win_rows = [dict(r) for r in stock_all_rows if r.get("窗口") == window_label]
+            train_summary_all.extend(_win_rows)
 
         # ---- 更新持仓状态 ----
         cash = final_cash
@@ -2012,7 +1996,7 @@ def _process_one_stock(code, windows=None, mode="window"):
     # 4. Sequential 模式：独立跑连续回测，输出独立交易记录
     # =============================================
     seq_rows, seq_trades, _sig_outer, _seq_ma = _run_sequential(
-        code, df, windows, stock_name, stock_plates
+        code, df, windows, stock_name, stock_plates, stock_all_rows
     )
     if seq_trades is not None and not seq_trades.empty:
         seq_trades.to_parquet(os.path.join(os.path.dirname(out_file), f"{code}_sequential_trades.parquet"))
