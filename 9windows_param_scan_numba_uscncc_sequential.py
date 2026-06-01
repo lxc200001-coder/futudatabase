@@ -1052,7 +1052,7 @@ def calc_param_stability(summary_rows):
     valid = df.groupby("窗口")["策略评分"].transform("max") > 0
     df = df[valid]
 
-    if df.empty or df["窗口"].nunique() < 2:
+    if df.empty:
         return pd.DataFrame()
 
     # 每窗口内按策略评分排名（同分取最小排名）
@@ -1285,7 +1285,7 @@ def _walk_forward_select(train_summary_rows):
         target_df = ws_df[ws_df["窗口"] == _target]
         if not target_df.empty:
             # 过滤：只考虑出现在至少半数窗口中的 MA（排除只出现过1次的 MA）
-            _min_wins = max(2, len(_windows) // 2)
+            _min_wins = max(1, len(_windows) // 2)
             target_df = target_df[target_df.get("窗口数量", 0) >= _min_wins]
             if not target_df.empty:
                 best = (target_df
@@ -1608,7 +1608,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, s
     if not scan_rows:
         return
     df = pd.DataFrame(scan_rows)
-    if df.empty or df["窗口"].nunique() < 2:
+    if df.empty:
         return
 
     code_safe = code.replace(".", "_")
