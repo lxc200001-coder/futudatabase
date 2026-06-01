@@ -1357,6 +1357,10 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
     position_price = 0.0
     position_idx = -1
 
+    # 跨窗口跟踪变量
+    _prev_test_ma = None
+    _train_label = f"{train_windows[0][0].date()}~{train_windows[-1][1].date()}" if train_windows else ""
+
     # ========== 测试期 ==========
     for ws, we in test_windows:
         mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
@@ -1371,6 +1375,9 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
 
         # 用累积训练集重新选 MA
         _next_ma = _walk_forward_select(train_summary_all)
+
+        # 记录切换前 MA
+        _prev_ma = current_ma
 
         # 判断是否需要过渡期
         in_transition = (_next_ma is not None and _next_ma != current_ma
@@ -1440,7 +1447,17 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
             trades_df = _trades_arr_to_df(trades_arr, n_trades, df_w, code, stock_name, stock_plates)
             trades_df["窗口"] = window_label
             trades_df["窗口内有效数据周期"] = effective_range
+            trades_df["训练窗口"] = _train_label
+            trades_df["当前测试窗口"] = window_label
+            trades_df["训练窗口选出的最优MA"] = _next_ma if _next_ma is not None else current_ma
+            _ma_changed = "是" if _prev_test_ma is not None and _next_ma != _prev_test_ma else "否"
+            trades_df["是否与上周期一致"] = _ma_changed
+            trades_df["是否存在未平仓"] = "是" if position_shares > 0 else "否"
+            trades_df["过渡期最优MA"] = _prev_ma if in_transition else 0
             all_trades.append(trades_df)
+
+        # 更新跨窗口跟踪（无论本期是否有交易）
+        _prev_test_ma = _next_ma if _next_ma is not None else current_ma
 
         # ---- 记录 summary ----
         if n_trades == 0 and position_shares == 0:
