@@ -1271,22 +1271,30 @@ def build_score_matrix(summary_rows):
 def _walk_forward_select(train_summary_rows):
     """从训练集窗口数据中选最优均线周期。
 
-    对累计训练数据跑参数稳定性分析，取稳定性综合评分最高的 MA。
+    优先用参数稳定性评分（需≥2个窗口），
+    不足2个窗口时退回到训练窗口内策略评分最高的 MA。
     """
     if not train_summary_rows:
         return None
+
+    # 优先：参数稳定性分析（需≥2个窗口）
     ws_df = build_window_stability(train_summary_rows)
-    if ws_df is None or ws_df.empty:
+    if ws_df is not None and not ws_df.empty:
+        _windows = sorted(ws_df["窗口"].unique())
+        _target = _windows[-2] if len(_windows) >= 2 else _windows[-1]
+        target_df = ws_df[ws_df["窗口"] == _target]
+        if not target_df.empty:
+            best = (target_df
+                    .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                    .iloc[0]["均线周期"])
+            return int(best)
+
+    # 兜底：单窗口时直接用策略评分最高的 MA
+    df = pd.DataFrame(train_summary_rows)
+    if df.empty or "策略评分" not in df.columns:
         return None
-    _windows = sorted(ws_df["窗口"].unique())
-    _target = _windows[-2] if len(_windows) >= 2 else _windows[-1]
-    target_df = ws_df[ws_df["窗口"] == _target]
-    if target_df.empty:
-        return None
-    best = (target_df
-            .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
-            .iloc[0]["均线周期"])
-    return int(best)
+    best_idx = df["策略评分"].idxmax()
+    return int(df.loc[best_idx, "均线周期"])
 
 
 def _overlap(ws, we, ds, de):
