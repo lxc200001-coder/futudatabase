@@ -1288,6 +1288,11 @@ def _walk_forward_select(train_summary_rows):
     return int(best)
 
 
+def _overlap(ws, we, ds, de):
+    """检查窗口 (ws, we) 与数据区间 (ds, de) 是否有重叠"""
+    return ws < de and we > ds
+
+
 def _run_sequential(code, df, windows, stock_name, stock_plates):
     """连续回测主循环。
 
@@ -1303,10 +1308,17 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
     for ma in MA_LIST:
         ma_cache[ma] = ha_close_full.rolling(ma, min_periods=ma).mean()
 
-    n_windows = len(windows)
+    # 只取该股票实际有数据覆盖的窗口
+    _data_start = pd.to_datetime(df["datetime"].min())
+    _data_end = pd.to_datetime(df["datetime"].max())
+    _valid_windows = [(ws, we) for ws, we in windows if _overlap(ws, we, _data_start, _data_end)]
+    if not _valid_windows:
+        return [], pd.DataFrame(), {}, None
+
+    n_windows = len(_valid_windows)
     train_count = 5 if n_windows > 5 else max(1, n_windows // 2)
-    train_windows = windows[:train_count]
-    test_windows = windows[train_count:]
+    train_windows = _valid_windows[:train_count]
+    test_windows = _valid_windows[train_count:]
 
     all_trades = []       # 所有交易记录（连续）
     all_summary_rows = []  # 每窗口一条 summary（测试期）
