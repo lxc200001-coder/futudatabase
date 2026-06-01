@@ -1587,7 +1587,7 @@ def _round_display(df, pct_cols=None):
         if col in pct_set:
             df[col] = (df[col] / 100.0).round(4)
         elif col == "参数稳定性综合评分":
-            df[col] = df[col].round(3)
+            df[col] = df[col].round(6)
         else:
             df[col] = df[col].round(2)
     return df
