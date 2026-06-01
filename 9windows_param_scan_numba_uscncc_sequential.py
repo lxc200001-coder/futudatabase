@@ -1398,7 +1398,23 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
         eff_end = pd.to_datetime(df_w["datetime"]).max()
         effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
-        # 用累积训练集重新选 MA
+        # 用累积训练集重新选 MA（测试窗口也跑全部 MA 用于更新训练数据）
+        _win_ma_summaries = []
+        for _ma in MA_LIST:
+            _sig_df = df_w.copy()
+            _sig_df["ha_close"] = ha_close_full[mask]
+            _sig_df["ma"] = ma_cache[_ma][mask]
+            _sig_df["dir"] = np.where(_sig_df["ma"] > _sig_df["ma"].shift(1), 1, -1)
+            _sig_df["buy"] = (_sig_df["dir"] == 1) & (_sig_df["dir"].shift(1) == -1)
+            _sig_df["sell"] = (_sig_df["dir"] == -1) & (_sig_df["dir"].shift(1) == 1)
+            _t, _e = _build_trades_numba(_sig_df, _ma)
+            _s = build_summary(_t, _ma, _sig_df, equity_arr=_e)
+            _s["窗口"] = window_label
+            _s["窗口内有效数据周期"] = effective_range
+            _s["窗口内有效数据天数"] = (eff_end - eff_start).days
+            _s["策略评分"] = calc_score_row(_s)
+            _win_ma_summaries.append(_s)
+
         _next_ma = _walk_forward_select(train_summary_all)
 
         # 记录切换前 MA
@@ -1517,9 +1533,8 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
         summary["策略评分"] = calc_score_row(summary)
         all_summary_rows.append(summary)
 
-        # ---- 更新训练数据 ----
-        if _next_ma is not None:
-            train_summary_all.append(summary)
+        # ---- 更新训练数据（追加本窗口全部 MA 的结果）----
+        train_summary_all.extend(_win_ma_summaries)
 
         # ---- 更新持仓状态 ----
         cash = final_cash
