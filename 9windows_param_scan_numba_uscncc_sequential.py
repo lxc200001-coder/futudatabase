@@ -1349,7 +1349,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
     # 训练结束后选第一个 MA
     current_ma = _walk_forward_select(train_summary_all)
     if current_ma is None:
-        return [], [], {}, None  # 无可用 MA，跳过
+        return [], pd.DataFrame(), {}, None  # 无可用 MA，跳过
 
     # 训练期的最后状态（初始资金、无持仓）
     cash = INITIAL_CASH
@@ -1906,254 +1906,61 @@ def _process_one_stock(code, windows=None, mode="window"):
         _tdf.to_parquet(out_file.replace(".xlsx", "_trades.parquet"))
 
     # =============================================
-    # 3. 窗口模式返回
+    # 3. 窗口模式构建信号扫描
     # =============================================
-    if mode == "window":
-        # 构建稳定性分析和信号扫描
-        window_stability_df = build_window_stability(stock_all_rows) if stock_all_rows and len(stock_all_rows) > len(MA_LIST) else None
+    window_stability_df = build_window_stability(stock_all_rows) if stock_all_rows and len(stock_all_rows) > len(MA_LIST) else None
 
-        signal_map = {}
-        if stock_all_rows:
-            _last_ma = None
-            if window_stability_df is not None:
-                _wlist = sorted(window_stability_df["窗口"].unique())
-                _target = _wlist[-2] if len(_wlist) >= 2 else _wlist[-1]
-                _best_row = (window_stability_df[window_stability_df["窗口"] == _target]
-                             .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True]))
-                if not _best_row.empty:
-                    _last_ma = int(_best_row.iloc[0]["均线周期"])
-            if _last_ma is None:
-                _last_ma = MA_LIST[0]
-
-            _sig_df = df.copy()
-            _sig_df["ha_close"] = ha_close_full
-            _sig_df["ma"] = ma_cache[_last_ma]
-            _sig_df["dir"] = np.where(_sig_df["ma"] > _sig_df["ma"].shift(1), 1, -1)
-            _sig_df["buy"] = (_sig_df["dir"] == 1) & (_sig_df["dir"].shift(1) == -1)
-            _sig_df["sell"] = (_sig_df["dir"] == -1) & (_sig_df["dir"].shift(1) == 1)
-            signal_info = get_last_signal_info(_sig_df)
-            signal_info["股票代码"] = code
-            signal_info["股票名称"] = stock_name
-            signal_info["所属板块"] = stock_plates
-            signal_info["K线周期"] = BAR_INTERVAL
-            signal_info["均线周期"] = _last_ma
-            signal_info["市场"] = str(df["market"].iloc[0]) if "market" in df.columns else ""
-            signal_map = {code: {_last_ma: signal_info}}
-
-        return stock_all_rows, [], signal_map, window_stability_df, out_file
-
-    # =============================================
-    # 4. Sequential 模式：从窗口数据中提取 walk-forward 记录
-    # =============================================
-    if not stock_all_rows:
-        return [], [], {}, None, None
-
-    # 4a. 排序窗口
-    _all_wins = sorted(set(r["窗口"] for r in stock_all_rows))
-    _n = len(_all_wins)
-    _train_count = 5 if _n > 5 else max(1, _n // 2)
-    _train_wins = set(_all_wins[:_train_count])
-    _test_wins = _all_wins[_train_count:]
-
-    # 4b. 按窗口+MA 建立索引
-    _win_row_idx = {}
-    for r in stock_all_rows:
-        _win_row_idx.setdefault((r["窗口"], r["均线周期"]), r)
-
-    # 4c. Walk-forward 遍历测试窗口
-    _train_summary = [r for r in stock_all_rows if r["窗口"] in _train_wins]
-    _seq_trades = []
-    _seq_rows = []
-    _current_ma = _walk_forward_select(_train_summary)
-    _ma_history = []
-    _signal_info = None
-
-    for _win in _test_wins:
-        if _current_ma is None:
-            continue
-
-        # 选下一个 MA
-        if _seq_rows:
-            _next_ma = _walk_forward_select(_train_summary)
-        else:
-            _next_ma = _current_ma
-
-        # 确定这个窗口用的 MA
-        _use_ma = _next_ma if _next_ma is not None else _current_ma
-        _prev_ma = _current_ma
-        _in_trans = (_next_ma is not None and _next_ma != _current_ma)
-
-        # 提取该窗口该 MA 的交易
-        _key = (_win, _use_ma)
-        _ridx = _win_row_idx.get(_key)
-        if _ridx is not None:
-            _seq_rows.append(dict(_ridx))
-
-        # 从 window_trades_by_ma 提取交易
-        _ma_idx = MA_LIST.index(_use_ma) if _use_ma in MA_LIST else -1
-        if _ma_idx >= 0:
-            for _tdf in window_trades_by_ma[_use_ma]:
-                if not _tdf.empty and _tdf["窗口"].iloc[0] == _win:
-                    _t = _tdf.copy()
-                    _t["窗口类型"] = "测试"
-                    _t["当前MA"] = _use_ma
-                    _t["切换前MA"] = _prev_ma if _in_trans else 0
-                    _t["过渡期"] = "是" if _in_trans else "否"
-                    _seq_trades.append(_t)
-
-        # 更新训练集和 MA
-        _train_summary.append(dict(_ridx)) if _ridx is not None else None
-        _current_ma = _use_ma
-        _ma_history.append(_use_ma)
-
-        # 信号扫描用最后一个窗口
-        _signal_info = None
-        if _ridx is not None:
-            _sig_ma = _use_ma
-            _sig_df = df.copy()
-            _sig_df["ha_close"] = ha_close_full
-            _sig_df["ma"] = ma_cache[_sig_ma]
-            _sig_df["dir"] = np.where(_sig_df["ma"] > _sig_df["ma"].shift(1), 1, -1)
-            _sig_df["buy"] = (_sig_df["dir"] == 1) & (_sig_df["dir"].shift(1) == -1)
-            _sig_df["sell"] = (_sig_df["dir"] == -1) & (_sig_df["dir"].shift(1) == 1)
-            _si = get_last_signal_info(_sig_df)
-            _si["股票代码"] = code
-            _si["股票名称"] = stock_name
-            _si["所属板块"] = stock_plates
-            _si["K线周期"] = BAR_INTERVAL
-            _si["均线周期"] = _sig_ma
-            _si["市场"] = str(df["market"].iloc[0]) if "market" in df.columns else ""
-            _signal_info = _si
-
-    # 4d. 写入连续模式交易记录
-    _seq_sig_map = {}
-    if _signal_info is not None and _ma_history:
-        _seq_sig_map = {_ma_history[-1]: _signal_info}
-
-    if _seq_trades:
-        _merged = pd.concat(_seq_trades, ignore_index=True, sort=False)
-        _merged.to_parquet(os.path.join(os.path.dirname(out_file), f"{code}_sequential_trades.parquet"))
-
-    # 4e. 构建 stability
-    _seq_ws = None
-    if len(_seq_rows) > 1:
-        _seq_ws = build_window_stability(_seq_rows)
-
-    return _seq_rows, [], _seq_sig_map, _seq_ws, out_file
-    window_summary_rows = []
-
-    # 预计算 HA 和滚动均线（所有窗口起点相同，全量数据一次算完）
-    ha_close_full, _ = calc_heikin_ashi(df)
-    ma_cache = {}
-    for ma in MA_LIST:
-        ma_cache[ma] = ha_close_full.rolling(ma, min_periods=ma).mean()
-
-    for ws, we in windows:
-
-        window_mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
-        df_w = df[window_mask].copy()
-
-        if df_w.empty:
-            continue
-
-        window_label = f"{ws.date()}~{we.date()}"
-        eff_start = pd.to_datetime(df_w["datetime"]).min()
-        eff_end = pd.to_datetime(df_w["datetime"]).max()
-        effective_range = f"{eff_start.date()}~{eff_end.date()}"
-
-        for ma in MA_LIST:
-            df_w["ha_close"] = ha_close_full[window_mask]
-            df_w["ma"] = ma_cache[ma][window_mask]
-            df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
-            df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
-            df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
-
-            trades, equity_arr = _build_trades_numba(df_w, ma)
-
-            if not trades.empty:
-                trades["窗口"] = window_label
-                trades["窗口内有效数据周期"] = effective_range
-                window_trades_by_ma[ma].append(trades)
-
-            summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
-            summary["窗口"] = window_label
-            summary["窗口内有效数据周期"] = effective_range
-            summary["策略评分"] = calc_score_row(summary)
-
-            window_summary_rows.append(summary)
-            stock_all_rows.append(summary)
-
-    # =============================================
-    # 交易日志明细 -> 写 parquet（替代 Excel，避免 worker 中慢速 I/O）
-    # =============================================
-    window_trades_merged = [t for ma in MA_LIST for t in window_trades_by_ma[ma] if not t.empty]
-    if window_trades_merged:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            _tdf = pd.concat(window_trades_merged, ignore_index=True, sort=False)
-            os.makedirs(os.path.dirname(out_file), exist_ok=True)
-            _tdf.to_parquet(out_file.replace(".xlsx", "_trades.parquet"))
-
-    # =============================================
-    # 参数扫描结果汇总（计算在内存中，Excel 由主进程统一写入）
-    # =============================================
-    window_stability_df = None
-    best_stab_ma = None
-    if window_summary_rows:
-        ws_df = reorder_columns(pd.DataFrame(window_summary_rows))
-        apply_cn_mapping(ws_df)
-
-        score_pivot, rank_pivot = build_score_matrix(window_summary_rows)
-
-        window_stability_df = build_window_stability(window_summary_rows) if window_summary_rows and len(window_summary_rows) > len(MA_LIST) else None
-
-        if window_stability_df is not None and not window_stability_df.empty:
-            _windows = sorted(window_stability_df["窗口"].unique())
-            _target = _windows[-2] if len(_windows) >= 2 else _windows[-1]
-            last_ws_df = window_stability_df[window_stability_df["窗口"] == _target]
-            best_stab_ma = (
-                last_ws_df
-                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
-                .iloc[0]["均线周期"]
-            )
-
-    # =============================================
-    # 参数扫描热力图（PNG 写入开销小，保留在 worker 中）
-    # =============================================
-    if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
-
-    if window_stability_df is not None and not window_stability_df.empty:
-        generate_stability_heatmap(
-            code, window_stability_df,
-            save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"),
-            best_ma=best_stab_ma,
-            stock_name=stock_name,
-        )
-
-    # =============================================
-    # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
-    # =============================================
     signal_map = {}
-    for ma in MA_LIST:
-        d = df.copy()
-        d["ha_close"] = ha_close_full
-        d["ma"] = ma_cache[ma]
-        d["dir"] = np.where(d["ma"] > d["ma"].shift(1), 1, -1)
-        d["buy"] = (d["dir"] == 1) & (d["dir"].shift(1) == -1)
-        d["sell"] = (d["dir"] == -1) & (d["dir"].shift(1) == 1)
-        signal_info = get_last_signal_info(d)
-        signal_info["K线周期"] = BAR_INTERVAL
-        signal_info["均线周期"] = ma
+    if stock_all_rows:
+        _last_ma = None
+        if window_stability_df is not None:
+            _wlist = sorted(window_stability_df["窗口"].unique())
+            _target = _wlist[-2] if len(_wlist) >= 2 else _wlist[-1]
+            _best_row = (window_stability_df[window_stability_df["窗口"] == _target]
+                         .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True]))
+            if not _best_row.empty:
+                _last_ma = int(_best_row.iloc[0]["均线周期"])
+        if _last_ma is None:
+            _last_ma = MA_LIST[0]
+
+        _sig_df = df.copy()
+        _sig_df["ha_close"] = ha_close_full
+        _sig_df["ma"] = ma_cache[_last_ma]
+        _sig_df["dir"] = np.where(_sig_df["ma"] > _sig_df["ma"].shift(1), 1, -1)
+        _sig_df["buy"] = (_sig_df["dir"] == 1) & (_sig_df["dir"].shift(1) == -1)
+        _sig_df["sell"] = (_sig_df["dir"] == -1) & (_sig_df["dir"].shift(1) == 1)
+        signal_info = get_last_signal_info(_sig_df)
         signal_info["股票代码"] = code
         signal_info["股票名称"] = stock_name
         signal_info["所属板块"] = stock_plates
-        # 从 df 读取 market 字段
-        _market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
-        signal_info["市场"] = _market_val
-        signal_map[ma] = signal_info
+        signal_info["K线周期"] = BAR_INTERVAL
+        signal_info["均线周期"] = _last_ma
+        signal_info["市场"] = str(df["market"].iloc[0]) if "market" in df.columns else ""
+        signal_map = {code: {_last_ma: signal_info}}
 
-    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file
+    if mode == "window":
+        return stock_all_rows, [], signal_map, window_stability_df, out_file
+
+    # =============================================
+    # 4. Sequential 模式：独立跑连续回测，输出独立交易记录
+    # =============================================
+    seq_rows, seq_trades, _sig_outer, _seq_ma = _run_sequential(
+        code, df, windows, stock_name, stock_plates
+    )
+    if seq_trades is not None and not seq_trades.empty:
+        seq_trades.to_parquet(os.path.join(os.path.dirname(out_file), f"{code}_sequential_trades.parquet"))
+
+    # 信号扫描用连续模式的最新 MA
+    _seq_sig_map = {}
+    if _sig_outer and code in _sig_outer:
+        _seq_sig_map = _sig_outer[code]
+
+    # stability 用连续模式的 summary
+    _seq_ws = None
+    if seq_rows and len(seq_rows) > 1:
+        _seq_ws = build_window_stability(seq_rows)
+
+    return (seq_rows if seq_rows else stock_all_rows), [], _seq_sig_map, _seq_ws, out_file
 
 
 def _round_display(df, pct_cols=None):
@@ -2571,6 +2378,8 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             _apply_sheet_format(ws)
 
     print(f"{market_label}汇总Excel: {out_path}")
+
+
 
 
 def run_trade():
