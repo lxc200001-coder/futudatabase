@@ -1460,6 +1460,12 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
         # 更新跨窗口跟踪（无论本期是否有交易）
         _prev_test_ma = _next_ma if _next_ma is not None else current_ma
 
+        # 更新训练窗口标签（训练集递增）
+        if train_summary_all:
+            _train_wins = sorted(set(r["窗口"] for r in train_summary_all))
+            if _train_wins:
+                _train_label = f"{_train_wins[0]}~{_train_wins[-1]}"
+
         # ---- 记录 summary ----
         if n_trades == 0 and position_shares == 0:
             # 窗口无交易
