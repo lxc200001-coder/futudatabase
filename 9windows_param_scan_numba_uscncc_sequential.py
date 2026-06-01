@@ -287,7 +287,8 @@ def _numba_sequential_backtest(close, buy, sell, initial_cash, fee_rate,
     realized_cash = initial_cash
     position = float(init_shares)
     entry_price_val = init_entry_price
-    entry_idx = init_entry_idx
+    # 继承持仓的 entry_idx 来自前一个窗口，该索引在当前窗口可能无效
+    entry_idx = 0 if init_shares > 0 else init_entry_idx
     trade_count = 0
     equity = np.zeros(n)
 
