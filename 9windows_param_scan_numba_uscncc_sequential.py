@@ -1373,6 +1373,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
     _prev_test_ma = None
     _prev_we = train_windows[-1][1] if train_windows else None
     _train_label = f"{train_windows[0][0].date()}~{train_windows[-1][1].date()}" if train_windows else ""
+    _train_label_start = _train_label  # 固定不变的起始训练窗口
 
     # ========== 测试期 ==========
     for ws, we in test_windows:
@@ -1461,7 +1462,8 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
             trades_df["窗口"] = window_label
             trades_df["窗口内有效数据周期"] = effective_range
             trades_df["均线周期"] = current_ma
-            trades_df["训练窗口"] = _train_label
+            trades_df["起始训练窗口"] = _train_label_start
+            trades_df["递增训练窗口"] = _train_label
             _test_slice = f"{_prev_we.date()}~{we.date()}" if _prev_we else window_label
             trades_df["当前测试窗口"] = _test_slice
             trades_df["训练窗口选出的最优MA"] = _next_ma if _next_ma is not None else current_ma
@@ -2394,8 +2396,10 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "窗口信息", "名称": "窗口内有效数据天数",
              "统计逻辑": "从窗口内有效数据周期解析出的实际天数 = 结束日期 − 起始日期"},
             # ── Walk-Forward 字段 ──
-            {"类型": "Walk-Forward", "名称": "训练窗口",
-             "统计逻辑": "Walk-forward训练集范围，随测试窗口推进递增（初始训练窗口→追加已完成的测试窗口）"},
+            {"类型": "Walk-Forward", "名称": "起始训练窗口",
+             "统计逻辑": "初始训练集范围（固定不变），由股票有数据的前N个窗口组成"},
+            {"类型": "Walk-Forward", "名称": "递增训练窗口",
+             "统计逻辑": "Walk-forward训练集范围，随测试窗口推进递增（起始训练窗口→追加已完成的测试窗口）"},
             {"类型": "Walk-Forward", "名称": "当前测试窗口",
              "统计逻辑": "当前测试窗口的非累积年度区间（如 2025-01-03~2026-01-03），区别于累积窗口标签"},
             {"类型": "Walk-Forward", "名称": "训练窗口选出的最优MA",
