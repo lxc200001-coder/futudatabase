@@ -1977,7 +1977,7 @@ def _process_one_stock(code, windows=None, mode="window"):
     if seq_rows and len(seq_rows) > 1:
         _seq_ws = build_window_stability(seq_rows)
 
-    return (seq_rows if seq_rows else stock_all_rows), [], _seq_sig_map, _seq_ws, out_file
+    return (seq_rows if seq_rows else stock_all_rows), seq_trades, _seq_sig_map, _seq_ws, out_file
 
 
 def _round_display(df, pct_cols=None):
@@ -2165,14 +2165,21 @@ SIGNAL_COLS = [
 
 
 def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
-                          window_stability_dfs, market_label):
-    """写入多 sheet 综合 Excel（信号扫描 + 汇总 + 评分 + 稳定性 + 统计逻辑）。"""
+                          window_stability_dfs, market_label, seq_trades_dfs=None):
+    """写入多 sheet 综合 Excel（信号扫描 + WalkForward + 汇总 + 评分 + 稳定性 + 统计逻辑）。"""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         # --- 1. 信号扫描（列顺序匹配 2py）---
         sig_out = signal_df[[c for c in SIGNAL_COLS if c in signal_df.columns]]
         sig_out = _round_display(sig_out, PCT_COLS)
         sig_out.to_excel(writer, sheet_name="信号扫描", index=False)
         _set_pct_format(writer.sheets["信号扫描"], sig_out, PCT_COLS)
+
+        # --- 2. Walk-Forward回测汇总 ---
+        if seq_trades_dfs:
+            _seq_all = pd.concat(seq_trades_dfs, ignore_index=True, sort=False)
+            if not _seq_all.empty:
+                _seq_all.to_excel(writer, sheet_name="Walk-Forward回测汇总", index=False)
+                _apply_sheet_format(writer.sheets["Walk-Forward回测汇总"])
 
         # 预计持仓进度列：实心填充数据条
         if "预计持仓进度" in sig_out.columns:
@@ -2242,6 +2249,8 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             # ── Sheet 说明 ──
             {"类型": "Sheet说明", "名称": "信号扫描",
              "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（买入/卖出/持有/观察）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按策略评分降序排列；均线趋势共振分析检测各周期方向一致性"},
+            {"类型": "Sheet说明", "名称": "Walk-Forward回测汇总",
+             "统计逻辑": "连续回测模式交易记录明细，每行一笔交易，含训练窗口/最优MA/过渡期/未平仓等信息"},
             {"类型": "Sheet说明", "名称": "回测汇总",
              "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（含策略评分、窗口标签、收益/风险指标等）"},
             {"类型": "Sheet说明", "名称": "策略评分明细",
@@ -2437,6 +2446,7 @@ def run_trade():
 
     all_rows = []
     all_signal_maps = {}
+    all_seq_trades = []
     window_stability_dfs = []
 
     for mkt in market_order:
@@ -2449,6 +2459,7 @@ def run_trade():
         market_rows = []
         market_signal_maps = {}
         market_window_stability = []
+        market_seq_trades = []
 
         with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
             future_to_code = {executor.submit(_process_one_stock, code, windows, MODE): code for code in group}
@@ -2473,6 +2484,8 @@ def run_trade():
                     market_signal_maps[code] = sig_map
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
+                    if isinstance(s_stab, pd.DataFrame) and not s_stab.empty:
+                        market_seq_trades.append(s_stab)
                     tqdm.write(f"  完成: {code}")
 
         # ---- 本市场汇总 ----
@@ -2511,6 +2524,7 @@ def run_trade():
         # 累计到全市场
         all_rows.extend(market_rows)
         all_signal_maps.update(market_signal_maps)
+        all_seq_trades.extend(market_seq_trades)
         window_stability_dfs.extend(market_window_stability)
 
     # =============================================
@@ -2570,7 +2584,7 @@ def run_trade():
     date_str = pd.Timestamp.today().strftime("%Y%m%d")
     all_out = os.path.join(TRADE_DIR, f"all_summary_param_scan_{date_str}.xlsx")
     _write_summary_excel(all_out, signal_all, all_df, score_all, rank_all,
-                        window_stability_dfs, "全市场")
+                        window_stability_dfs, "全市场", all_seq_trades)
     print(f"全市场完成: {all_out}")
 
     # 全股票各窗口最优参数热力图
