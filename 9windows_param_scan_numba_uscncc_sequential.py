@@ -1552,7 +1552,7 @@ def _trades_arr_to_df(trades_arr, n_trades, df_w, code, stock_name, stock_plates
     records = []
     for j in range(n_trades):
         t = trades_arr[j]
-        entry_idx = int(t[2])
+        entry_idx = max(int(t[2]), 0)  # 继承持仓的 entry_idx=-1 → 截断为 0
         exit_idx = int(t[4])
         entry_time = pd.Timestamp(datetime_arr[entry_idx])
         exit_time = pd.Timestamp(datetime_arr[exit_idx])
