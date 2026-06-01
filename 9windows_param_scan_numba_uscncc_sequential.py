@@ -1465,9 +1465,9 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
 
         # 更新训练窗口标签（训练集递增）
         if train_summary_all:
-            _train_wins = sorted(set(r["窗口"] for r in train_summary_all))
-            if _train_wins:
-                _train_label = f"{_train_wins[0]}~{_train_wins[-1]}"
+            _train_ws = train_windows[0][0]
+            _train_we = we  # 当前窗口结束后，we 成为新训练集的终点
+            _train_label = f"{_train_ws.date()}~{_train_we.date()}"
 
         # ---- 记录 summary ----
         if n_trades == 0 and position_shares == 0:
