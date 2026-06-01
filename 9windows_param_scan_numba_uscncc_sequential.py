@@ -1447,6 +1447,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates):
             trades_df = _trades_arr_to_df(trades_arr, n_trades, df_w, code, stock_name, stock_plates)
             trades_df["窗口"] = window_label
             trades_df["窗口内有效数据周期"] = effective_range
+            trades_df["均线周期"] = current_ma
             trades_df["训练窗口"] = _train_label
             trades_df["当前测试窗口"] = window_label
             trades_df["训练窗口选出的最优MA"] = _next_ma if _next_ma is not None else current_ma
