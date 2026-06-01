@@ -32,7 +32,7 @@ def _apply_sheet_format(ws):
 # 配置
 # =========================================================
 DATA_DIR = "data_uscncc"
-TRADE_DIR = "results_uscncc"
+TRADE_DIR = "results_uscncc_walkforward"
 SYMBOL_FILE = "symbols/symbols.csv"
 
 os.makedirs(DATA_DIR, exist_ok=True)
