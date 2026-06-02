@@ -121,7 +121,7 @@ for _m in ("us", "cn", "cc"):
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
 os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-STEP_YEARS = 1
+STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12  # 60m按月步长，其余按年
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
@@ -156,6 +156,7 @@ if __name__ == "__main__":
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
+    STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
@@ -815,11 +816,11 @@ def generate_windows(df=None, end_date=None):
     end = pd.Timestamp(end_date)
 
     windows = []
-    cur = start + pd.DateOffset(years=STEP_YEARS)
+    cur = start + pd.DateOffset(months=STEP_MONTHS)
 
     while cur < end:
         windows.append((start, cur))
-        cur += pd.DateOffset(years=STEP_YEARS)
+        cur += pd.DateOffset(months=STEP_MONTHS)
 
     # 追加一个完整步长窗口，替代非整年兜底
     windows.append((start, cur))
