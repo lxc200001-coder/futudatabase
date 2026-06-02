@@ -481,13 +481,15 @@ def get_last_signal_info(df):
         hist_change = None
         hist_daily = None
 
-    # 最新信号确认
-    if signal in ("BUY", "SELL") and (
-        (signal == "BUY" and buy_days is not None and buy_days < 5) or
-        (signal == "SELL" and sell_days is not None and sell_days < 5)
-    ):
-        _kt_name = KLINE_MAP.get(BAR_INTERVAL, {}).get("display", "K线")
-        confirm = f"待确认，{_kt_name}未正式收盘"
+    # 最新信号确认（仅周线需要判断，日线/60分钟默认已确认）
+    if BAR_INTERVAL == "1W":
+        if signal in ("BUY", "SELL") and (
+            (signal == "BUY" and buy_days is not None and buy_days < 5) or
+            (signal == "SELL" and sell_days is not None and sell_days < 5)
+        ):
+            confirm = "待确认，周K未正式收盘"
+        else:
+            confirm = "已确认"
     else:
         confirm = "已确认"
 
