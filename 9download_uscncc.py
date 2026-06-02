@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import argparse
 import logging
@@ -9,8 +10,6 @@ import baostock as bs
 
 from collections import deque
 from datetime import datetime
-import json
-import sys
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
 # 关闭杂项日志
@@ -576,70 +575,66 @@ def fetch_stock_names(symbols, quote_ctx):
 
 
 def fetch_top_turnover_stocks(limit=200):
-    """获取当日成交额前 N 的美股，保存到 symbols/top_turnover_{YYYYMMDD}.csv"""
-    import subprocess
-    script = os.path.join(os.path.expanduser("~"),
-                          ".claude", "skills", "futuapi", "scripts", "quote", "get_stock_filter.py")
-    if not os.path.exists(script):
-        print(f"错误: 未找到 get_stock_filter.py ({script})")
-        return
+    """通过 Futu OpenD 获取当日成交额前 N 的美股，保存到 symbols/top_turnover_{YYYYMMDD}.csv"""
+    from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
-    result = subprocess.run(
-        [sys.executable, script, "--market", "US", "--sort", "turnover",
-         "--limit", str(limit), "--json"],
-        capture_output=True, text=False, timeout=120,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-    )
-    if result.returncode != 0:
-        try:
-            _err = result.stderr.decode("utf-8", errors="replace")[:500]
-        except Exception:
-            _err = str(result.stderr)[:500]
-        print(f"get_stock_filter 错误 (exit {result.returncode}): {_err}")
-        return
-    if result.stdout is None:
-        print("get_stock_filter 无输出")
-        return
-    _output = result.stdout.decode("utf-8", errors="replace")
-    # 从输出中提取 JSON 行
-    for line in _output.split("\n"):
-        if line.startswith("{"):
-            try:
-                data = json.loads(line)
-                break
-            except json.JSONDecodeError:
-                continue
-    else:
-        print("错误: 无法解析 get_stock_filter 输出")
-        return
+    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+    try:
+        # 按成交额降序排列
+        af = AccumulateFilter()
+        af.stock_field = StockField.TURNOVER
+        af.is_no_filter = False
+        af.filter_min = 1
+        af.sort = SortDir.DESCEND
 
-    rows = data.get("data", [])
-    records = []
-    for i, r in enumerate(rows, 1):
-        code = r.get("code", "")
-        name = r.get("name", "")
-        price = float(r.get("price", 0))
-        volume = float(r.get("volume", 0))  # 股
-        # 成交额(元) ≈ 成交量 × 最新价
-        turnover = volume * price
-        turnover_val = round(turnover / 1e8, 2)  # 转为亿元
-        records.append({
-            "排名": i,
-            "代码": code,
-            "名称": name,
-            "最新价": price,
-            "成交额(亿元)": turnover_val,
-        })
+        ret, data = quote_ctx.get_stock_filter(Market.US, [af], begin=0, num=limit)
+        if ret != RET_OK:
+            print(f"get_stock_filter 失败: {data}")
+            return
 
-    df = pd.DataFrame(records)
-    df = df.sort_values("成交额(亿元)", ascending=False).reset_index(drop=True)
-    df["排名"] = range(1, len(df) + 1)
-    date_str = datetime.now().strftime("%Y%m%d")
-    out_path = os.path.join("symbols", f"top_turnover_{date_str}.csv")
-    os.makedirs("symbols", exist_ok=True)
-    df.to_csv(out_path, index=False, encoding="utf-8-sig")
-    print(f"成交额前{limit}美股已保存: {out_path}")
-    return out_path
+        _, _, stock_list = data
+        codes = [str(getattr(item, "stock_code", "")) for item in stock_list if getattr(item, "stock_code", "")]
+        if not codes:
+            print("get_stock_filter 返回空列表")
+            return
+
+        # 用市场快照补全价格和成交额数据
+        ret2, snapshots = quote_ctx.get_market_snapshot(codes)
+        snap_map = {}
+        if ret2 == RET_OK and snapshots is not None and not snapshots.empty:
+            for _, row in snapshots.iterrows():
+                snap_map[str(row.get("code", ""))] = row
+
+        records = []
+        for i, code in enumerate(codes, 1):
+            name = ""
+            price = 0.0
+            turnover = 0.0
+            snap = snap_map.get(code)
+            if snap is not None:
+                name = str(snap.get("name", "") or "")
+                price = float(snap.get("last_price", 0) or 0)
+                turnover = float(snap.get("turnover", 0) or 0)
+            turnover_val = round(turnover / 1e8, 2)
+            records.append({
+                "排名": i,
+                "代码": code,
+                "名称": name,
+                "最新价": price,
+                "成交额(亿元)": turnover_val,
+            })
+
+        df = pd.DataFrame(records)
+        df = df.sort_values("成交额(亿元)", ascending=False).reset_index(drop=True)
+        df["排名"] = range(1, len(df) + 1)
+        date_str = datetime.now().strftime("%Y%m%d")
+        out_path = os.path.join("symbols", f"top_turnover_{date_str}.csv")
+        os.makedirs("symbols", exist_ok=True)
+        df.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"成交额前{limit}美股已保存: {out_path}")
+        return out_path
+    finally:
+        quote_ctx.close()
 
 
 def run_download(ktype="week", selected_markets=None):
