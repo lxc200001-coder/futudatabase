@@ -55,7 +55,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "all"     # 默认K线周期: week / day / 60m / all
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US"    # 默认市场: all / US / CN / CC / US,CC
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
@@ -132,6 +132,10 @@ def _setup_ktype(ktype):
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
     TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
     STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
+    for _m in ("us", "cn", "cc"):
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
+    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
 
 
 if __name__ == "__main__":
@@ -151,10 +155,6 @@ if __name__ == "__main__":
     _CLI_ARGS = parser.parse_args()
 
     _setup_ktype(_CLI_ARGS.ktype)
-    for _m in ("us", "cn", "cc"):
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
-    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
