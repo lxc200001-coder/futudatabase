@@ -54,7 +54,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "all"     # 默认K线周期: week / day / 60m / all
+DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 
@@ -2384,16 +2384,33 @@ if __name__ == "__main__":
         sys.exit(0)
 
     parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
-    parser.add_argument("--ktype", choices=["day", "week", "60m", "all"], default=DEFAULT_KTYPE,
-                        help=f"K线周期: day=日K, week=周K, 60m=60分钟, all=依次全部 (默认: {DEFAULT_KTYPE})")
+    parser.add_argument("--ktype", default=DEFAULT_KTYPE,
+                        help=f"K线周期: day/周K, week/周K, 60m/60分钟, 逗号拼接如week,day, all=三者全部 (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--ma-mode", choices=["continuous", "jump"], default=MA_MODE,
                         help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,60m step=4,周线强制连续)")
     _CLI_ARGS = parser.parse_args()
-
     MA_MODE = _CLI_ARGS.ma_mode
-    _setup_ktype(_CLI_ARGS.ktype, MA_MODE)
+
+    # 解析 ktype 列表（支持逗号拼接）
+    _KT_MAP = {"day": "日K", "week": "周K", "60m": "60分钟K", "all": "全部"}
+    _raw = _CLI_ARGS.ktype.lower().replace("，", ",").split(",")
+    _ktypes = []
+    for _k in _raw:
+        _k = _k.strip()
+        if _k == "all":
+            _ktypes = ["week", "day", "60m"]
+            break
+        if _k in _KT_MAP:
+            if _k not in _ktypes:
+                _ktypes.append(_k)
+    if not _ktypes:
+        print(f"错误: 无效的 --ktype '{_CLI_ARGS.ktype}'，可选 week/day/60m/all 或逗号拼接")
+        sys.exit(1)
+
+    # 初始设置（用第一个 ktype 初始化全局变量）
+    _setup_ktype(_ktypes[0], MA_MODE)
 
     def _filter_symbols(symbols):
         markets = _CLI_ARGS.market.upper().split(",")
@@ -2418,17 +2435,17 @@ if __name__ == "__main__":
 
     init_symbols_file(SYMBOL_FILE)
 
-    if _CLI_ARGS.ktype == "all":
-        import time as _t
-        for _kt in ["week", "day", "60m"]:
-            _t0 = _t.time()
-            print(f"\n{'='*60}")
-            print(f"  开始 {_kt} 回测")
-            print(f"{'='*60}")
-            _setup_ktype(_kt, MA_MODE)
-            run_trade()
-            _elapsed = _t.time() - _t0
-            print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
-        _generate_ktype_comparison()
-    else:
+    import time as _t
+    for i, _kt in enumerate(_ktypes):
+        _t0 = _t.time()
+        print(f"\n{'='*60}")
+        print(f"  开始 {_kt} 回测 ({i+1}/{len(_ktypes)})")
+        print(f"{'='*60}")
+        _setup_ktype(_kt, MA_MODE)
         run_trade()
+        _elapsed = _t.time() - _t0
+        print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
+
+    # 三个周期都跑了才生成各周期数据对比
+    if set(_ktypes) == {"week", "day", "60m"}:
+        _generate_ktype_comparison()
