@@ -135,28 +135,32 @@ if __name__ == "__main__":
         sys.exit(0)
 
     parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
-    parser.add_argument("--ktype", choices=["day", "week", "60m"], default=DEFAULT_KTYPE,
-                        help=f"K线周期: day=日K, week=周K, 60m=60分钟 (默认: {DEFAULT_KTYPE})")
+    parser.add_argument("--ktype", choices=["day", "week", "60m", "all"], default=DEFAULT_KTYPE,
+                        help=f"K线周期: day=日K, week=周K, 60m=60分钟, all=依次全部 (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     _CLI_ARGS = parser.parse_args()
 
+    def _setup_ktype(ktype):
+        global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
+        if ktype == "60m":
+            BAR_INTERVAL = "60m"
+        elif ktype == "day":
+            BAR_INTERVAL = "1D"
+        else:
+            BAR_INTERVAL = "1W"
+        MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
+        FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
+        TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+        TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
+        for _m in ("us", "cn", "cc"):
+            os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
+            os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
+        STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
+
     # 只用改 BAR_INTERVAL，其余从 KLINE_MAP 自动推导
-    if _CLI_ARGS.ktype == "60m":
-        BAR_INTERVAL = "60m"
-    elif _CLI_ARGS.ktype == "day":
-        BAR_INTERVAL = "1D"
-    else:
-        BAR_INTERVAL = "1W"
-    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
-    FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
-    TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
-    TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-    for _m in ("us", "cn", "cc"):
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
-    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-    STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
+    _setup_ktype(_CLI_ARGS.ktype)
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
@@ -2293,4 +2297,17 @@ if __name__ == "__main__":
     _mod.load_symbols = lambda path: _filter_symbols(_orig_load(path))
 
     init_symbols_file(SYMBOL_FILE)
-    run_trade()
+
+    if _CLI_ARGS.ktype == "all":
+        import time as _t
+        for _kt in ["week", "day", "60m"]:
+            _t0 = _t.time()
+            print(f"\n{'='*60}")
+            print(f"  开始 {_kt} 回测")
+            print(f"{'='*60}")
+            _setup_ktype(_kt)
+            run_trade()
+            _elapsed = _t.time() - _t0
+            print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
+    else:
+        run_trade()

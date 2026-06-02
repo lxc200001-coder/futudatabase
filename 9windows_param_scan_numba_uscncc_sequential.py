@@ -47,6 +47,7 @@ def _apply_sheet_format(ws):
 DATA_DIR = "data_uscncc"
 TRADE_DIR = "results_uscncc_walkforward"
 SYMBOL_FILE = "symbols/symbols.csv"
+KTYPE_DIR_MAP = {"1W": "1w", "1D": "1d", "60m": "60m"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
@@ -133,14 +134,27 @@ if __name__ == "__main__":
                         help="回测模式: window=窗口独立, sequential=连续回测(默认)")
     _CLI_ARGS = parser.parse_args()
 
-    # 只用改 BAR_INTERVAL，其余从 KLINE_MAP 自动推导
-    if _CLI_ARGS.ktype == "week":
-        BAR_INTERVAL = "1W"
-    else:
-        BAR_INTERVAL = "1D"
-    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
-    FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
-    TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+    def _setup_ktype(ktype):
+        global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
+        if ktype == "60m":
+            BAR_INTERVAL = "60m"
+        elif ktype == "day":
+            BAR_INTERVAL = "1D"
+        elif ktype == "week":
+            BAR_INTERVAL = "1W"
+        else:
+            return
+        MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
+        FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
+        TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+        TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
+        for _m in ("us", "cn", "cc"):
+            os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
+            os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
+        STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
+
+    _setup_ktype(_CLI_ARGS.ktype)
     MODE = _CLI_ARGS.mode
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
@@ -2713,4 +2727,17 @@ if __name__ == "__main__":
     _mod.load_symbols = lambda path: _filter_symbols(_orig_load(path))
 
     init_symbols_file(SYMBOL_FILE)
-    run_trade()
+
+    if _CLI_ARGS.ktype == "all":
+        import time as _t
+        for _kt in ["week", "day", "60m"]:
+            _t0 = _t.time()
+            print("\n" + "="*60)
+            print(f"  开始 {_kt} 回测")
+            print("\n" + "="*60)
+            _setup_ktype(_kt)
+            run_trade()
+            _elapsed = _t.time() - _t0
+            print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
+    else:
+        run_trade()
