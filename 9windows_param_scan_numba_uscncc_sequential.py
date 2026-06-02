@@ -962,7 +962,9 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
             "盈亏比": 0,
 
             "平均盈利": 0,
+            "平均盈利比": 0,
             "平均亏损": 0,
+            "平均亏损比": 0,
             "最大单笔盈利": 0,
             "最大单笔亏损": 0,
 
@@ -996,6 +998,10 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
     avg_win = win["收益金额"].mean() if len(win) else 0
     avg_loss = abs(loss["收益金额"].mean()) if len(loss) else 0
 
+    _ret_col = next((c for c in ["盈亏百分比", "收益率(%)"] if c in trades_df.columns), None)
+    avg_win_pct = win[_ret_col].mean() if len(win) and _ret_col else 0
+    avg_loss_pct = loss[_ret_col].mean() if len(loss) and _ret_col else 0
+
     payoff = avg_win / avg_loss if avg_loss else 0
 
     max_win_trade = trades_df["收益金额"].max()
@@ -1028,7 +1034,9 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         "盈亏比": float(payoff),
 
         "平均盈利": float(avg_win),
+        "平均盈利比": float(avg_win_pct),
         "平均亏损": float(avg_loss),
+        "平均亏损比": float(avg_loss_pct),
         "最大单笔盈利": float(max_win_trade),
         "最大单笔亏损": float(max_loss_trade),
 
@@ -2080,7 +2088,7 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
     BT_COLS = ["策略评分", "收益率", "年化收益率", "买入持有收益率", "超额收益率", "平均每笔收益率",
                "最大回撤", "夏普比率", "卡尔玛比率",
                "交易次数", "盈利交易率", "盈利因子", "盈亏比",
-               "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
+               "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
                "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
                "初始资金", "最终资金", "窗口", "窗口内有效数据周期"]
 
@@ -2215,7 +2223,7 @@ SIGNAL_COLS = [
     "收益率", "年化收益率", "买入持有收益率", "超额收益率", "平均每笔收益率",
     "最大回撤", "夏普比率", "卡尔玛比率",
     "交易次数", "盈利交易率", "盈利因子", "盈亏比",
-    "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
+    "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
     "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
     "初始资金", "最终资金",
     "窗口", "窗口内有效数据周期", "窗口内有效数据天数",
@@ -2414,8 +2422,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "平均盈利 / 平均亏损（绝对值），衡量单次盈利与亏损的比例；>2为良好"},
             {"类型": "回测指标", "名称": "平均盈利",
              "统计逻辑": "所有盈利交易的平均盈利金额"},
+            {"类型": "回测指标", "名称": "平均盈利比",
+             "统计逻辑": "所有盈利交易的平均盈亏百分比"},
             {"类型": "回测指标", "名称": "平均亏损",
              "统计逻辑": "所有亏损交易的平均亏损金额（正数表示）"},
+            {"类型": "回测指标", "名称": "平均亏损比",
+             "统计逻辑": "所有亏损交易的平均盈亏百分比（负数）"},
             {"类型": "回测指标", "名称": "最大单笔盈利",
              "统计逻辑": "所有盈利交易中最大的一笔盈利金额"},
             {"类型": "回测指标", "名称": "最大单笔亏损",
