@@ -728,6 +728,8 @@ def run_download(ktype="week", selected_markets=None):
 # =========================================================
 def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False):
     """分阶段下载周线、日线、60分钟数据。"""
+    import time as _time
+    _all_start = _time.time()
     ktypes = []
     if not skip_week:
         ktypes.append("week")
@@ -737,11 +739,23 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
         ktypes.append("60m")
 
     for ktype in ktypes:
+        _t0 = _time.time()
         start = get_start_date_by_ktype(ktype)
         print(f"\n{'='*60}")
-        print(f"  开始下载 {ktype} 线数据（从 {start.date()} 开始）")
+        print(f"  [{ktype}] 开始下载（从 {start.date()} 开始）")
         print(f"{'='*60}")
         run_download(ktype=ktype, selected_markets=selected_markets)
+        _elapsed = _time.time() - _t0
+        _min = int(_elapsed // 60)
+        _sec = int(_elapsed % 60)
+        print(f"  [{ktype}] 完成，耗时 {_min}分{_sec}秒")
+
+    _all_elapsed = _time.time() - _all_start
+    _all_min = int(_all_elapsed // 60)
+    _all_sec = int(_all_elapsed % 60)
+    print(f"\n{'='*60}")
+    print(f"  全部完成，总耗时 {_all_min}分{_all_sec}秒")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
