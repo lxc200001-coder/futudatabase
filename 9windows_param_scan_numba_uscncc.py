@@ -80,7 +80,7 @@ def _market_subdir(code):
 
 
 def _find_data_file(code):
-    """在 data_uscncc/{us,cn,cc}/ 子目录中查找 parquet 文件"""
+    """在 data_uscncc/{ktype_dir}/{market}/ 中查找 parquet 文件，兼容旧目录。"""
     if code.startswith("CC."):
         market = "cc"
     elif code.startswith(("SH.", "SZ.")):
@@ -89,6 +89,16 @@ def _find_data_file(code):
         market = "us"
     else:
         raise ValueError(f"未知代码前缀: {code}")
+
+    # 新目录：data_uscncc/{1w,1d,60m}/{market}/
+    _dir_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
+    _ktype_dir = _dir_map.get(BAR_INTERVAL)
+    if _ktype_dir:
+        path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
+        if os.path.exists(path):
+            return path
+
+    # 旧目录：data_uscncc/{market}/
     path = os.path.join(DATA_DIR, market, f"{code}{FILE_SUFFIX}.parquet")
     return path if os.path.exists(path) else None
 
@@ -105,6 +115,7 @@ def apply_cn_mapping(df):
 KLINE_MAP = {
     "1D": {"display": "日K", "suffix": "_1d", "period": 252, "ma_range": list(range(2, 181))},
     "1W": {"display": "周K", "suffix": "_1w", "period": 52, "ma_range": list(range(2, 61))},
+    "60m": {"display": "60分钟K", "suffix": "_60m", "period": 1638, "ma_range": list(range(2, 361))},
 }
 BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
 MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
@@ -124,17 +135,19 @@ if __name__ == "__main__":
         sys.exit(0)
 
     parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
-    parser.add_argument("--ktype", choices=["day", "week"], default=DEFAULT_KTYPE,
-                        help=f"K线周期: day=日K, week=周K (默认: {DEFAULT_KTYPE})")
+    parser.add_argument("--ktype", choices=["day", "week", "60m"], default=DEFAULT_KTYPE,
+                        help=f"K线周期: day=日K, week=周K, 60m=60分钟 (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     _CLI_ARGS = parser.parse_args()
 
     # 只用改 BAR_INTERVAL，其余从 KLINE_MAP 自动推导
-    if _CLI_ARGS.ktype == "week":
-        BAR_INTERVAL = "1W"
-    else:
+    if _CLI_ARGS.ktype == "60m":
+        BAR_INTERVAL = "60m"
+    elif _CLI_ARGS.ktype == "day":
         BAR_INTERVAL = "1D"
+    else:
+        BAR_INTERVAL = "1W"
     MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
@@ -2105,20 +2118,25 @@ def run_trade():
         market_signal_maps = {}
         market_window_stability = []
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
-            future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
-            _results = {}
-            with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
-                for future in concurrent.futures.as_completed(future_to_code):
-                    code = future_to_code[future]
-                    try:
-                        _results[code] = future.result()
-                    except Exception as e:
-                        _results[code] = e
-                    finally:
-                        pbar.update(1)
+        _results = {}
+        if BAR_INTERVAL == "60m":
+            for code in group:
+                _results[code] = _process_one_stock(code, windows)
+        else:
+            _workers = os.cpu_count() - 1
+            with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
+                future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
+                with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
+                    for future in concurrent.futures.as_completed(future_to_code):
+                        code = future_to_code[future]
+                        try:
+                            _results[code] = future.result()
+                        except Exception as e:
+                            _results[code] = e
+                        finally:
+                            pbar.update(1)
 
-            for code in sorted(_results.keys()):
+        for code in sorted(_results.keys()):
                 result = _results[code]
                 if isinstance(result, Exception):
                     tqdm.write(f"  失败: {code} {result}")
