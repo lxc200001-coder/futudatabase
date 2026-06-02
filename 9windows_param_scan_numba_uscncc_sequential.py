@@ -2697,7 +2697,7 @@ def run_trade():
 
     # 全市场汇总 Excel
     date_str = pd.Timestamp.today().strftime("%Y%m%d")
-    all_out = os.path.join(TRADE_DIR, TRADE_SUBDIR, f"all_summary_param_scan_{date_str}_{TRADE_SUBDIR}.xlsx")
+    all_out = os.path.join(TRADE_DIR, TRADE_SUBDIR, f"{date_str}_{TRADE_SUBDIR}_信号汇总.xlsx")
     _write_summary_excel(all_out, signal_all, all_df, score_all, rank_all,
                         window_stability_dfs, "全市场", all_seq_trades)
     print(f"全市场完成: {all_out}")
