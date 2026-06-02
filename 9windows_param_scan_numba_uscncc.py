@@ -84,16 +84,9 @@ def _find_data_file(code):
     else:
         raise ValueError(f"未知代码前缀: {code}")
 
-    # 新目录：data_uscncc/{1w,1d,60m}/{market}/
     _dir_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
-    _ktype_dir = _dir_map.get(BAR_INTERVAL)
-    if _ktype_dir:
-        path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
-        if os.path.exists(path):
-            return path
-
-    # 旧目录：data_uscncc/{market}/
-    path = os.path.join(DATA_DIR, market, f"{code}{FILE_SUFFIX}.parquet")
+    _ktype_dir = _dir_map.get(BAR_INTERVAL, "")
+    path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
     return path if os.path.exists(path) else None
 
 def apply_cn_mapping(df):

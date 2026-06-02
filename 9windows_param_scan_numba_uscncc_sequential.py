@@ -81,7 +81,7 @@ def _market_subdir(code):
 
 
 def _find_data_file(code):
-    """在 data_uscncc/{us,cn,cc}/ 子目录中查找 parquet 文件"""
+    """在 data_uscncc/{ktype_dir}/{market}/ 中查找 parquet 文件。"""
     if code.startswith("CC."):
         market = "cc"
     elif code.startswith(("SH.", "SZ.")):
@@ -90,7 +90,9 @@ def _find_data_file(code):
         market = "us"
     else:
         raise ValueError(f"未知代码前缀: {code}")
-    path = os.path.join(DATA_DIR, market, f"{code}{FILE_SUFFIX}.parquet")
+    _dir_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
+    _ktype_dir = _dir_map.get(BAR_INTERVAL, "")
+    path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
     return path if os.path.exists(path) else None
 
 def apply_cn_mapping(df):
