@@ -112,7 +112,7 @@ def get_start_date_by_ktype(ktype):
     if ktype == "day":
         return datetime(today.year - 5, 1, 3)
     elif ktype == "60m":
-        return datetime(today.year - 2, 1, 3)
+        return datetime(today.year - 1, 1, 3)
     return datetime(2000, 1, 3)
 
 
