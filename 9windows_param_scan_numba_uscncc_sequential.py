@@ -1928,7 +1928,7 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code, windows=None, mode="window"):
+def _process_one_stock(code, windows=None, mode="window", ktype=None):
     """Process a single stock.
 
     window 模式: 跑 60 MA × 全窗口 → 返回全量数据
@@ -2567,7 +2567,7 @@ def run_trade():
         market_seq_trades = []
 
         with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
-            future_to_code = {executor.submit(_process_one_stock, code, windows, MODE): code for code in group}
+            future_to_code = {executor.submit(_process_one_stock, code, windows, MODE, _kt): code for code in group}
             _results = {}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
                 for future in concurrent.futures.as_completed(future_to_code):

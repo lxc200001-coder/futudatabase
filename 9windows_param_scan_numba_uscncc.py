@@ -134,26 +134,11 @@ if __name__ == "__main__":
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     _CLI_ARGS = parser.parse_args()
 
-    def _setup_ktype(ktype):
-        global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
-        if ktype == "60m":
-            BAR_INTERVAL = "60m"
-        elif ktype == "day":
-            BAR_INTERVAL = "1D"
-        else:
-            BAR_INTERVAL = "1W"
-        MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
-        FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
-        TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
-        TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-        for _m in ("us", "cn", "cc"):
-            os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
-            os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-        STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
-
-    # 只用改 BAR_INTERVAL，其余从 KLINE_MAP 自动推导
     _setup_ktype(_CLI_ARGS.ktype)
+    for _m in ("us", "cn", "cc"):
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
+    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
@@ -1477,8 +1462,26 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code, windows=None):
+def _setup_ktype(ktype):
+    """设置回测周期的全局变量（供 worker 进程调用）。"""
+    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
+    if ktype == "60m":
+        BAR_INTERVAL = "60m"
+    elif ktype == "day":
+        BAR_INTERVAL = "1D"
+    else:
+        BAR_INTERVAL = "1W"
+    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
+    FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
+    TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+    TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
+    STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
+
+
+def _process_one_stock(code, windows=None, ktype=None):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
+    if ktype:
+        _setup_ktype(ktype)
     path = _find_data_file(code)
     if not path:
         return [], [], {}, None
@@ -2126,10 +2129,11 @@ def run_trade():
         market_window_stability = []
 
         _results = {}
+        _kt = {"1W": "week", "1D": "day", "60m": "60m"}.get(BAR_INTERVAL, "week")
         if BAR_INTERVAL == "60m":
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测(60m串行)", unit="stock") as _p:
                 for code in group:
-                    _results[code] = _process_one_stock(code, windows)
+                    _results[code] = _process_one_stock(code, windows, _kt)
                     _p.update(1)
         else:
             _workers = os.cpu_count() - 1
