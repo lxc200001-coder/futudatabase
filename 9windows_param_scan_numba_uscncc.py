@@ -1709,7 +1709,7 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
         _hist_change = row.get("距离历史信号收盘价涨跌幅")
         _avg_trade_ret = row.get("平均每笔收益率")
         if row.get("趋势方向") == 1 and _hist_change is not None and _avg_trade_ret is not None and _avg_trade_ret > 0:
-            row["预计涨幅进度"] = round(min(abs(_hist_change) / _avg_trade_ret * 100, 100), 2)
+            row["预计涨幅进度"] = round(min(_hist_change / _avg_trade_ret * 100, 100), 2)
         else:
             row["预计涨幅进度"] = None
 
@@ -1941,7 +1941,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "信号字段", "名称": "预计持仓进度",
              "统计逻辑": "仅多头计算 = min(已过天数 / 平均持仓天数 × 100%, 100%)，反映当前持仓占平均持仓周期的进度"},
             {"类型": "信号字段", "名称": "预计涨幅进度",
-             "统计逻辑": "仅多头且平均每笔收益率>0时计算 = min(abs(涨跌幅) / 平均每笔收益率 × 100%, 100%)，反映当前涨幅已实现的平均收益进度"},
+             "统计逻辑": "仅多头且平均每笔收益率>0时计算 = min(涨跌幅 / 平均每笔收益率 × 100%, 100%)，反映当前涨幅已实现的平均收益进度"},
             {"类型": "信号字段", "名称": "距离历史信号收盘价涨跌幅",
              "统计逻辑": "(当前收盘价 − 历史信号收盘价) / 历史信号收盘价 × 100%"},
             {"类型": "信号字段", "名称": "持仓日化收益率",
