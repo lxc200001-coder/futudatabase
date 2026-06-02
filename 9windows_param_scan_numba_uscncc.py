@@ -131,7 +131,7 @@ def _setup_ktype(ktype):
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
     TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-    STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
+    STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
     for _m in ("us", "cn", "cc"):
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
