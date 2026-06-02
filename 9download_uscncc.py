@@ -107,12 +107,12 @@ def get_start_date(code):
     return datetime(2000, 1, 3)
 
 def get_start_date_by_ktype(ktype):
-    """根据周期返回起始日期：周线全量，日线3年，60分钟1年。"""
+    """根据周期返回起始日期：周线全量，日线6年，60分钟2年。"""
     today = datetime.now()
     if ktype == "day":
-        return datetime(today.year - 3, 1, 3)
+        return datetime(today.year - 6, 1, 3)
     elif ktype == "60m":
-        return datetime(today.year - 1, 1, 3)
+        return datetime(today.year - 2, 1, 3)
     return datetime(2000, 1, 3)
 
 
