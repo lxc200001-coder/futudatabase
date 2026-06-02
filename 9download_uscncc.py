@@ -513,10 +513,11 @@ def run_plate_sync(selected_markets=None):
 
 def add_plates_to_parquets(ktype, plates_map):
     """为已下载的 K 线 parquet 补充 plates 字段（无板块则留空）"""
-    suffix = f"1{ktype[0]}"
+    suffix = KTYPE_SUFFIX_MAP.get(ktype, f"1{ktype[0]}")
+    ktype_dir = KTYPE_DIR_MAP.get(ktype, "")
     files = []
     for market in ["us", "cn", "cc"]:
-        dir_path = os.path.join(DATA_DIR, market)
+        dir_path = os.path.join(DATA_DIR, ktype_dir, market)
         if not os.path.exists(dir_path):
             continue
         for fname in os.listdir(dir_path):
@@ -535,7 +536,7 @@ def add_plates_to_parquets(ktype, plates_map):
             print(f"  补充板块: {code} → {df['plates'].iloc[0]}")
 
     # 总表也补上
-    all_path = os.path.join(DATA_DIR, f"all_{suffix}.parquet")
+    all_path = os.path.join(DATA_DIR, ktype_dir, f"all_{suffix}.parquet")
     if os.path.exists(all_path):
         df = pd.read_parquet(all_path)
         if "plates" not in df.columns:
@@ -774,4 +775,5 @@ if __name__ == "__main__":
 
     # 再同步板块/行业信息，并补写到 K 线 parquet（仅周线需要补写）
     plates_map = run_plate_sync(selected_markets=selected_markets)
-    add_plates_to_parquets("week", plates_map)
+    for _kt in KTYPE_DIR_MAP:
+        add_plates_to_parquets(_kt, plates_map)
