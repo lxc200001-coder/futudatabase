@@ -22,12 +22,18 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_KTYPE = "week"     # 默认K线周期: day / week
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
+
+# ktype → 子目录名 / 文件后缀 映射
+KTYPE_DIR_MAP = {"week": "1w", "day": "1d", "60m": "60m"}
+KTYPE_SUFFIX_MAP = {"week": "1w", "day": "1d", "60m": "60m"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 for sub in ["us", "cn", "cc"]:
     os.makedirs(os.path.join(DATA_DIR, sub), exist_ok=True)
+for ktype_dir in ["1w", "1d", "60m"]:
+    for sub in ["us", "cn", "cc"]:
+        os.makedirs(os.path.join(DATA_DIR, ktype_dir, sub), exist_ok=True)
 
 
 # =========================================================
@@ -100,12 +106,22 @@ MARKET_LABEL = {"us": "美股", "cn": "A股", "cc": "加密货币"}
 def get_start_date(code):
     return datetime(2000, 1, 3)
 
+def get_start_date_by_ktype(ktype):
+    """根据周期返回起始日期：周线全量，日线5年，60分钟2年。"""
+    today = datetime.now()
+    if ktype == "day":
+        return datetime(today.year - 5, 1, 3)
+    elif ktype == "60m":
+        return datetime(today.year - 2, 1, 3)
+    return datetime(2000, 1, 3)
+
 
 # =========================================================
 # 下载数据（富途 US）
 # =========================================================
 def fetch_futu_data(code, start_str, end_str, quote_ctx, ktype="week"):
-    futu_ktype = KLType.K_WEEK if ktype == "week" else KLType.K_DAY
+    ktype_map = {"week": KLType.K_WEEK, "day": KLType.K_DAY, "60m": KLType.K_60M}
+    futu_ktype = ktype_map.get(ktype, KLType.K_WEEK)
     all_data = []
     page_req_key = None
     last_max_time = None
@@ -167,7 +183,7 @@ def fetch_binance_data(code, start_str, end_str, ktype="week"):
         print(f"{code} 不支持 Binance 数据源")
         return pd.DataFrame()
 
-    interval = "1w" if ktype == "week" else "1d"
+    interval = {"week": "1w", "day": "1d", "60m": "1h"}.get(ktype, "1w")
     print(f"  Binance: {binance_symbol} {ktype}线 {start_str} ~ {end_str}")
 
     base_url = "https://api.binance.com/api/v3/klines"
@@ -234,7 +250,7 @@ def fetch_cn_data(code, start_str, end_str, ktype="week"):
     """
     # baostock 格式: sh.600036
     bs_code = code.lower()
-    frequency = "w" if ktype == "week" else "d"
+    frequency = {"week": "w", "day": "d", "60m": "60"}.get(ktype, "w")
     adjustflag = "2"  # 前复权
 
     print(f"  Baostock: {code} {ktype}线 {start_str} ~ {end_str}")
@@ -293,8 +309,8 @@ def save_data(df, code, ktype="week", name_map=None):
         return
 
     market = get_market(code)
-    suffix = f"1{ktype[0]}"  # week→1w, day→1d
-    sub_dir = os.path.join(DATA_DIR, market)
+    suffix = KTYPE_SUFFIX_MAP.get(ktype, f"1{ktype[0]}")
+    sub_dir = os.path.join(DATA_DIR, KTYPE_DIR_MAP.get(ktype, ""), market)
     os.makedirs(sub_dir, exist_ok=True)
     file_path = os.path.join(sub_dir, f"{code}_{suffix}.parquet")
 
@@ -669,7 +685,7 @@ def run_download(ktype="week", selected_markets=None):
         print(f"{i}/{len(symbols)} 下载: {code}  {name}")
         print("================================================")
 
-        start = get_start_date(code)
+        start = get_start_date_by_ktype(ktype)
         start_str = start.strftime("%Y-%m-%d")
         market = get_market(code)
         print(f"  市场: {market}  周期: {ktype}  范围: {start_str} ~ {end_str}")
@@ -695,10 +711,10 @@ def run_download(ktype="week", selected_markets=None):
         combined["datetime"] = pd.to_datetime(combined["datetime"])
         combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
 
-        suffix = f"1{ktype[0]}"
+        suffix = KTYPE_SUFFIX_MAP.get(ktype, f"1{ktype[0]}")
         base_cols = ["code", "market", "datetime", "open", "high", "low", "close", "volume", "turnover"]
         combined = combined[[c for c in base_cols if c in combined.columns]]
-        out_path = os.path.join(DATA_DIR, f"all_{suffix}.parquet")
+        out_path = os.path.join(DATA_DIR, KTYPE_DIR_MAP.get(ktype, ""), f"all_{suffix}.parquet")
         combined.to_parquet(out_path, index=False)
         print(f"\n总表保存完成: {out_path} 共 {len(combined)} 条")
     else:
@@ -709,15 +725,34 @@ def run_download(ktype="week", selected_markets=None):
 # =========================================================
 # 主入口
 # =========================================================
+def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False):
+    """分阶段下载周线、日线、60分钟数据。"""
+    ktypes = []
+    if not skip_week:
+        ktypes.append("week")
+    if not skip_day:
+        ktypes.append("day")
+    if not skip_60m:
+        ktypes.append("60m")
+
+    for ktype in ktypes:
+        start = get_start_date_by_ktype(ktype)
+        print(f"\n{'='*60}")
+        print(f"  开始下载 {ktype} 线数据（从 {start.date()} 开始）")
+        print(f"{'='*60}")
+        run_download(ktype=ktype, selected_markets=selected_markets)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="多市场 K 线数据下载")
-    parser.add_argument("--ktype", choices=["day", "week"], default=DEFAULT_KTYPE,
-                        help=f"K线周期: day=日K, week=周K (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=0,
                         help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200)")
+    parser.add_argument("--skip-week", action="store_true", help="跳过周线下载")
+    parser.add_argument("--skip-day", action="store_true", help="跳过日线下载")
+    parser.add_argument("--skip-60m", action="store_true", help="跳过60分钟下载")
     args = parser.parse_args()
 
     # 单独获取成交额排名
@@ -731,9 +766,12 @@ if __name__ == "__main__":
     else:
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
 
-    # 先下载 K 线数据
-    run_download(ktype=args.ktype, selected_markets=selected_markets)
+    # 分阶段下载 K 线数据
+    run_download_all(selected_markets=selected_markets,
+                     skip_week=args.skip_week,
+                     skip_day=args.skip_day,
+                     skip_60m=args.skip_60m)
 
-    # 再同步板块/行业信息，并补写到 K 线 parquet
+    # 再同步板块/行业信息，并补写到 K 线 parquet（仅周线需要补写）
     plates_map = run_plate_sync(selected_markets=selected_markets)
-    add_plates_to_parquets(args.ktype, plates_map)
+    add_plates_to_parquets("week", plates_map)
