@@ -773,7 +773,7 @@ if __name__ == "__main__":
                      skip_day=args.skip_day,
                      skip_60m=args.skip_60m)
 
-    # 再同步板块/行业信息，并补写到 K 线 parquet（仅周线需要补写）
+    # 再同步板块/行业信息，并补写到各周期 K 线 parquet
     plates_map = run_plate_sync(selected_markets=selected_markets)
     for _kt in KTYPE_DIR_MAP:
         add_plates_to_parquets(_kt, plates_map)
