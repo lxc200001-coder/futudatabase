@@ -54,7 +54,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week"     # 默认K线周期: week / day / 60m / all
+DEFAULT_KTYPE = "all"     # 默认K线周期: week / day / 60m / all
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 
 # 中文映射
@@ -2127,8 +2127,10 @@ def run_trade():
 
         _results = {}
         if BAR_INTERVAL == "60m":
-            for code in group:
-                _results[code] = _process_one_stock(code, windows)
+            with tqdm(total=len(group), desc=f"{mkt.upper()}回测(60m串行)", unit="stock") as _p:
+                for code in group:
+                    _results[code] = _process_one_stock(code, windows)
+                    _p.update(1)
         else:
             _workers = os.cpu_count() - 1
             with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
