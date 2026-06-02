@@ -2264,6 +2264,22 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
                     f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
                 )
 
+        # 预计涨幅进度列：绿色实心填充数据条（0~100）
+        if "预计涨幅进度" in sig_out.columns:
+            from openpyxl.formatting.rule import DataBarRule
+            from openpyxl.utils import get_column_letter
+            _col_letter = get_column_letter(list(sig_out.columns).index("预计涨幅进度") + 1)
+            _nrows = len(sig_out)
+            if _nrows > 0:
+                _rule = DataBarRule(start_type="num", start_value=0,
+                                    end_type="num", end_value=100,
+                                    color="27AE60",
+                                    showValue=True,
+                                    minLength=None, maxLength=None)
+                writer.sheets["信号扫描"].conditional_formatting.add(
+                    f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
+                )
+
         # --- 2. 回测汇总 ---
         all_out = reorder_columns(all_df)
         apply_cn_mapping(all_out)
