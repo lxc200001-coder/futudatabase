@@ -486,7 +486,8 @@ def get_last_signal_info(df):
         (signal == "BUY" and buy_days is not None and buy_days < 5) or
         (signal == "SELL" and sell_days is not None and sell_days < 5)
     ):
-        confirm = "待确认，周K未正式收盘"
+        _kt_name = KLINE_MAP.get(BAR_INTERVAL, {}).get("display", "K线")
+        confirm = f"待确认，{_kt_name}未正式收盘"
     else:
         confirm = "已确认"
 
@@ -1964,7 +1965,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "信号字段", "名称": "最新信号收盘价",
              "统计逻辑": "最新信号时间对应的原始收盘价"},
             {"类型": "信号字段", "名称": "最新信号确认",
-             "统计逻辑": "BUY/SELL信号且距离最近一次信号<5根K线为「待确认，K线未正式收盘」，否则为「已确认」"},
+             "统计逻辑": "BUY/SELL信号且距离最近一次信号<5根K线为「待确认，K线未正式收盘」，否则为「已确认」；未确认名称随周期变化（日K/周K/60分钟K）"},
             {"类型": "信号字段", "名称": "历史信号",
              "统计逻辑": "倒数第二次出现的 BUY/SELL 信号方向"},
             {"类型": "信号字段", "名称": "历史信号时间",
