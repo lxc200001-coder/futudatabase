@@ -51,12 +51,6 @@ SYMBOL_FILE = "symbols/symbols.csv"
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
 
-# 按市场创建输出子目录
-for _m in ("us", "cn", "cc"):
-    os.makedirs(os.path.join(TRADE_DIR, _m), exist_ok=True)
-    os.makedirs(os.path.join(TRADE_DIR, _m, "heatmaps"), exist_ok=True)
-os.makedirs(os.path.join(TRADE_DIR, "heatmaps"), exist_ok=True)
-
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
@@ -121,6 +115,12 @@ BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
 MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
 FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
 TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+KTYPE_DIR_MAP = {"1W": "1w", "1D": "1d", "60m": "60m"}
+TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
+for _m in ("us", "cn", "cc"):
+    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
+    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
+os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
 STEP_YEARS = 1
 WINDOW_START_DATE = "2000-01-03"
 
@@ -151,6 +151,11 @@ if __name__ == "__main__":
     MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+    TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
+    for _m in ("us", "cn", "cc"):
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
+        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
+    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
@@ -1482,7 +1487,7 @@ def _process_one_stock(code, windows=None):
     df = pd.read_parquet(path)
     df = df.sort_values("datetime")
     df["code"] = code
-    out_file = os.path.join(TRADE_DIR, _market_subdir(code), f"{code}_trades.xlsx")
+    out_file = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), f"{code}_trades.xlsx")
     stock_name = str(df["stock_name"].iloc[0]) if "stock_name" in df.columns else ""
     stock_plates = str(df["plates"].iloc[0]) if "plates" in df.columns else ""
     stock_all_rows = []
@@ -1575,12 +1580,12 @@ def _process_one_stock(code, windows=None):
     # 参数扫描热力图（PNG 写入开销小，保留在 worker 中）
     # =============================================
     if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
+        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
 
     if window_stability_df is not None and not window_stability_df.empty:
         generate_stability_heatmap(
             code, window_stability_df,
-            save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"),
+            save_dir=os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), "heatmaps"),
             best_ma=best_stab_ma,
             stock_name=stock_name,
         )
@@ -2174,7 +2179,7 @@ def run_trade():
 
         if not signal_mkt.empty:
             # 本市场全股票热力图
-            mkt_dir = os.path.join(TRADE_DIR, mkt)
+            mkt_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, mkt)
             if market_window_stability:
                 all_ws_mkt = pd.concat(market_window_stability, ignore_index=True)
                 generate_all_stock_best_ma_heatmap(
@@ -2229,7 +2234,7 @@ def run_trade():
         else:
             missing_codes.append(code)
 
-    tv_path = os.path.join(TRADE_DIR, "tradingview_params.txt")
+    tv_path = os.path.join(TRADE_DIR, TRADE_SUBDIR, "tradingview_params.txt")
     with open(tv_path, "w", encoding="utf-8") as f:
         f.write("\n".join(tv_lines) + "\n")
     print(f"\nTradingView 配置文件: {tv_path} 共 {len(tv_lines)} 只股票")
@@ -2241,7 +2246,7 @@ def run_trade():
 
     # 全市场汇总 Excel
     date_str = pd.Timestamp.today().strftime("%Y%m%d")
-    all_out = os.path.join(TRADE_DIR, f"all_summary_param_scan_{date_str}.xlsx")
+    all_out = os.path.join(TRADE_DIR, TRADE_SUBDIR, f"all_summary_param_scan_{date_str}.xlsx")
     _write_summary_excel(all_out, signal_all, all_df, score_all, rank_all,
                         window_stability_dfs, "全市场")
     print(f"全市场完成: {all_out}")
@@ -2250,7 +2255,7 @@ def run_trade():
     if window_stability_dfs:
         all_ws_hm = pd.concat(window_stability_dfs, ignore_index=True)
         generate_all_stock_best_ma_heatmap(
-            all_ws_hm, save_dir=os.path.join(TRADE_DIR, "heatmaps")
+            all_ws_hm, save_dir=os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps")
         )
 
 # =========================================================
