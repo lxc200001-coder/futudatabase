@@ -55,7 +55,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "all"     # 默认K线周期: week / day / 60m / all
-DEFAULT_MARKET = "US"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
