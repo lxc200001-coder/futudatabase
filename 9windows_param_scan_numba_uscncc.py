@@ -114,7 +114,7 @@ for _m in ("us", "cn", "cc"):
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
 os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12  # 60m按半年步长，其余按年
+STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----

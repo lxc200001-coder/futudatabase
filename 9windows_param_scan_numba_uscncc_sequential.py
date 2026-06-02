@@ -154,7 +154,7 @@ if __name__ == "__main__":
             os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
             os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-        STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
+        STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
     for _m in ("us", "cn", "cc"):
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
