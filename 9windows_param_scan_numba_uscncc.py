@@ -2276,6 +2276,98 @@ def run_trade():
 # 同步和导出功能已移除
 
 # =========================================================
+def _generate_ktype_comparison():
+    """读取各周期信号汇总Excel，生成各周期数据对比Excel。"""
+    import glob as _glob
+    _kt_labels = {"1w": "（周线）", "1d": "（日线）", "60m": "（60分钟）"}
+    _dfs = {}
+    for _kt_name in ["1w", "1d", "60m"]:
+        _files = sorted(_glob.glob(os.path.join(TRADE_DIR, _kt_name, "*_信号汇总.xlsx")))
+        if not _files:
+            continue
+        _df = pd.read_excel(_files[-1], sheet_name="信号扫描")
+        if _df.empty:
+            continue
+        # 重命名对比字段，加周期后缀
+        _rename = {}
+        for _col in _df.columns:
+            if _col in ("股票代码", "股票名称", "所属板块", "是否全市场成交额前200",
+                        "全市场成交额排名", "市场"):
+                continue
+            _rename[_col] = f"{_col}{_kt_labels[_kt_name]}"
+        _dfs[_kt_name] = _df.rename(columns=_rename).set_index("股票代码")
+
+    if not _dfs:
+        return
+
+    # 合并：outer join 保留所有股票
+    _merged = None
+    for _kt_name, _df in _dfs.items():
+        if _merged is None:
+            _merged = _df
+        else:
+            _merged = _merged.join(_df, how="outer")
+
+    _merged = _merged.reset_index()
+
+    # 按字段分类（用于 Excel 组合）
+    _field_groups = [
+        ("策略评分", ["策略评分"]),
+        ("收益类", ["收益率", "年化收益率", "买入持有收益率", "超额收益率", "平均每笔收益率"]),
+        ("风险类", ["最大回撤", "夏普比率", "卡尔玛比率"]),
+        ("交易统计", ["交易次数", "盈利交易率", "盈利因子", "盈亏比"]),
+        ("每笔统计", ["平均盈利", "平均盈利比", "平均亏损", "平均亏损比",
+                       "最大单笔盈利", "最大单笔亏损"]),
+        ("连续性", ["最大连续盈利次数", "最大连续亏损次数", "平均持仓天数"]),
+        ("持仓进度", ["预计持仓进度", "预计涨幅进度", "持仓日化收益率"]),
+        ("资金", ["初始资金", "最终资金"]),
+        ("信号/方向", ["趋势方向", "最新信号", "最新信号确认",
+                       "历史信号", "距离历史信号已过天数",
+                       "距离历史信号收盘价涨跌幅"]),
+        ("窗口", ["窗口", "窗口内有效数据周期", "窗口内有效数据天数"]),
+    ]
+
+    # 构建输出列顺序：基本信息 + 各分类字段（3周期并排）
+    _base_cols = ["股票代码", "股票名称", "所属板块",
+                  "是否全市场成交额前200", "全市场成交额排名", "市场"]
+    _order = [c for c in _base_cols if c in _merged.columns]
+    for _gname, _fields in _field_groups:
+        for _f in _fields:
+            for _kt_label in ["（周线）", "（日线）", "（60分钟）"]:
+                _col = f"{_f}{_kt_label}"
+                if _col in _merged.columns:
+                    _order.append(_col)
+
+    _out = _merged[[c for c in _order if c in _merged.columns]]
+
+    # 写入 Excel 并添加组合
+    _out_path = os.path.join(TRADE_DIR, "各周期数据对比.xlsx")
+    with pd.ExcelWriter(_out_path, engine="openpyxl") as _writer:
+        _out.to_excel(_writer, sheet_name="周期对比", index=False)
+        _ws = _writer.sheets["周期对比"]
+
+        # 添加组合（分组）
+        from openpyxl.utils import get_column_letter
+        _col_idx = len(_base_cols) + 1  # 第一组起始列（1-indexed）
+        for _gname, _fields in _field_groups:
+            _gcols = 0
+            for _f in _fields:
+                for _kt_label in ["（周线）", "（日线）", "（60分钟）"]:
+                    if f"{_f}{_kt_label}" in _out.columns:
+                        _gcols += 1
+            if _gcols > 1:
+                _start_letter = get_column_letter(_col_idx)
+                _end_letter = get_column_letter(_col_idx + _gcols - 1)
+                _ws.column_dimensions.group(_start_letter, _end_letter, hidden=False)
+            _col_idx += _gcols
+
+        # 表头加粗
+        for _cell in _ws[1]:
+            _cell.font = _cell.font.copy(bold=True)
+
+    print(f"各周期数据对比: {_out_path}")
+
+
 if __name__ == "__main__":
     # _CLI_ARGS 和 ktype 覆盖已在顶部 __main__ 块中完成
     def _filter_symbols(symbols):
@@ -2312,5 +2404,6 @@ if __name__ == "__main__":
             run_trade()
             _elapsed = _t.time() - _t0
             print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
+        _generate_ktype_comparison()
     else:
         run_trade()
