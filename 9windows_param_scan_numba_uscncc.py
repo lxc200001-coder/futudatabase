@@ -56,7 +56,7 @@ FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "all"     # 默认K线周期: week / day / 60m / all
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
-MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
+MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
@@ -2388,7 +2388,7 @@ if __name__ == "__main__":
                         help=f"K线周期: day=日K, week=周K, 60m=60分钟, all=依次全部 (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--ma-mode", choices=["continuous", "jump"], default="continuous",
+    parser.add_argument("--ma-mode", choices=["continuous", "jump"], default=MA_MODE,
                         help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,60m step=4,周线强制连续)")
     _CLI_ARGS = parser.parse_args()
 
