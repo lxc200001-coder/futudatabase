@@ -114,7 +114,7 @@ for _m in ("us", "cn", "cc"):
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
 os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12  # 60m按月步长，其余按年
+STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12  # 60m按半年步长，其余按年
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
@@ -1475,7 +1475,7 @@ def _setup_ktype(ktype):
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
     TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-    STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
+    STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
 
 
 def _process_one_stock(code, windows=None, ktype=None):
@@ -2130,16 +2130,10 @@ def run_trade():
 
         _results = {}
         _kt = {"1W": "week", "1D": "day", "60m": "60m"}.get(BAR_INTERVAL, "week")
-        if BAR_INTERVAL == "60m":
-            with tqdm(total=len(group), desc=f"{mkt.upper()}回测(60m串行)", unit="stock") as _p:
-                for code in group:
-                    _results[code] = _process_one_stock(code, windows, _kt)
-                    _p.update(1)
-        else:
-            _workers = os.cpu_count() - 1
-            with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
-                future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
-                with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
+        _workers = os.cpu_count() - 1
+        with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
+            future_to_code = {executor.submit(_process_one_stock, code, windows, _kt): code for code in group}
+            with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
                     for future in concurrent.futures.as_completed(future_to_code):
                         code = future_to_code[future]
                         try:

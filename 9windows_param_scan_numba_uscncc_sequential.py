@@ -154,7 +154,7 @@ if __name__ == "__main__":
             os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
             os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-        STEP_MONTHS = 1 if BAR_INTERVAL == "60m" else 12
+        STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
 
     _setup_ktype(_CLI_ARGS.ktype)
     MODE = _CLI_ARGS.mode
