@@ -1,4 +1,5 @@
 import os
+import glob
 import warnings
 import concurrent.futures
 import pandas as pd
@@ -16,6 +17,18 @@ import seaborn as sns
 
 # 屏蔽pandas concat空列FutureWarning（不影响功能）
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation", category=FutureWarning)
+
+
+def _load_top_turnover_set():
+    """读取最新 top_turnover 文件，返回前200代码集合，无文件时返回空集。"""
+    files = sorted(glob.glob(os.path.join("symbols", "top_turnover_*.csv")))
+    if not files:
+        return set()
+    try:
+        df = pd.read_csv(files[-1])
+        return set(df["代码"].dropna().tolist())
+    except Exception:
+        return set()
 
 
 def _apply_sheet_format(ws):
@@ -1550,6 +1563,7 @@ def _run_sequential(code, df, windows, stock_name, stock_plates, stock_all_rows=
     signal_info["股票代码"] = code
     signal_info["股票名称"] = stock_name
     signal_info["所属板块"] = stock_plates
+    signal_info["是否全市场成交额前200"] = "是" if code in _load_top_turnover_set() else "否"
     signal_info["K线周期"] = BAR_INTERVAL
     signal_info["均线周期"] = last_ma
     signal_info["市场"] = str(df["market"].iloc[0]) if "market" in df.columns else ""
@@ -1987,6 +2001,7 @@ def _process_one_stock(code, windows=None, mode="window"):
         signal_info["股票代码"] = code
         signal_info["股票名称"] = stock_name
         signal_info["所属板块"] = stock_plates
+        signal_info["是否全市场成交额前200"] = "是" if code in _load_top_turnover_set() else "否"
         signal_info["K线周期"] = BAR_INTERVAL
         signal_info["均线周期"] = _last_ma
         signal_info["市场"] = str(df["market"].iloc[0]) if "market" in df.columns else ""
@@ -2181,7 +2196,7 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
 
 
 SIGNAL_COLS = [
-    "股票代码", "股票名称", "所属板块", "市场", "K线周期", "均线周期",
+    "股票代码", "股票名称", "所属板块", "是否全市场成交额前200", "市场", "K线周期", "均线周期",
     "策略评分", "策略表现",
     "时间", "收盘价", "HA收盘价", "HA均线值",
     "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
