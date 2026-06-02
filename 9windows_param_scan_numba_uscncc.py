@@ -56,6 +56,7 @@ FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "all"     # 默认K线周期: week / day / 60m / all
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
@@ -102,10 +103,25 @@ def apply_cn_mapping(df):
 KLINE_MAP = {
     "1D": {"display": "日K", "suffix": "_1d", "period": 252, "ma_range": list(range(2, 181))},
     "1W": {"display": "周K", "suffix": "_1w", "period": 52, "ma_range": list(range(2, 61))},
-    "60m": {"display": "60分钟K", "suffix": "_60m", "period": 1638, "ma_range": list(range(2, 361))},
+    "60m": {"display": "60分钟K", "suffix": "_60m", "period": 1638, "ma_range": list(range(2, 359))},
 }
+
+def generate_ma_list(bar_interval, ma_mode="continuous"):
+    """根据K线周期和MA模式生成MA列表。
+
+    周线: 强制 continuous (step=1)
+    日线 continuous: 2..180 (step=1) / jump: 2,4,6..180 (step=2)
+    60m  continuous: 2..358 (step=1) / jump: 2,6,10..358 (step=4)
+    """
+    if bar_interval == "1W" or ma_mode == "continuous":
+        return KLINE_MAP[bar_interval]["ma_range"]
+    _steps = {"1D": 2, "60m": 4}
+    step = _steps[bar_interval]
+    _max = {"1D": 181, "60m": 359}
+    return list(range(2, _max[bar_interval], step))
+
 BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
-MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
+MA_LIST = generate_ma_list(BAR_INTERVAL, MA_MODE)
 FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
 TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
 KTYPE_DIR_MAP = {"1W": "1w", "1D": "1d", "60m": "60m"}
@@ -118,16 +134,17 @@ STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
-def _setup_ktype(ktype):
+def _setup_ktype(ktype, ma_mode="continuous"):
     """设置回测周期的全局变量（供 worker 进程调用）。"""
-    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
+    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS, MA_MODE
+    MA_MODE = ma_mode
     if ktype == "60m":
         BAR_INTERVAL = "60m"
     elif ktype == "day":
         BAR_INTERVAL = "1D"
     else:
         BAR_INTERVAL = "1W"
-    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
+    MA_LIST = generate_ma_list(BAR_INTERVAL, MA_MODE)
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
     TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
@@ -137,24 +154,6 @@ def _setup_ktype(ktype):
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
 
-
-if __name__ == "__main__":
-    import argparse
-    import sys
-
-    # 兼容旧版 sync 参数
-    if len(sys.argv) > 1 and sys.argv[1] == "sync":
-        print("sync 模式已移除")
-        sys.exit(0)
-
-    parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
-    parser.add_argument("--ktype", choices=["day", "week", "60m", "all"], default=DEFAULT_KTYPE,
-                        help=f"K线周期: day=日K, week=周K, 60m=60分钟, all=依次全部 (默认: {DEFAULT_KTYPE})")
-    parser.add_argument("--market", default=DEFAULT_MARKET,
-                        help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
-    _CLI_ARGS = parser.parse_args()
-
-    _setup_ktype(_CLI_ARGS.ktype)
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
@@ -1481,13 +1480,13 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code, windows=None, ktype=None):
+def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
     if ktype:
-        _setup_ktype(ktype)
+        _setup_ktype(ktype, ma_mode)
     path = _find_data_file(code)
     if not path:
-        return [], [], {}, None
+        return [], [], {}, None, None
     df = pd.read_parquet(path)
     df = df.sort_values("datetime")
     df["code"] = code
@@ -2142,7 +2141,7 @@ def run_trade():
         _kt = {"1W": "week", "1D": "day", "60m": "60m"}.get(BAR_INTERVAL, "week")
         _workers = os.cpu_count() - 1
         with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
-            future_to_code = {executor.submit(_process_one_stock, code, windows, _kt): code for code in group}
+            future_to_code = {executor.submit(_process_one_stock, code, windows, _kt, MA_MODE): code for code in group}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
                     for future in concurrent.futures.as_completed(future_to_code):
                         code = future_to_code[future]
@@ -2376,7 +2375,26 @@ def _generate_ktype_comparison():
 
 
 if __name__ == "__main__":
-    # _CLI_ARGS 和 ktype 覆盖已在顶部 __main__ 块中完成
+    import argparse
+    import sys
+
+    # 兼容旧版 sync 参数
+    if len(sys.argv) > 1 and sys.argv[1] == "sync":
+        print("sync 模式已移除")
+        sys.exit(0)
+
+    parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
+    parser.add_argument("--ktype", choices=["day", "week", "60m", "all"], default=DEFAULT_KTYPE,
+                        help=f"K线周期: day=日K, week=周K, 60m=60分钟, all=依次全部 (默认: {DEFAULT_KTYPE})")
+    parser.add_argument("--market", default=DEFAULT_MARKET,
+                        help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
+    parser.add_argument("--ma-mode", choices=["continuous", "jump"], default="continuous",
+                        help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,60m step=4,周线强制连续)")
+    _CLI_ARGS = parser.parse_args()
+
+    MA_MODE = _CLI_ARGS.ma_mode
+    _setup_ktype(_CLI_ARGS.ktype, MA_MODE)
+
     def _filter_symbols(symbols):
         markets = _CLI_ARGS.market.upper().split(",")
         if "ALL" in markets:
@@ -2407,7 +2425,7 @@ if __name__ == "__main__":
             print(f"\n{'='*60}")
             print(f"  开始 {_kt} 回测")
             print(f"{'='*60}")
-            _setup_ktype(_kt)
+            _setup_ktype(_kt, MA_MODE)
             run_trade()
             _elapsed = _t.time() - _t0
             print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
