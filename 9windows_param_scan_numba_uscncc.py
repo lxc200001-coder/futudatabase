@@ -118,6 +118,22 @@ STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12  # 60m按半年步长，其余�
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
+def _setup_ktype(ktype):
+    """设置回测周期的全局变量（供 worker 进程调用）。"""
+    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
+    if ktype == "60m":
+        BAR_INTERVAL = "60m"
+    elif ktype == "day":
+        BAR_INTERVAL = "1D"
+    else:
+        BAR_INTERVAL = "1W"
+    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
+    FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
+    TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
+    TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
+    STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -1462,22 +1478,6 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 # =========================================================
 # 主程序
 # =========================================================
-def _setup_ktype(ktype):
-    """设置回测周期的全局变量（供 worker 进程调用）。"""
-    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS
-    if ktype == "60m":
-        BAR_INTERVAL = "60m"
-    elif ktype == "day":
-        BAR_INTERVAL = "1D"
-    else:
-        BAR_INTERVAL = "1W"
-    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
-    FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
-    TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
-    TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-    STEP_MONTHS = 6 if BAR_INTERVAL == "60m" else 12
-
-
 def _process_one_stock(code, windows=None, ktype=None):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
     if ktype:
