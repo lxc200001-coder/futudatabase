@@ -888,7 +888,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         "年化收益率": float(cagr),
         "买入持有收益率": float(buy_hold),
         "超额收益率": float(alpha),
-        "平均每笔收益率": float(trades_df["盈亏百分比"].mean()) if not trades_df.empty else 0,
+        "平均每笔收益率": float(trades_df["收益率(%)"].mean()) if not trades_df.empty else 0,
 
         "最大回撤": float(mdd),
         "夏普比率": float(sh),

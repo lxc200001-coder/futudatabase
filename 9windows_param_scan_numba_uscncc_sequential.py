@@ -992,6 +992,8 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
 
     avg_hold = trades_df["持仓天数"].mean()
 
+    _ret_col = next((c for c in ["盈亏百分比", "收益率(%)"] if c in trades_df.columns), None)
+
     return {
         "股票代码": df["code"].iloc[0],
         "市场": market_val,
@@ -1002,8 +1004,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         "年化收益率": float(cagr),
         "买入持有收益率": float(buy_hold),
         "超额收益率": float(alpha),
-        "平均每笔收益率": float(trades_df["盈亏百分比"].mean()) if not trades_df.empty else 0,
-
+        "平均每笔收益率": float(trades_df[_ret_col].mean()) if not trades_df.empty and _ret_col else 0,
         "最大回撤": float(mdd),
         "夏普比率": float(sh),
         "卡尔玛比率": float(calmar),
