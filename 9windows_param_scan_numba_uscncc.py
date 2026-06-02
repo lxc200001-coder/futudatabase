@@ -54,7 +54,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week"     # 默认K线周期: week / day / 60m
+DEFAULT_KTYPE = "week"     # 默认K线周期: week / day / 60m / all
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 
 # 中文映射
