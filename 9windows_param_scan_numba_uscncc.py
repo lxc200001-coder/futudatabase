@@ -2084,7 +2084,8 @@ def run_trade():
     # 过滤出有数据文件的股票，用于进度条总计数
     available = [s for s in symbols if _find_data_file(s)]
 
-    # 扫描全市场数据，取最晚日期作为全局窗口终点
+    # 扫描全市场数据，取最早和最晚日期作为窗口范围
+    global_start = pd.Timestamp("2099-12-31")
     global_end = pd.Timestamp("2000-01-01")
     for s in available:
         try:
@@ -2092,13 +2093,19 @@ def run_trade():
             if not _path:
                 continue
             _tmp = pd.read_parquet(_path, columns=["datetime"])
+            _min = pd.to_datetime(_tmp["datetime"]).min()
             _max = pd.to_datetime(_tmp["datetime"]).max()
+            if _min < global_start:
+                global_start = _min
             if _max > global_end:
                 global_end = _max
         except Exception:
             continue
+    # 用最早数据日期作为窗口起始
+    global WINDOW_START_DATE
+    WINDOW_START_DATE = str(global_start.date())
     windows = generate_windows(end_date=global_end)
-    print(f"全局窗口终点: {global_end.date()}, 共 {len(windows)} 个窗口")
+    print(f"窗口范围: {global_start.date()} ~ {global_end.date()}, 共 {len(windows)} 个窗口")
 
     # 按市场分组
     def _market_group(code):
