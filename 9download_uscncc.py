@@ -9,6 +9,8 @@ import baostock as bs
 
 from collections import deque
 from datetime import datetime
+import json
+import sys
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
 # 关闭杂项日志
@@ -573,6 +575,73 @@ def fetch_stock_names(symbols, quote_ctx):
     return name_map
 
 
+def fetch_top_turnover_stocks(limit=200):
+    """获取当日成交额前 N 的美股，保存到 symbols/top_turnover_{YYYYMMDD}.csv"""
+    import subprocess
+    script = os.path.join(os.path.expanduser("~"),
+                          ".claude", "skills", "futuapi", "scripts", "quote", "get_stock_filter.py")
+    if not os.path.exists(script):
+        print(f"错误: 未找到 get_stock_filter.py ({script})")
+        return
+
+    result = subprocess.run(
+        [sys.executable, script, "--market", "US", "--sort", "turnover",
+         "--limit", str(limit), "--json"],
+        capture_output=True, text=False, timeout=120,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+    )
+    if result.returncode != 0:
+        try:
+            _err = result.stderr.decode("utf-8", errors="replace")[:500]
+        except Exception:
+            _err = str(result.stderr)[:500]
+        print(f"get_stock_filter 错误 (exit {result.returncode}): {_err}")
+        return
+    if result.stdout is None:
+        print("get_stock_filter 无输出")
+        return
+    _output = result.stdout.decode("utf-8", errors="replace")
+    # 从输出中提取 JSON 行
+    for line in _output.split("\n"):
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+    else:
+        print("错误: 无法解析 get_stock_filter 输出")
+        return
+
+    rows = data.get("data", [])
+    records = []
+    for i, r in enumerate(rows, 1):
+        code = r.get("code", "")
+        name = r.get("name", "")
+        price = float(r.get("price", 0))
+        volume = float(r.get("volume", 0))  # 股
+        # 成交额(元) ≈ 成交量 × 最新价
+        turnover = volume * price
+        turnover_val = round(turnover / 1e8, 2)  # 转为亿元
+        records.append({
+            "排名": i,
+            "代码": code,
+            "名称": name,
+            "最新价": price,
+            "成交额(亿元)": turnover_val,
+        })
+
+    df = pd.DataFrame(records)
+    df = df.sort_values("成交额(亿元)", ascending=False).reset_index(drop=True)
+    df["排名"] = range(1, len(df) + 1)
+    date_str = datetime.now().strftime("%Y%m%d")
+    out_path = os.path.join("symbols", f"top_turnover_{date_str}.csv")
+    os.makedirs("symbols", exist_ok=True)
+    df.to_csv(out_path, index=False, encoding="utf-8-sig")
+    print(f"成交额前{limit}美股已保存: {out_path}")
+    return out_path
+
+
 def run_download(ktype="week", selected_markets=None):
 
     if selected_markets is None:
@@ -652,7 +721,14 @@ if __name__ == "__main__":
                         help=f"K线周期: day=日K, week=周K (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
+    parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=0,
+                        help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200)")
     args = parser.parse_args()
+
+    # 单独获取成交额排名
+    if args.top_turnover:
+        fetch_top_turnover_stocks(limit=args.top_turnover)
+        sys.exit(0)
 
     # 解析市场参数
     if args.market.lower() == "all":
