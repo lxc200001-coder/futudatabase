@@ -142,7 +142,7 @@ if __name__ == "__main__":
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
 PCT_COLS = [
-    "预计持仓进度",
+    "预计持仓进度", "预计涨幅进度",
     "距离历史信号收盘价涨跌幅", "持仓日化收益率",
     "收益率", "年化收益率", "买入持有收益率", "超额收益率",
     "最大回撤", "盈利交易率",
@@ -1705,6 +1705,14 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
         else:
             row["预计持仓进度"] = None
 
+        # 预计涨幅进度 = 距离历史信号收盘价涨跌幅 / 平均每笔收益率（仅多头且收益率 > 0）
+        _hist_change = row.get("距离历史信号收盘价涨跌幅")
+        _avg_trade_ret = row.get("平均每笔收益率")
+        if row.get("趋势方向") == 1 and _hist_change is not None and _avg_trade_ret is not None and _avg_trade_ret > 0:
+            row["预计涨幅进度"] = round(min(abs(_hist_change) / _avg_trade_ret * 100, 100), 2)
+        else:
+            row["预计涨幅进度"] = None
+
         # 窗口内有效数据天数 = 解析 "窗口内有效数据周期" 日期范围
         _win_period = row.get("窗口内有效数据周期", "")
         if isinstance(_win_period, str) and "~" in _win_period:
@@ -1761,7 +1769,8 @@ SIGNAL_COLS = [
     "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
     "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
     "预计持仓进度",
-    "距离历史信号收盘价涨跌幅", "持仓日化收益率",
+    "距离历史信号收盘价涨跌幅", "预计涨幅进度",
+    "持仓日化收益率",
     "均线趋势共振方向", "共振均线数量", "共振均线列表",
     "收益率", "年化收益率", "买入持有收益率", "超额收益率", "平均每笔收益率",
     "最大回撤", "夏普比率", "卡尔玛比率",
@@ -1794,6 +1803,21 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             if _nrows > 0:
                 _rule = DataBarRule(start_type="min", end_type="max",
                                     color="5B9BD5",  # 蓝色实心填充
+                                    showValue=True,
+                                    minLength=None, maxLength=None)
+                writer.sheets["信号扫描"].conditional_formatting.add(
+                    f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
+                )
+
+        # 预计涨幅进度列：绿色实心填充数据条
+        if "预计涨幅进度" in sig_out.columns:
+            from openpyxl.formatting.rule import DataBarRule
+            from openpyxl.utils import get_column_letter
+            _col_letter = get_column_letter(list(sig_out.columns).index("预计涨幅进度") + 1)
+            _nrows = len(sig_out)
+            if _nrows > 0:
+                _rule = DataBarRule(start_type="min", end_type="max",
+                                    color="27AE60",
                                     showValue=True,
                                     minLength=None, maxLength=None)
                 writer.sheets["信号扫描"].conditional_formatting.add(
