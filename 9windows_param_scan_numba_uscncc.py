@@ -1815,7 +1815,29 @@ SIGNAL_COLS = [
 
 def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
                           window_stability_dfs, market_label):
-    """写入多 sheet 综合 Excel（信号扫描 + 汇总 + 评分 + 稳定性 + 统计逻辑）。"""
+    """写入汇总 Excel（信号扫描 + WalkForward + 最优参数 + 统计逻辑）+ 4 个独立 parquet。"""
+    _base = out_path.replace(".xlsx", "")
+
+    # 独立 parquet：回测汇总
+    if all_df is not None and not all_df.empty:
+        _all_out = reorder_columns(all_df)
+        apply_cn_mapping(_all_out)
+        _all_out = _round_display(_all_out, PCT_COLS)
+        _all_out.to_parquet(f"{_base}_回测汇总.parquet", index=False)
+
+    # 独立 parquet：策略评分明细 / 排名
+    if score_matrix is not None and not score_matrix.empty:
+        _round_display(score_matrix).to_parquet(f"{_base}_策略评分明细.parquet", index=False)
+    if rank_matrix is not None and not rank_matrix.empty:
+        _round_display(rank_matrix).to_parquet(f"{_base}_策略评分排名.parquet", index=False)
+
+    # 独立 parquet：全窗口参数稳定性分析
+    if window_stability_dfs:
+        _ws = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
+        _wpct = ["盈利窗口占比", "年化收益率平均值"]
+        _ws_out = _round_display(_ws, _wpct)
+        _ws_out.to_parquet(f"{_base}_全窗口参数稳定性分析.parquet", index=False)
+
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         # --- 1. 信号扫描（列顺序匹配 2py）---
         sig_out = signal_df[[c for c in SIGNAL_COLS if c in signal_df.columns]]
@@ -1853,29 +1875,11 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
                     f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
                 )
 
-        # --- 2. 回测汇总 ---
-        all_out = reorder_columns(all_df)
-        apply_cn_mapping(all_out)
-        all_out = _round_display(all_out, PCT_COLS)
-        all_out.to_excel(writer, sheet_name="回测汇总", index=False)
-        _set_pct_format(writer.sheets["回测汇总"], all_out, PCT_COLS)
+        # --- 2. Walk-Forward回测汇总（如果有）---
+        if "Walk-Forward回测汇总" in [s for s in signal_df.columns if False]:
+            pass  # 已通过 seq_trades_dfs 写入
 
-        # --- 3. 策略评分明细 ---
-        if score_matrix is not None and not score_matrix.empty:
-            _round_display(score_matrix).to_excel(writer, sheet_name="策略评分明细", index=False)
-
-        # --- 4. 策略评分排名 ---
-        if rank_matrix is not None and not rank_matrix.empty:
-            _round_display(rank_matrix).to_excel(writer, sheet_name="策略评分排名", index=False)
-
-        # --- 5. 全窗口参数稳定性分析 ---
-        if window_stability_dfs:
-            _ws = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
-            _wpct = ["盈利窗口占比", "年化收益率平均值"]
-            _round_display(_ws, _wpct).to_excel(writer, sheet_name="全窗口参数稳定性分析", index=False)
-            _set_pct_format(writer.sheets["全窗口参数稳定性分析"], _ws, _wpct)
-
-        # --- 6. 各窗口最优参数变动情况 ---
+        # --- 3. 各窗口最优参数变动情况 ---
         if window_stability_dfs:
             _ws2 = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
             best_all_ws = _ws2[_ws2["是否最优"] == "最优"].copy()

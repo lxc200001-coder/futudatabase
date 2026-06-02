@@ -2280,29 +2280,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
                     f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
                 )
 
-        # --- 2. 回测汇总 ---
-        all_out = reorder_columns(all_df)
-        apply_cn_mapping(all_out)
-        all_out = _round_display(all_out, PCT_COLS)
-        all_out.to_excel(writer, sheet_name="回测汇总", index=False)
-        _set_pct_format(writer.sheets["回测汇总"], all_out, PCT_COLS)
-
-        # --- 3. 策略评分明细 ---
-        if score_matrix is not None and not score_matrix.empty:
-            _round_display(score_matrix).to_excel(writer, sheet_name="策略评分明细", index=False)
-
-        # --- 4. 策略评分排名 ---
-        if rank_matrix is not None and not rank_matrix.empty:
-            _round_display(rank_matrix).to_excel(writer, sheet_name="策略评分排名", index=False)
-
-        # --- 5. 全窗口参数稳定性分析 ---
-        if window_stability_dfs:
-            _ws = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
-            _wpct = ["盈利窗口占比", "年化收益率平均值"]
-            _round_display(_ws, _wpct).to_excel(writer, sheet_name="全窗口参数稳定性分析", index=False)
-            _set_pct_format(writer.sheets["全窗口参数稳定性分析"], _ws, _wpct)
-
-        # --- 6. 各窗口最优参数变动情况 ---
+        # --- 3. 各窗口最优参数变动情况 ---
         if window_stability_dfs:
             _ws2 = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
             best_all_ws = _ws2[_ws2["是否最优"] == "最优"].copy()
