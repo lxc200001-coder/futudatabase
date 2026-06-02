@@ -2295,7 +2295,14 @@ def _generate_ktype_comparison():
                         "全市场成交额排名", "市场"):
                 continue
             _rename[_col] = f"{_col}{_kt_labels[_kt_name]}"
-        _dfs[_kt_name] = _df.rename(columns=_rename).set_index("股票代码")
+        _df2 = _df.rename(columns=_rename)
+        _df2 = _df2.set_index("股票代码")
+        # 非对比字段仅保留第一个周期（1w）的，其余丢弃避免 join 冲突
+        if _kt_name != "1w":
+            _non_compare = ["股票名称", "所属板块", "是否全市场成交额前200",
+                           "全市场成交额排名", "市场"]
+            _df2 = _df2.drop(columns=[c for c in _non_compare if c in _df2.columns])
+        _dfs[_kt_name] = _df2
 
     if not _dfs:
         return
