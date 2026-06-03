@@ -1784,6 +1784,12 @@ def generate_unified_market_heatmap(heatmap_cache, save_dir, market_label):
     with open(_p, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"  统一热力图看板({market_label}): {_p}")
+
+
+# =========================================================
+# 主程序
+# =========================================================
+def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
     if ktype:
         _setup_ktype(ktype, ma_mode)
