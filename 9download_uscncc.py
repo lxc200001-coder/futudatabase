@@ -716,8 +716,6 @@ def run_download(ktype="week", selected_markets=None):
 # =========================================================
 def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False):
     """分阶段下载周线、日线、60分钟数据。"""
-    import time as _time
-    _all_start = _time.time()
     ktypes = []
     if not skip_week:
         ktypes.append("week")
@@ -728,11 +726,6 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
 
     for ktype in tqdm(ktypes, desc="总进度", unit="阶段"):
         run_download(ktype=ktype, selected_markets=selected_markets)
-
-    _all_elapsed = _time.time() - _all_start
-    _all_min = int(_all_elapsed // 60)
-    _all_sec = int(_all_elapsed % 60)
-    tqdm.write(f"  全部完成，总耗时 {_all_min}分{_all_sec}秒")
 
 
 if __name__ == "__main__":
@@ -778,6 +771,7 @@ if __name__ == "__main__":
     if args.skip_60m and "60m" in _ktypes:
         _ktypes.remove("60m")
 
+    _all_start = time.time()
     # 分阶段下载 K 线数据
     run_download_all(selected_markets=selected_markets,
                      skip_week="week" not in _ktypes,
@@ -788,3 +782,7 @@ if __name__ == "__main__":
     plates_map = run_plate_sync(selected_markets=selected_markets)
     for _kt in KTYPE_DIR_MAP:
         add_plates_to_parquets(_kt, plates_map)
+    _elapsed = time.time() - _all_start
+    _min = int(_elapsed // 60)
+    _sec = int(_elapsed % 60)
+    print(f"全部完成，总耗时 {_min}分{_sec}秒")
