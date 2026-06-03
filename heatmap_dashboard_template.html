@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>统一热力图看板</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; height:100vh; overflow:hidden; background:#f5f5f5; }
+#sidebar { width:280px; min-width:280px; background:#fff; border-right:1px solid #e0e0e0; display:flex; flex-direction:column; }
+#sidebar-header { padding:14px 16px; border-bottom:1px solid #e0e0e0; }
+#sidebar-header h2 { font-size:15px; color:#333; }
+#search-wrap { padding:10px 16px; }
+#search { width:100%; padding:7px 10px; border:1px solid #ddd; border-radius:5px; font-size:13px; outline:none; }
+#search:focus { border-color:#007bff; }
+#stock-count { padding:2px 16px 8px; font-size:11px; color:#999; }
+#stock-list { flex:1; overflow-y:auto; }
+.stock-item { padding:7px 16px; cursor:pointer; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; }
+.stock-item:hover { background:#f0f7ff; }
+.stock-item.active { background:#007bff; color:#fff; }
+.stock-item .code-name { display:flex; align-items:baseline; gap:6px; }
+.stock-item .code { font-weight:600; font-size:13px; }
+.stock-item .name { font-size:11px; color:#999; }
+.stock-item.active .name { color:#cce5ff; }
+#main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+#nav-chart, #nav-market, #nav-ktype { background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }
+.tab { padding:8px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }
+.tab:hover { color:#333; background:#f8f9fa; }
+.tab.active { color:#007bff; border-bottom-color:#007bff; font-weight:500; }
+.tab.no-data { color:#ccc; cursor:not-allowed; }
+#chart-area { flex:1; padding:16px; overflow:auto; display:flex; align-items:center; justify-content:center; }
+#chart-container { width:100%; height:100%; min-height:500px; }
+#empty-state { color:#999; font-size:14px; }
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div id="sidebar-header"><h2>热力图看板</h2></div>
+  <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..."
+       oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"></div>
+  <div id="stock-count"></div>
+  <div id="stock-list"></div>
+</div>
+<div id="main">
+  <div id="nav-chart"></div>
+  <div id="nav-market"></div>
+  <div id="nav-ktype"></div>
+  <div id="chart-area">
+    <div id="chart-container" style="display:none"></div>
+    <div id="empty-state">请选择周期和市场</div>
+  </div>
+</div>
+<script id="heatmap-data" type="application/json">__DATA__</script>
+<script>
+try {
+var D = JSON.parse(document.getElementById('heatmap-data').textContent);
+var ALL_KTYPES = ["1W","1D","60m"];
+var ALL_MARKETS = ["us","cc","cn"];
+var KT_LABELS = {"1W":"周K","1D":"日K","60m":"60分钟K"};
+var MK_LABELS = {"us":"US","cc":"CC","cn":"CN"};
+var CHART_TYPES = ["策略评分","年化收益率","夏普比率","最大回撤","参数敏感性分析","全窗口参数稳定性热力图"];
+var currentKtype = null, currentMarket = null, currentType = "策略评分";
+
+function init() {
+  renderNavs();
+  renderChartNav();
+  for(var i=0;i<ALL_KTYPES.length;i++) {
+    for(var j=0;j<ALL_MARKETS.length;j++) {
+      var d=D[ALL_KTYPES[i]][ALL_MARKETS[j]];
+      if(d&&d.stocks&&d.stocks.length) { selectKtype(ALL_KTYPES[i]); selectMarket(ALL_MARKETS[j]); return; }
+    }
+  }
+}
+
+function renderNavs() {
+  var h="";
+  for(var i=0;i<ALL_KTYPES.length;i++) {
+    var k=ALL_KTYPES[i];
+    h+="<div class=\"tab\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+KT_LABELS[k]+"</div>";
+  }
+  document.getElementById("nav-ktype").innerHTML=h;
+  h="";
+  for(var i=0;i<ALL_MARKETS.length;i++) {
+    h+="<div class=\"tab\" data-market=\""+ALL_MARKETS[i]+"\" onclick=\"selectMarket('"+ALL_MARKETS[i]+"')\">"+MK_LABELS[ALL_MARKETS[i]]+"</div>";
+  }
+  document.getElementById("nav-market").innerHTML=h;
+}
+
+function renderChartNav() {
+  var h="";
+  for(var i=0;i<CHART_TYPES.length;i++) {
+    h+="<div class=\"tab\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+CHART_TYPES[i]+"</div>";
+  }
+  document.getElementById("nav-chart").innerHTML=h;
+  document.querySelector("#nav-chart .tab").classList.add("active");
+}
+
+function selectType(type) {
+  currentType=type;
+  document.querySelectorAll("#nav-chart .tab").forEach(function(el){el.classList.toggle("active",el.dataset.chart===type);});
+  renderChart();
+}
+
+function getCombination() {
+  if(!currentKtype||!currentMarket) return null;
+  return D[currentKtype][currentMarket];
+}
+
+function selectKtype(k) {
+  currentKtype=k;
+  document.querySelectorAll("#nav-ktype .tab").forEach(function(el){el.classList.toggle("active",el.dataset.ktype===k);});
+  renderCombination();
+}
+
+function selectMarket(m) {
+  currentMarket=m;
+  document.querySelectorAll("#nav-market .tab").forEach(function(el){el.classList.toggle("active",el.dataset.market===m);});
+  renderCombination();
+}
+
+function renderCombination() {
+  var combo=getCombination();
+  if(!combo||!combo.stocks||!combo.stocks.length) {
+    document.getElementById("stock-list").innerHTML="";
+    document.getElementById("stock-count").textContent="";
+    document.getElementById("empty-state").style.display="";
+    document.getElementById("empty-state").textContent="请先进行回测";
+    document.getElementById("chart-container").style.display="none";
+    return;
+  }
+  document.getElementById("empty-state").textContent="";
+  document.getElementById("chart-container").style.display="none";
+  renderStockList(combo.stocks, combo.figures);
+  if(currentStock&&!combo.figures[currentStock]) currentStock=null;
+  if(!currentStock) {
+    for(var i=0;i<combo.stocks.length;i++) {var c=combo.stocks[i].code; if(combo.figures[c]&&Object.keys(combo.figures[c]).length) { selectStock(c); return; } }
+  } else {
+    renderChart();
+  }
+}
+
+var currentStock=null;
+function renderStockList(stocks, figs) {
+  var h="";
+  for(var i=0;i<stocks.length;i++) {
+    var s=stocks[i], f=figs[s.code], ok=f&&Object.keys(f).length;
+    h+="<div class=\"stock-item\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
+        "<div class=\"code-name\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
+        "<span style=\"font-size:10px;color:"+(ok?"#27ae60":"#ccc")+";\">"+(ok?"有数据":"无数据")+"</span></div>";
+  }
+  document.getElementById("stock-list").innerHTML=h;
+  document.getElementById("stock-count").textContent="共 "+stocks.length+" 只股票";
+}
+
+function filterStocks(kw) {
+  kw=kw.toLowerCase();
+  var items=document.querySelectorAll("#stock-list .stock-item:not([style*=\"display:none\"])");
+  var cnt=0;
+  for(var i=0;i<items.length;i++) {
+    var t=items[i].textContent.toLowerCase(), m=t.indexOf(kw)>=0;
+    items[i].style.display=m?"":"none";
+    if(m) cnt++;
+  }
+  document.getElementById("stock-count").textContent="显示 "+cnt+" / "+document.querySelectorAll("#stock-list .stock-item").length+" 只股票";
+}
+
+function selectFirstVisible() {
+  var items=document.querySelectorAll("#stock-list .stock-item:not([style*=\"display:none\"])");
+  if(items.length>0) selectStock(items[0].dataset.code);
+}
+
+function selectStock(code) {
+  currentStock=code;
+  document.querySelectorAll(".stock-item").forEach(function(el){el.classList.toggle("active",el.dataset.code===code);});
+  renderChart();
+}
+
+function renderChart() {
+  if(!currentStock||!currentKtype||!currentMarket) return;
+  var combo=D[currentKtype][currentMarket];
+  if(!combo||!combo.figures) return;
+  var figs=combo.figures[currentStock];
+  if(!figs||!figs[currentType]) {
+    document.getElementById("empty-state").style.display="";
+    document.getElementById("empty-state").textContent="该股票暂无数据";
+    document.getElementById("chart-container").style.display="none";
+    return;
+  }
+  document.getElementById("empty-state").style.display="none";
+  document.getElementById("chart-container").style.display="";
+  Plotly.react("chart-container",figs[currentType].data,figs[currentType].layout,{displayModeBar:false,responsive:true});
+}
+
+init();
+} catch(e) { console.error("看板初始化失败:",e); }
+</script>
+</body>
+</html>
