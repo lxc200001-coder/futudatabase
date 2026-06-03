@@ -145,9 +145,15 @@ function renderStockList(stocks, figs) {
   var h="";
   for(var i=0;i<stocks.length;i++) {
     var s=stocks[i], f=figs[s.code], ok=f&&Object.keys(f).length;
-    h+="<div class=\"stock-item\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
-        "<div class=\"code-name\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
-        "<span style=\"font-size:10px;color:"+(ok?"#27ae60":"#ccc")+";\">"+(ok?"有数据":"无数据")+"</span></div>";
+    if(s.code==="__ALL__") {
+      h+="<div class=\"stock-item\" data-code=\"__ALL__\" onclick=\"selectStock('__ALL__')\" style=\"background:#fff3cd;font-weight:600;\">"+
+          "<div class=\"code-name\"><span class=\"code\">📊 "+s.name+"</span></div>"+
+          "<span style=\"font-size:10px;color:#27ae60;\">全市场</span></div>";
+    } else {
+      h+="<div class=\"stock-item\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
+          "<div class=\"code-name\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
+          "<span style=\"font-size:10px;color:"+(ok?"#27ae60":"#ccc")+";\">"+(ok?"有数据":"无数据")+"</span></div>";
+    }
   }
   document.getElementById("stock-list").innerHTML=h;
   document.getElementById("stock-count").textContent="共 "+stocks.length+" 只股票";
@@ -173,6 +179,9 @@ function selectFirstVisible() {
 function selectStock(code) {
   currentStock=code;
   document.querySelectorAll(".stock-item").forEach(function(el){el.classList.toggle("active",el.dataset.code===code);});
+  if(code==="__ALL__") { currentType="全股票最优参数变动"; }
+  else if(CHART_TYPES.indexOf(currentType)<0) { currentType=CHART_TYPES[0]; }
+  document.querySelectorAll("#nav-chart .tab").forEach(function(el){el.classList.toggle("active",el.dataset.chart===currentType);});
   renderChart();
 }
 

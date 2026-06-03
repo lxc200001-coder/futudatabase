@@ -58,7 +58,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -1456,13 +1456,14 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
     return fig
 
 
-def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
+def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps", return_fig=False):
     """生成全股票各窗口最优参数热力图（Plotly HTML 版本）。
     行=股票代码, 列=窗口, 值=最优均线周期。
     末尾3列为股性指标（灰色背景不上色）。
+    return_fig=True 时返回 go.Figure，不写文件。
     """
     if all_ws is None or all_ws.empty:
-        return
+        return None if return_fig else None
 
     best = all_ws[all_ws["是否最优"] == "最优"].copy()
     if best.empty:
@@ -1558,6 +1559,8 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
         paper_bgcolor="white",
     )
 
+    if return_fig:
+        return fig
     _p = os.path.join(save_dir, f"all_全股票各窗口最优参数变动情况热力图{FILE_SUFFIX}.html")
     fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
     print(f"全股票最优参数热力图: {_p}")
@@ -1607,6 +1610,7 @@ def generate_heatmap_dashboard(cache_data):
                 continue
             stock_list = []
             figures_data = {}
+            all_ws_list = []
             for code, scan_rows, ws_df, best_ma, stock_name in entries:
                 stock_list.append({"code": code, "name": stock_name or ""})
                 figs = {}
@@ -1633,7 +1637,17 @@ def generate_heatmap_dashboard(cache_data):
                         del d["layout"]["template"]
                     figs[STABILITY_KEY] = d
                 figures_data[code] = figs
+                if ws_df is not None and not ws_df.empty:
+                    all_ws_list.append(ws_df)
             stock_list.sort(key=lambda x: x["code"])
+            if all_ws_list:
+                all_ws_concat = pd.concat(all_ws_list, ignore_index=True)
+                _fig = generate_all_stock_best_ma_heatmap(all_ws_concat, return_fig=True)
+                if _fig is not None:
+                    _d = json.loads(to_json(_fig))
+                    _d.get("layout", {}).pop("template", None)
+                    figures_data["__ALL__"] = {"全股票最优参数变动": _d}
+                    stock_list.insert(0, {"code": "__ALL__", "name": "📊 全股票汇总"})
             payload_data[_bi][_mkt_id] = {"stocks": stock_list, "figures": figures_data}
 
     _json_str = _sanitize_json_for_html(json.dumps(payload_data, ensure_ascii=False))
@@ -2378,14 +2392,6 @@ def run_trade():
         signal_mkt = _build_signal_scan(market_df, market_signal_maps, stab_mkt, all_signal_maps)
 
         if not signal_mkt.empty:
-            # 本市场全股票热力图
-            mkt_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, mkt)
-            if market_window_stability:
-                all_ws_mkt = pd.concat(market_window_stability, ignore_index=True)
-                generate_all_stock_best_ma_heatmap(
-                    all_ws_mkt, save_dir=os.path.join(mkt_dir, "heatmaps")
-                )
-
             # 主进程生成 per-stock 热力图（避免 worker 中 matplotlib 开销）
             for _code, _rows, _ws, _best_ma, _sname in tqdm(_heatmap_cache, desc=f"  热力图({mkt.upper()})", unit="stock"):
                 _heat_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(_code), "heatmaps")
@@ -2466,12 +2472,6 @@ def run_trade():
                         window_stability_dfs, "全市场")
     print(f"全市场完成: {all_out}")
 
-    # 全股票各窗口最优参数热力图
-    if window_stability_dfs:
-        all_ws_hm = pd.concat(window_stability_dfs, ignore_index=True)
-        generate_all_stock_best_ma_heatmap(
-            all_ws_hm, save_dir=os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps")
-        )
 
 # =========================================================
 # 富途自选股分组同步
