@@ -1377,10 +1377,17 @@ def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
         colorscale=colorscale, zmid=0 if center else None,
         hovertemplate="窗口: %{x}<br>均线: %{y}<br>值: %{text}<extra></extra>",
     ))
+    if best_ma is not None and best_ma in pivot.index:
+        _best_idx = list(pivot.index).index(best_ma)
+        fig.add_annotation(
+            x=-0.015, y=_best_idx, text="★",
+            showarrow=False, font=dict(size=11, color="#d9534f"),
+            xref="paper", yref="y", xanchor="right", yanchor="middle",
+        )
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} {metric_title} 参数扫描热力图", font=dict(size=15)),
         xaxis=dict(title="回测窗口", tickangle=45),
-        yaxis=dict(title="均线周期", dtick=1),
+        yaxis=dict(title="均线周期"),
         height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
     )
@@ -1446,10 +1453,17 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
         colorscale="RdYlGn", zmid=0.5,
         hovertemplate="窗口: %{x}<br>均线: %{y}<br>稳定性评分: %{text}<extra></extra>",
     ))
+    if best_ma is not None and best_ma in pivot.index:
+        _best_idx = list(pivot.index).index(best_ma)
+        fig.add_annotation(
+            x=-0.015, y=_best_idx, text="★",
+            showarrow=False, font=dict(size=11, color="#d9534f"),
+            xref="paper", yref="y", xanchor="right", yanchor="middle",
+        )
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
         xaxis=dict(title="窗口", tickangle=45),
-        yaxis=dict(title="均线周期", dtick=1),
+        yaxis=dict(title="均线周期"),
         height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
     )
