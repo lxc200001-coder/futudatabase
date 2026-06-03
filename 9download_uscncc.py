@@ -25,7 +25,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
-DEFAULT_KTYPE = "week"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "all"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
 
 # ktype → 子目录名 / 文件后缀 映射
 KTYPE_DIR_MAP = {"week": "1w", "day": "1d", "60m": "60m"}
