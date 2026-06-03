@@ -14,8 +14,9 @@ from datetime import datetime
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
 # 关闭杂项日志
-logging.getLogger("futu").setLevel(logging.WARNING)
+logging.getLogger("futu").setLevel(logging.ERROR)
 logging.getLogger("baostock").setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.WARNING)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =========================================================
