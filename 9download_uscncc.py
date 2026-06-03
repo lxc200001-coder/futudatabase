@@ -23,7 +23,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC"   # 默认市场: all / US / CN / CC / US,CC
 DEFAULT_KTYPE = "all"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
 
 # ktype → 子目录名 / 文件后缀 映射
@@ -241,8 +241,6 @@ def fetch_cn_data(code, start_str, end_str, ktype="week"):
     bs_code = code.lower()
     frequency = {"week": "w", "day": "d", "60m": "60"}.get(ktype, "w")
     adjustflag = "2"  # 前复权
-
-    print(f"  Baostock: {code} {ktype}线 {start_str} ~ {end_str}")
 
     lg = bs.login()
     if lg.error_code != "0":
@@ -492,8 +490,6 @@ def run_plate_sync(selected_markets=None):
 
     if plates_map:
         print(f"板块映射: {len(plates_map)} 只标的")
-    else:
-        print("无板块数据")
     return plates_map
 
 
@@ -534,7 +530,6 @@ def add_plates_to_parquets(ktype, plates_map):
         if "plates" not in df.columns:
             df["plates"] = df["code"].map(plates_map).fillna("")
             df.to_parquet(all_path, index=False)
-            print(f"  总表补充板块完成")
 
 
 # =========================================================
