@@ -1693,8 +1693,7 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 .stock-item .name {{ font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }}
 .stock-item.active .name {{ color:#cce5ff; }}
 #main {{ flex:1; display:flex; flex-direction:column; overflow:hidden; }}
-#nav-ktype {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }}
-#nav-market {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }}
+#nav-chart, #nav-market, #nav-ktype {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }}
 .tab {{ padding:8px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }}
 .tab:hover {{ color:#333; background:#f8f9fa; }}
 .tab.active {{ color:#007bff; border-bottom-color:#007bff; font-weight:500; }}
@@ -1713,9 +1712,9 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
   <div id="stock-list"></div>
 </div>
 <div id="main">
-  <div id="nav-ktype"></div>
+  <div id="nav-chart"></div>
   <div id="nav-market"></div>
-  <div id="nav-chart" style="background:#fff;border-bottom:1px solid #e0e0e0;padding:0 16px;display:flex;"></div>
+  <div id="nav-ktype"></div>
   <div id="chart-area">
     <div id="chart-container" style="display:none"></div>
     <div id="empty-state">请选择周期和市场</div>
