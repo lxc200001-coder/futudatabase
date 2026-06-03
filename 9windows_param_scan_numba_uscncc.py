@@ -1265,7 +1265,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, s
             margin=dict(l=80, r=40, t=80, b=80),
             paper_bgcolor="white",
         )
-        _p = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_{metric}.html")
+        _p = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_{metric}{FILE_SUFFIX}.html")
         fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
 
     # 参数敏感性折线图（各窗口均值 ± 标准差）
@@ -1290,7 +1290,7 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, s
             paper_bgcolor="white",
             showlegend=False,
         )
-        _p = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_参数敏感性分析.html")
+        _p = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_参数敏感性分析{FILE_SUFFIX}.html")
         fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
 
 
@@ -1360,7 +1360,7 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
         margin=dict(l=80, r=40, t=80, b=80),
         paper_bgcolor="white",
     )
-    _p = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_全窗口参数稳定性热力图.html")
+    _p = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_全窗口参数稳定性热力图{FILE_SUFFIX}.html")
     fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
 
 
@@ -1465,7 +1465,7 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
         paper_bgcolor="white",
     )
 
-    _p = os.path.join(save_dir, "all_全股票各窗口最优参数变动情况热力图.html")
+    _p = os.path.join(save_dir, f"all_全股票各窗口最优参数变动情况热力图{FILE_SUFFIX}.html")
     fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
     print(f"全股票最优参数热力图: {_p}")
 
