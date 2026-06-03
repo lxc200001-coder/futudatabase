@@ -1300,8 +1300,7 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
 
     annot_text = [[f"{v:.3f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
 
-    # 每列最优值加红色边框标记
-    best_shapes = []
+    # 每列第1名★标记
     for col_idx, col_name in enumerate(pivot.columns):
         col_data = pivot[col_name].dropna()
         if col_data.empty:
@@ -1309,15 +1308,11 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
         ranked = col_data.sort_values(ascending=False)
         for label, _ in ranked.head(1).items():
             row_idx = list(pivot.index).index(label)
-            best_shapes.append(dict(
-                type="rect",
-                x0=col_idx - 0.5, x1=col_idx + 0.5,
-                y0=row_idx - 0.5, y1=row_idx + 0.5,
-                line=dict(width=2, color="red"),
-                fillcolor="rgba(0,0,0,0)",
-                layer="above",
-            ))
+            _raw = annot_text[row_idx][col_idx]
+            if _raw:
+                annot_text[row_idx][col_idx] = f"{_raw}"
 
+    # Y轴标签：最优参数行加★
     y_labels = [str(ma) for ma in pivot.index]
 
     fig = go.Figure()
@@ -1327,8 +1322,6 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
         colorscale="RdYlGn", zmid=0.5,
         hovertemplate="窗口: %{x}<br>均线: %{y}<br>稳定性评分: %{text}<extra></extra>",
     ))
-    if best_shapes:
-        fig.update_layout(shapes=best_shapes)
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
         xaxis=dict(title="窗口", tickangle=45),
@@ -1363,8 +1356,7 @@ def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
         return None
 
     annot_text = [[f"{v:.1f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
-    # 每列最优值加红色边框标记
-    best_shapes = []
+    # 每列第1名★标记
     for col_idx, col_name in enumerate(pivot.columns):
         col_data = pivot[col_name].dropna()
         if col_data.empty:
@@ -1372,14 +1364,9 @@ def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
         ranked = col_data.sort_values() if metric_name == "最大回撤" else col_data.sort_values(ascending=False)
         for label, _ in ranked.head(1).items():
             row_idx = list(pivot.index).index(label)
-            best_shapes.append(dict(
-                type="rect",
-                x0=col_idx - 0.5, x1=col_idx + 0.5,
-                y0=row_idx - 0.5, y1=row_idx + 0.5,
-                line=dict(width=2, color="red"),
-                fillcolor="rgba(0,0,0,0)",
-                layer="above",
-            ))
+            _raw = annot_text[row_idx][col_idx]
+            if _raw:
+                annot_text[row_idx][col_idx] = f"{_raw}"
 
     y_labels = [str(ma) for ma in pivot.index]
 
@@ -1390,12 +1377,10 @@ def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
         colorscale=colorscale, zmid=0 if center else None,
         hovertemplate="窗口: %{x}<br>均线: %{y}<br>值: %{text}<extra></extra>",
     ))
-    if best_shapes:
-        fig.update_layout(shapes=best_shapes)
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} {metric_title} 参数扫描热力图", font=dict(size=15)),
         xaxis=dict(title="回测窗口", tickangle=45),
-        yaxis=dict(title="均线周期"),
+        yaxis=dict(title="均线周期", dtick=1),
         height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
     )
@@ -1440,8 +1425,7 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
         return None
 
     annot_text = [[f"{v:.3f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
-    # 每列最优值加红色边框标记
-    best_shapes = []
+    # 每列第1名★标记
     for col_idx, col_name in enumerate(pivot.columns):
         col_data = pivot[col_name].dropna()
         if col_data.empty:
@@ -1449,14 +1433,9 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
         ranked = col_data.sort_values(ascending=False)
         for label, _ in ranked.head(1).items():
             row_idx = list(pivot.index).index(label)
-            best_shapes.append(dict(
-                type="rect",
-                x0=col_idx - 0.5, x1=col_idx + 0.5,
-                y0=row_idx - 0.5, y1=row_idx + 0.5,
-                line=dict(width=2, color="red"),
-                fillcolor="rgba(0,0,0,0)",
-                layer="above",
-            ))
+            _raw = annot_text[row_idx][col_idx]
+            if _raw:
+                annot_text[row_idx][col_idx] = f"{_raw}"
 
     y_labels = [str(ma) for ma in pivot.index]
 
@@ -1467,12 +1446,10 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
         colorscale="RdYlGn", zmid=0.5,
         hovertemplate="窗口: %{x}<br>均线: %{y}<br>稳定性评分: %{text}<extra></extra>",
     ))
-    if best_shapes:
-        fig.update_layout(shapes=best_shapes)
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
         xaxis=dict(title="窗口", tickangle=45),
-        yaxis=dict(title="均线周期"),
+        yaxis=dict(title="均线周期", dtick=1),
         height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
     )
