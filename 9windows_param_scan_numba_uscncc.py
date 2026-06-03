@@ -54,7 +54,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 
@@ -297,21 +297,9 @@ def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
     return trades[:trade_count], equity, trade_count
 
 
-def _build_trades_numba(df, ma_len):
-    """替换 build_trades + equity_curve 的 Numba 加速版本。
-
-    返回 (trades_df, equity_arr)。
-    """
-    code_val = df["code"].iloc[0]
-    market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
-    datetime_arr = df["datetime"].values
-
-    close = df["close"].values.astype(np.float64)
-    buy = df["buy"].values.astype(np.bool_)
-    sell = df["sell"].values.astype(np.bool_)
-
-    trades_arr, equity_arr, n_trades = _numba_backtest(close, buy, sell, INITIAL_CASH, FEE_RATE)
-
+def _build_trades_from_arrays(code_val, market_val, datetime_arr, ma_len,
+                               trades_arr, equity_arr, n_trades):
+    """从 Numba 返回的裸数组构建交易 DataFrame（无 pandas 中间层）。"""
     if n_trades == 0:
         return pd.DataFrame(), equity_arr
 
@@ -1510,10 +1498,14 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
     for ma in MA_LIST:
         ma_cache[ma] = ha_close_full.rolling(ma, min_periods=ma).mean()
 
+    # 提前提取每只股票的固定值
+    code_val = code
+    market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
+
     for ws, we in windows:
 
         window_mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
-        df_w = df[window_mask].copy()
+        df_w = df[window_mask]  # 只读切片，不 copy
 
         if df_w.empty:
             continue
@@ -1523,14 +1515,32 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
         eff_end = pd.to_datetime(df_w["datetime"]).max()
         effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
-        for ma in MA_LIST:
-            df_w["ha_close"] = ha_close_full[window_mask]
-            df_w["ma"] = ma_cache[ma][window_mask]
-            df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
-            df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
-            df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
+        # 每窗口预计算一次（各 MA 共用）
+        close_w_arr = df_w["close"].values.astype(np.float64)
+        datetime_w_arr = df_w["datetime"].values
 
-            trades, equity_arr = _build_trades_numba(df_w, ma)
+        for ma in MA_LIST:
+            ma_arr = ma_cache[ma][window_mask].values.astype(np.float64)
+
+            # numpy 直接计算买卖信号（无 pandas 列赋值）
+            dir_arr = np.zeros(len(ma_arr), dtype=np.int8)
+            dir_arr[0] = -1
+            dir_arr[1:] = np.where(ma_arr[1:] > ma_arr[:-1], 1, -1)
+
+            buy_arr = np.zeros(len(ma_arr), dtype=np.bool_)
+            buy_arr[1:] = (dir_arr[1:] == 1) & (dir_arr[:-1] == -1)
+
+            sell_arr = np.zeros(len(ma_arr), dtype=np.bool_)
+            sell_arr[1:] = (dir_arr[1:] == -1) & (dir_arr[:-1] == 1)
+
+            trades_arr, equity_arr, n_trades = _numba_backtest(
+                close_w_arr, buy_arr, sell_arr, INITIAL_CASH, FEE_RATE
+            )
+
+            trades, _ = _build_trades_from_arrays(
+                code_val, market_val, datetime_w_arr, ma,
+                trades_arr, equity_arr, n_trades
+            )
 
             if not trades.empty:
                 trades["窗口"] = window_label
@@ -1595,17 +1605,17 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
 
     # =============================================
     # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
+    # 直接修改 df 列，无需 .copy()——get_last_signal_info 只读最后一行
     # =============================================
     _top_turnover_map = _load_top_turnover_map()
     signal_map = {}
     for ma in MA_LIST:
-        d = df.copy()
-        d["ha_close"] = ha_close_full
-        d["ma"] = ma_cache[ma]
-        d["dir"] = np.where(d["ma"] > d["ma"].shift(1), 1, -1)
-        d["buy"] = (d["dir"] == 1) & (d["dir"].shift(1) == -1)
-        d["sell"] = (d["dir"] == -1) & (d["dir"].shift(1) == 1)
-        signal_info = get_last_signal_info(d)
+        df["ha_close"] = ha_close_full
+        df["ma"] = ma_cache[ma]
+        df["dir"] = np.where(df["ma"] > df["ma"].shift(1), 1, -1)
+        df["buy"] = (df["dir"] == 1) & (df["dir"].shift(1) == -1)
+        df["sell"] = (df["dir"] == -1) & (df["dir"].shift(1) == 1)
+        signal_info = get_last_signal_info(df)
         signal_info["K线周期"] = BAR_INTERVAL
         signal_info["均线周期"] = ma
         signal_info["股票代码"] = code
@@ -1614,9 +1624,7 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
         _turnover_rank = _top_turnover_map.get(code)
         signal_info["是否全市场成交额前200"] = "是" if _turnover_rank else "否"
         signal_info["全市场成交额排名"] = _turnover_rank
-        # 从 df 读取 market 字段
-        _market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
-        signal_info["市场"] = _market_val
+        signal_info["市场"] = market_val
         signal_map[ma] = signal_info
 
     return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file
