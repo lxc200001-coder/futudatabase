@@ -1586,9 +1586,9 @@ def generate_heatmap_dashboard(cache_data):
 
     METRIC_CONFIG = [
         ("策略评分", "策略评分", "RdYlGn", True),
-        ("年化收益率", "年化收益率(%)", "RdYlGn", True),
+        ("年化收益率", "年化收益率", "RdYlGn", True),
         ("夏普比率", "夏普比率", "RdYlGn", True),
-        ("最大回撤", "最大回撤(%)", "OrRd", False),
+        ("最大回撤", "最大回撤", "OrRd", False),
     ]
     SENSITIVITY_KEY = "参数敏感性分析"
     STABILITY_KEY = "全窗口参数稳定性热力图"
