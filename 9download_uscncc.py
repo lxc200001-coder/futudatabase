@@ -712,7 +712,7 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
     if not skip_60m:
         ktypes.append("60m")
 
-    for ktype in tqdm(ktypes, desc="总进度", unit="阶段"):
+    for ktype in ktypes:
         run_download(ktype=ktype, selected_markets=selected_markets)
 
 
