@@ -1631,7 +1631,8 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
     <span class="badge">{market_label}</span>
     <span style="font-size:12px;color:#999;margin-left:8px;">{ktype_label}</span>
   </div>
-  <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..." oninput="filterStocks(this.value)"></div>
+  <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..."
+       oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"></div>
   <div id="stock-count"></div>
   <div id="stock-list"></div>
 </div>
@@ -1643,6 +1644,7 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
   </div>
 </div>
 <script>
+try {{
 var CHART_TYPES = ["策略评分","年化收益率","夏普比率","最大回撤","参数敏感性分析","全窗口参数稳定性热力图"];
 var DATA = {data_json};
 var currentStock = null, currentType = "策略评分";
@@ -1654,7 +1656,7 @@ function init(){{
 }}
 
 function renderStockList(stocks){{
-  var h='', k='';
+  var h='';
   for(var i=0;i<stocks.length;i++){{
     var s=stocks[i], f=DATA.figures[s.code];
     var ok=f&&Object.keys(f).length;
@@ -1673,6 +1675,11 @@ function renderNavbar(){{
   }}
   document.getElementById('navbar').innerHTML=h;
   document.querySelector('.tab').classList.add('active');
+}}
+
+function selectFirstVisible(){{
+  var items=document.querySelectorAll('#stock-list .stock-item:not([style*="display:none"])');
+  if(items.length>0) selectStock(items[0].dataset.code);
 }}
 
 function filterStocks(kw){{
@@ -1712,7 +1719,7 @@ function renderChart(){{
   Plotly.react('chart-container',fd.data,fd.layout,{{displayModeBar:false,responsive:true}});
 }}
 
-init();
+try {{ init(); }} catch(e) {{ console.error('看板初始化失败:',e); }}
 </script>
 </body>
 </html>'''
@@ -1775,15 +1782,19 @@ def generate_unified_market_heatmap(heatmap_cache, save_dir, market_label):
     payload = {"stocks": stock_list, "figures": figures_data}
 
     _ktype_label = {"1W": "周K", "1D": "日K", "60m": "60分钟K"}.get(BAR_INTERVAL, BAR_INTERVAL)
-    html = _build_dashboard_html_template(
-        json.dumps(payload, ensure_ascii=False, default=str),
-        market_label, _ktype_label,
-    )
+    _json_str = _sanitize_json_for_html(json.dumps(payload, ensure_ascii=False, default=str))
+    html = _build_dashboard_html_template(_json_str, market_label, _ktype_label)
 
     _p = os.path.join(save_dir, f"统一热力图看板{FILE_SUFFIX}.html")
     with open(_p, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"  统一热力图看板({market_label}): {_p}")
+
+
+def _sanitize_json_for_html(data_json):
+    """净化 JSON 字符串，确保安全嵌入 HTML script 标签。"""
+    # 防止 </script> 提前关闭 script 标签
+    return data_json.replace("</script>", "<\\/script>")
 
 
 # =========================================================
