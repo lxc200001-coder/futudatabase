@@ -1225,11 +1225,11 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, s
                 row_idx = list(pivot.index).index(label)
                 _raw = annot_text[row_idx][col_idx]
                 if _raw:
-                    annot_text[row_idx][col_idx] = f"★{_raw}"
+                    annot_text[row_idx][col_idx] = f"*{_raw}"
 
         # Y轴标签：最优参数行加★
         _best_int = int(best_ma) if best_ma is not None else None
-        y_labels = [f"★{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
+        y_labels = [f"*{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
 
         fig = go.Figure()
         fig.add_trace(go.Heatmap(
@@ -1311,11 +1311,11 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
             row_idx = list(pivot.index).index(label)
             _raw = annot_text[row_idx][col_idx]
             if _raw:
-                annot_text[row_idx][col_idx] = f"★{_raw}"
+                annot_text[row_idx][col_idx] = f"*{_raw}"
 
     # Y轴标签：最优参数行加★
     _best_int = int(best_ma) if best_ma is not None else None
-    y_labels = [f"★{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
+    y_labels = [f"*{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
 
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
@@ -1368,10 +1368,10 @@ def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
             row_idx = list(pivot.index).index(label)
             _raw = annot_text[row_idx][col_idx]
             if _raw:
-                annot_text[row_idx][col_idx] = f"★{_raw}"
+                annot_text[row_idx][col_idx] = f"*{_raw}"
 
     _best_int = int(best_ma) if best_ma is not None else None
-    y_labels = [f"★{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
+    y_labels = [f"*{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
 
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
@@ -1438,10 +1438,10 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
             row_idx = list(pivot.index).index(label)
             _raw = annot_text[row_idx][col_idx]
             if _raw:
-                annot_text[row_idx][col_idx] = f"★{_raw}"
+                annot_text[row_idx][col_idx] = f"*{_raw}"
 
     _best_int = int(best_ma) if best_ma is not None else None
-    y_labels = [f"★{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
+    y_labels = [f"*{ma}" if _best_int is not None and ma == _best_int else str(ma) for ma in pivot.index]
 
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
