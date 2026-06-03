@@ -2152,11 +2152,14 @@ def run_trade():
                         finally:
                             pbar.update(1)
 
+        _success = 0
+        _failed = []
         for code in sorted(_results.keys()):
                 result = _results[code]
                 if isinstance(result, Exception):
-                    tqdm.write(f"  失败: {code} {result}")
+                    _failed.append((code, str(result)))
                 else:
+                    _success += 1
                     s_all, s_stab, sig_map, s_ws, out_f, stock_name, best_ma = result
                     market_rows.extend(s_all)
                     market_signal_maps[code] = sig_map
@@ -2164,7 +2167,9 @@ def run_trade():
                         market_window_stability.append(s_ws)
                     # 收集热力图数据（主进程统一生成，避免 worker 中 matplotlib 开销）
                     _heatmap_cache.append((code, s_all, s_ws, best_ma, stock_name))
-                    tqdm.write(f"  完成: {code}")
+        tqdm.write(f"  {mkt.upper()} 完成: {_success} 成功")
+        if _failed:
+            tqdm.write(f"  {mkt.upper()} 失败: {len(_failed)} 只 — {'; '.join(f'{c}({e})' for c, e in _failed)}")
 
         # ---- 本市场汇总 ----
         if not market_rows:
