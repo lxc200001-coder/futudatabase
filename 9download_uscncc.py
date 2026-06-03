@@ -56,17 +56,9 @@ def wait_rate_limit():
         sleep_time = WINDOW_SECONDS - (now - request_times[0]) + 0.5
         sleep_time = max(0, sleep_time)
 
-        print(f"\n触发限频，开始倒计时 {sleep_time:.1f} 秒")
-        start = time.time()
-
-        while True:
-            elapsed = time.time() - start
-            remaining = sleep_time - elapsed
-            if remaining <= 0:
-                break
-            print(f"\r剩余等待: {remaining:.1f} 秒", end="", flush=True)
-            time.sleep(0.2)
-        print("\r剩余等待: 0.0 秒，继续执行        ")
+        tqdm.write(f"  触发限频，等待 {sleep_time:.1f} 秒...")
+        time.sleep(sleep_time)
+        tqdm.write("  继续执行")
 
     request_times.append(time.time())
 
@@ -142,9 +134,9 @@ def fetch_futu_data(code, start_str, end_str, quote_ctx, ktype="week"):
 
         if ret != RET_OK:
             retry += 1
-            print(code, f"请求失败，重试 {retry}/3")
+            tqdm.write(f"{code} 请求失败，重试 {retry}/3")
             if retry >= 3:
-                print(code, "下载失败")
+                tqdm.write(f"{code} 下载失败")
                 break
             time.sleep(2)
             continue
@@ -211,7 +203,7 @@ def fetch_binance_data(code, start_str, end_str, ktype="week"):
             resp.raise_for_status()
             klines = resp.json()
         except Exception as e:
-            print(f"Binance 请求失败: {e}")
+            tqdm.write(f"Binance 请求失败: {e}")
             break
 
         if not klines:
