@@ -1590,20 +1590,6 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
             )
 
     # =============================================
-    # 参数扫描热力图（PNG 写入开销小，保留在 worker 中）
-    # =============================================
-    if window_summary_rows:
-        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
-
-    if window_stability_df is not None and not window_stability_df.empty:
-        generate_stability_heatmap(
-            code, window_stability_df,
-            save_dir=os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), "heatmaps"),
-            best_ma=best_stab_ma,
-            stock_name=stock_name,
-        )
-
-    # =============================================
     # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
     # 直接修改 df 列，无需 .copy()——get_last_signal_info 只读最后一行
     # =============================================
@@ -1627,7 +1613,7 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
         signal_info["市场"] = market_val
         signal_map[ma] = signal_info
 
-    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file
+    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file, stock_name, best_stab_ma
 
 
 def _round_display(df, pct_cols=None):
@@ -2133,6 +2119,7 @@ def run_trade():
     all_rows = []
     all_signal_maps = {}
     window_stability_dfs = []
+    _heatmap_cache = []  # (code, summary_rows, stability_df, best_ma, stock_name)
 
     for mkt in market_order:
         group = market_groups[mkt]
@@ -2165,11 +2152,13 @@ def run_trade():
                 if isinstance(result, Exception):
                     tqdm.write(f"  失败: {code} {result}")
                 else:
-                    s_all, s_stab, sig_map, s_ws, out_f = result
+                    s_all, s_stab, sig_map, s_ws, out_f, stock_name, best_ma = result
                     market_rows.extend(s_all)
                     market_signal_maps[code] = sig_map
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
+                    # 收集热力图数据（主进程统一生成，避免 worker 中 matplotlib 开销）
+                    _heatmap_cache.append((code, s_all, s_ws, best_ma, stock_name))
                     tqdm.write(f"  完成: {code}")
 
         # ---- 本市场汇总 ----
@@ -2204,6 +2193,14 @@ def run_trade():
                 generate_all_stock_best_ma_heatmap(
                     all_ws_mkt, save_dir=os.path.join(mkt_dir, "heatmaps")
                 )
+
+            # 主进程生成 per-stock 热力图（避免 worker 中 matplotlib 开销）
+            for _code, _rows, _ws, _best_ma, _sname in _heatmap_cache:
+                _heat_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(_code), "heatmaps")
+                if _rows:
+                    generate_param_heatmap(_code, _rows, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
+                if _ws is not None and not _ws.empty:
+                    generate_stability_heatmap(_code, _ws, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
 
         # 累计到全市场
         all_rows.extend(market_rows)
