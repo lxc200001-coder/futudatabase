@@ -2203,7 +2203,7 @@ def run_trade():
                 )
 
             # 主进程生成 per-stock 热力图（避免 worker 中 matplotlib 开销）
-            for _code, _rows, _ws, _best_ma, _sname in _heatmap_cache:
+            for _code, _rows, _ws, _best_ma, _sname in tqdm(_heatmap_cache, desc=f"  热力图({mkt.upper()})", unit="stock"):
                 _heat_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(_code), "heatmaps")
                 if _rows:
                     generate_param_heatmap(_code, _rows, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
