@@ -60,6 +60,7 @@ FEE_RATE = 0.001
 DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
+_HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
@@ -1584,25 +1585,102 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 
 
 # =========================================================
-# 统一热力图看板 — HTML 模板 + 生成函数
+
+def _sanitize_json_for_html(data_json):
+    """净化 JSON 字符串，确保安全嵌入 HTML script 标签。"""
+    # 防止 </script> 提前关闭 script 标签
+    return data_json.replace("</script>", "<\\/script>")
+
+
+# =========================================================
+# 统一热力图看板（全周期 × 全市场）
 # =========================================================
 
-def _build_dashboard_html_template(data_json, market_label, ktype_label):
-    """生成统一热力图看板 HTML（侧边栏选股票 + 顶部导航选类型）。"""
+def generate_heatmap_dashboard(cache_data):
+    """在所有回测完成后生成统一热力图看板，覆盖所有已跑的 ktype × market 组合。
+
+    cache_data: {BAR_INTERVAL: {market: [(code, rows, ws_df, best_ma, name), ...]}}
+    输出: {TRADE_DIR}/统一热力图看板.html
+    """
+    if not cache_data:
+        return
+
+    METRIC_CONFIG = [
+        ("策略评分", "策略评分", "RdYlGn", True),
+        ("年化收益率", "年化收益率(%)", "RdYlGn", True),
+        ("夏普比率", "夏普比率", "RdYlGn", True),
+        ("最大回撤", "最大回撤(%)", "OrRd", False),
+    ]
+    SENSITIVITY_KEY = "参数敏感性分析"
+    STABILITY_KEY = "全窗口参数稳定性热力图"
+
+    ALL_KTYPES = ["1W", "1D", "60m"]
+    ALL_MARKETS = ["us", "cc", "cn"]
+
+    payload_data = {}  # {ktype: {market: {stocks: [...], figures: {code: {type: fig_json}}}}}
+
+    for _bi in ALL_KTYPES:
+        payload_data[_bi] = {}
+        for _mkt_id in ALL_MARKETS:
+            entries = cache_data.get(_bi, {}).get(_mkt_id, [])
+            if not entries:
+                payload_data[_bi][_mkt_id] = None
+                continue
+            stock_list = []
+            figures_data = {}
+            for code, scan_rows, ws_df, best_ma, stock_name in entries:
+                stock_list.append({"code": code, "name": stock_name or ""})
+                figs = {}
+                for chart_label, metric_name, colorscale, center in METRIC_CONFIG:
+                    fig = _build_metric_heatmap_figure(
+                        code, scan_rows, metric_name, chart_label,
+                        colorscale, center, best_ma=best_ma, stock_name=stock_name,
+                    )
+                    if fig is not None:
+                        d = json.loads(to_json(fig))
+                        if "layout" in d and "template" in d["layout"]:
+                            del d["layout"]["template"]
+                        figs[chart_label] = d
+                fig = _build_sensitivity_figure(code, scan_rows, stock_name=stock_name)
+                if fig is not None:
+                    d = json.loads(to_json(fig))
+                    if "layout" in d and "template" in d["layout"]:
+                        del d["layout"]["template"]
+                    figs[SENSITIVITY_KEY] = d
+                fig = _build_stability_figure(code, ws_df, best_ma=best_ma, stock_name=stock_name)
+                if fig is not None:
+                    d = json.loads(to_json(fig))
+                    if "layout" in d and "template" in d["layout"]:
+                        del d["layout"]["template"]
+                    figs[STABILITY_KEY] = d
+                figures_data[code] = figs
+            stock_list.sort(key=lambda x: x["code"])
+            payload_data[_bi][_mkt_id] = {"stocks": stock_list, "figures": figures_data}
+
+    _json_str = _sanitize_json_for_html(json.dumps(payload_data, ensure_ascii=False))
+    html = _build_heatmap_dashboard_html(_json_str)
+    _p = os.path.join(TRADE_DIR, "统一热力图看板.html")
+    os.makedirs(TRADE_DIR, exist_ok=True)
+    with open(_p, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"统一热力图看板: {_p}")
+
+
+def _build_heatmap_dashboard_html(data_json):
+    """生成包含 ktype + market 双导航栏的统一热力图看板 HTML。"""
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>统一热力图看板 - {market_label} ({ktype_label})</title>
+<title>统一热力图看板</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; height:100vh; overflow:hidden; background:#f5f5f5; }}
 #sidebar {{ width:280px; min-width:280px; background:#fff; border-right:1px solid #e0e0e0; display:flex; flex-direction:column; }}
-#sidebar-header {{ padding:16px; border-bottom:1px solid #e0e0e0; }}
+#sidebar-header {{ padding:14px 16px; border-bottom:1px solid #e0e0e0; }}
 #sidebar-header h2 {{ font-size:15px; color:#333; }}
-#sidebar-header .badge {{ display:inline-block; padding:2px 10px; border-radius:10px; font-size:12px; background:#007bff; color:#fff; }}
 #search-wrap {{ padding:10px 16px; }}
 #search {{ width:100%; padding:7px 10px; border:1px solid #ddd; border-radius:5px; font-size:13px; outline:none; }}
 #search:focus {{ border-color:#007bff; }}
@@ -1615,51 +1693,113 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 .stock-item .name {{ font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }}
 .stock-item.active .name {{ color:#cce5ff; }}
 #main {{ flex:1; display:flex; flex-direction:column; overflow:hidden; }}
-#navbar {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; flex-wrap:wrap; }}
-.tab {{ padding:10px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }}
+#nav-ktype {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }}
+#nav-market {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }}
+.tab {{ padding:8px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }}
 .tab:hover {{ color:#333; background:#f8f9fa; }}
 .tab.active {{ color:#007bff; border-bottom-color:#007bff; font-weight:500; }}
+.tab.no-data {{ color:#ccc; cursor:not-allowed; }}
 #chart-area {{ flex:1; padding:16px; overflow:auto; display:flex; align-items:center; justify-content:center; }}
 #chart-container {{ width:100%; height:100%; min-height:500px; }}
-#empty-state {{ color:#999; font-size:14px; text-align:center; }}
+#empty-state {{ color:#999; font-size:14px; }}
 </style>
 </head>
 <body>
 <div id="sidebar">
-  <div id="sidebar-header">
-    <h2>热力图看板</h2>
-    <span class="badge">{market_label}</span>
-    <span style="font-size:12px;color:#999;margin-left:8px;">{ktype_label}</span>
-  </div>
+  <div id="sidebar-header"><h2>热力图看板</h2></div>
   <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..."
        oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"></div>
   <div id="stock-count"></div>
   <div id="stock-list"></div>
 </div>
 <div id="main">
-  <div id="navbar"></div>
+  <div id="nav-ktype"></div>
+  <div id="nav-market"></div>
   <div id="chart-area">
     <div id="chart-container" style="display:none"></div>
-    <div id="empty-state">请选择左侧股票和上方图表类型</div>
+    <div id="empty-state">请选择周期和市场</div>
   </div>
 </div>
 <script>
 try {{
+var D = {data_json};
+var ALL_KTYPES = ["1W","1D","60m"];
+var ALL_MARKETS = ["us","cc","cn"];
+var KT_LABELS = {{"1W":"周K","1D":"日K","60m":"60分钟K"}};
+var MK_LABELS = {{"us":"US","cc":"CC","cn":"CN"}};
 var CHART_TYPES = ["策略评分","年化收益率","夏普比率","最大回撤","参数敏感性分析","全窗口参数稳定性热力图"];
-var DATA = {data_json};
-var currentStock = null, currentType = "策略评分";
+var currentKtype = null, currentMarket = null, currentType = "策略评分";
 
 function init(){{
-  renderStockList(DATA.stocks);
-  renderNavbar();
-  for(var i=0;i<DATA.stocks.length;i++){{var c=DATA.stocks[i].code; if(DATA.figures[c]&&Object.keys(DATA.figures[c]).length){{ selectStock(c); break; }} }}
+  renderNavs();
+  // 选中第一个有数据的 (ktype, market) 组合
+  for(var i=0;i<ALL_KTYPES.length;i++){{
+    for(var j=0;j<ALL_MARKETS.length;j++){{
+      var d=D[ALL_KTYPES[i]][ALL_MARKETS[j]];
+      if(d&&d.stocks&&d.stocks.length){{ selectKtype(ALL_KTYPES[i]); selectMarket(ALL_MARKETS[j]); return; }}
+    }}
+  }}
 }}
 
-function renderStockList(stocks){{
+function renderNavs(){{
+  var h='';
+  for(var i=0;i<ALL_KTYPES.length;i++){{
+    var k=ALL_KTYPES[i], has=Object.values(D[k]).some(function(v){{return v&&v.stocks&&v.stocks.length;}});
+    h+='<div class="tab" data-ktype="'+k+'" onclick="selectKtype(\''+k+'\')">'+KT_LABELS[k]+'</div>';
+  }}
+  document.getElementById('nav-ktype').innerHTML=h;
+
+  h='';
+  for(var i=0;i<ALL_MARKETS.length;i++){{
+    h+='<div class="tab" data-market="'+ALL_MARKETS[i]+'" onclick="selectMarket(\''+ALL_MARKETS[i]+'\')">'+MK_LABELS[ALL_MARKETS[i]]+'</div>';
+  }}
+  document.getElementById('nav-market').innerHTML=h;
+}}
+
+function getCombination(){{
+  if(!currentKtype||!currentMarket) return null;
+  return D[currentKtype][currentMarket];
+}}
+
+function selectKtype(k){{
+  currentKtype=k;
+  document.querySelectorAll('#nav-ktype .tab').forEach(function(el){{el.classList.toggle('active',el.dataset.ktype===k);}});
+  renderCombination();
+}}
+
+function selectMarket(m){{
+  currentMarket=m;
+  document.querySelectorAll('#nav-market .tab').forEach(function(el){{el.classList.toggle('active',el.dataset.market===m);}});
+  renderCombination();
+}}
+
+function renderCombination(){{
+  var combo=getCombination();
+  if(!combo||!combo.stocks||!combo.stocks.length){{
+    document.getElementById('stock-list').innerHTML='';
+    document.getElementById('stock-count').textContent='';
+    document.getElementById('empty-state').style.display='';
+    document.getElementById('empty-state').textContent='请先进行回测';
+    document.getElementById('chart-container').style.display='none';
+    return;
+  }}
+  document.getElementById('empty-state').textContent='';
+  document.getElementById('chart-container').style.display='none';
+  renderStockList(combo.stocks, combo.figures);
+  // 如果当前股票在当前组合中无数据，重新选择第一个有数据的
+  if(currentStock&&!combo.figures[currentStock]) currentStock=null;
+  if(!currentStock){{
+    for(var i=0;i<combo.stocks.length;i++){{var c=combo.stocks[i].code; if(combo.figures[c]&&Object.keys(combo.figures[c]).length){{ selectStock(c); return; }} }}
+  }} else {{
+    renderChart();
+  }}
+}}
+
+var currentStock=null;
+function renderStockList(stocks, figs){{
   var h='';
   for(var i=0;i<stocks.length;i++){{
-    var s=stocks[i], f=DATA.figures[s.code];
-    var ok=f&&Object.keys(f).length;
+    var s=stocks[i], f=figs[s.code], ok=f&&Object.keys(f).length;
     h+='<div class="stock-item" data-code="'+s.code+'" onclick="selectStock(\''+s.code+'\')">'+
         '<div><div class="code">'+s.code+'</div>'+(s.name?'<div class="name">'+s.name+'</div>':'')+'</div>'+
         '<span style="font-size:10px;color:'+(ok?'#27ae60':'#ccc')+';">'+(ok?'有数据':'无数据')+'</span></div>';
@@ -1668,13 +1808,16 @@ function renderStockList(stocks){{
   document.getElementById('stock-count').textContent='共 '+stocks.length+' 只股票';
 }}
 
-function renderNavbar(){{
-  var h='';
-  for(var i=0;i<CHART_TYPES.length;i++){{
-    h+='<div class="tab" data-type="'+CHART_TYPES[i]+'" onclick="selectType(\''+CHART_TYPES[i]+'\')">'+CHART_TYPES[i]+'</div>';
+function filterStocks(kw){{
+  kw=kw.toLowerCase();
+  var items=document.querySelectorAll('#stock-list .stock-item:not([style*="display:none"])');
+  var cnt=0;
+  for(var i=0;i<items.length;i++){{
+    var t=items[i].textContent.toLowerCase(), m=t.indexOf(kw)>=0;
+    items[i].style.display=m?'': 'none';
+    if(m) cnt++;
   }}
-  document.getElementById('navbar').innerHTML=h;
-  document.querySelector('.tab').classList.add('active');
+  document.getElementById('stock-count').textContent='显示 '+cnt+' / '+document.querySelectorAll('#stock-list .stock-item').length+' 只股票';
 }}
 
 function selectFirstVisible(){{
@@ -1682,119 +1825,33 @@ function selectFirstVisible(){{
   if(items.length>0) selectStock(items[0].dataset.code);
 }}
 
-function filterStocks(kw){{
-  kw=kw.toLowerCase();
-  var items=document.querySelectorAll('.stock-item'), cnt=0;
-  for(var i=0;i<items.length;i++){{
-    var t=items[i].textContent.toLowerCase(), m=t.indexOf(kw)>=0;
-    items[i].style.display=m?'': 'none';
-    if(m) cnt++;
-  }}
-  document.getElementById('stock-count').textContent='显示 '+cnt+' / '+DATA.stocks.length+' 只股票';
-}}
-
 function selectStock(code){{
-  document.querySelectorAll('.stock-item').forEach(function(el){{el.classList.toggle('active',el.dataset.code===code);}});
   currentStock=code;
-  renderChart();
-}}
-
-function selectType(type){{
-  currentType=type;
-  document.querySelectorAll('.tab').forEach(function(el){{el.classList.toggle('active',el.dataset.type===type);}});
+  document.querySelectorAll('.stock-item').forEach(function(el){{el.classList.toggle('active',el.dataset.code===code);}});
   renderChart();
 }}
 
 function renderChart(){{
-  if(!currentStock) return;
-  var figs=DATA.figures[currentStock];
+  if(!currentStock||!currentKtype||!currentMarket) return;
+  var combo=D[currentKtype][currentMarket];
+  if(!combo||!combo.figures) return;
+  var figs=combo.figures[currentStock];
   if(!figs||!figs[currentType]){{
     document.getElementById('empty-state').style.display='';
+    document.getElementById('empty-state').textContent='该股票暂无数据';
     document.getElementById('chart-container').style.display='none';
     return;
   }}
   document.getElementById('empty-state').style.display='none';
   document.getElementById('chart-container').style.display='';
-  var fd=figs[currentType];
-  Plotly.react('chart-container',fd.data,fd.layout,{{displayModeBar:false,responsive:true}});
+  Plotly.react('chart-container',figs[currentType].data,figs[currentType].layout,{{displayModeBar:false,responsive:true}});
 }}
 
-try {{ init(); }} catch(e) {{ console.error('看板初始化失败:',e); }}
+init();
+}} catch(e) {{ console.error('看板初始化失败:',e); }}
 </script>
 </body>
 </html>'''
-
-
-def generate_unified_market_heatmap(heatmap_cache, save_dir, market_label):
-    """为单个市场生成统一热力图看板 HTML。
-
-    heatmap_cache: list of (code, scan_rows, ws_df, best_ma, stock_name)
-    save_dir: 输出目录
-    market_label: 显示标签如 US / CC / CN
-    """
-    METRIC_CONFIG = [
-        ("策略评分", "策略评分", "RdYlGn", True),
-        ("年化收益率", "年化收益率(%)", "RdYlGn", True),
-        ("夏普比率", "夏普比率", "RdYlGn", True),
-        ("最大回撤", "最大回撤(%)", "OrRd", False),
-    ]
-    SENSITIVITY_KEY = "参数敏感性分析"
-    STABILITY_KEY = "全窗口参数稳定性热力图"
-
-    if not heatmap_cache:
-        return
-
-    stock_list = []
-    figures_data = {}
-
-    for code, scan_rows, ws_df, best_ma, stock_name in heatmap_cache:
-        stock_list.append({"code": code, "name": stock_name or ""})
-        figs = {}
-
-        for chart_label, metric_name, colorscale, center in METRIC_CONFIG:
-            fig = _build_metric_heatmap_figure(
-                code, scan_rows, metric_name, chart_label,
-                colorscale, center, best_ma=best_ma, stock_name=stock_name,
-            )
-            if fig is not None:
-                d = json.loads(to_json(fig))
-                if "layout" in d and "template" in d["layout"]:
-                    del d["layout"]["template"]
-                figs[chart_label] = d
-
-        fig = _build_sensitivity_figure(code, scan_rows, stock_name=stock_name)
-        if fig is not None:
-            d = json.loads(to_json(fig))
-            if "layout" in d and "template" in d["layout"]:
-                del d["layout"]["template"]
-            figs[SENSITIVITY_KEY] = d
-
-        fig = _build_stability_figure(code, ws_df, best_ma=best_ma, stock_name=stock_name)
-        if fig is not None:
-            d = json.loads(to_json(fig))
-            if "layout" in d and "template" in d["layout"]:
-                del d["layout"]["template"]
-            figs[STABILITY_KEY] = d
-
-        figures_data[code] = figs
-
-    stock_list.sort(key=lambda x: x["code"])
-    payload = {"stocks": stock_list, "figures": figures_data}
-
-    _ktype_label = {"1W": "周K", "1D": "日K", "60m": "60分钟K"}.get(BAR_INTERVAL, BAR_INTERVAL)
-    _json_str = _sanitize_json_for_html(json.dumps(payload, ensure_ascii=False, default=str))
-    html = _build_dashboard_html_template(_json_str, market_label, _ktype_label)
-
-    _p = os.path.join(save_dir, f"统一热力图看板{FILE_SUFFIX}.html")
-    with open(_p, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"  统一热力图看板({market_label}): {_p}")
-
-
-def _sanitize_json_for_html(data_json):
-    """净化 JSON 字符串，确保安全嵌入 HTML script 标签。"""
-    # 防止 </script> 提前关闭 script 标签
-    return data_json.replace("</script>", "<\\/script>")
 
 
 # =========================================================
@@ -2539,12 +2596,12 @@ def run_trade():
                 if _ws is not None and not _ws.empty:
                     generate_stability_heatmap(_code, _ws, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
 
-            # 统一热力图看板（当前市场的股票）
+            # 收集热力图数据到全局缓存（统一看板在回测完成后生成）
+            global _HEATMAP_CACHE
             _mkt_entries = [(c, r, w, b, s) for c, r, w, b, s in _heatmap_cache
                             if _market_subdir(c) == mkt]
             if _mkt_entries:
-                _mkt_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, mkt, "heatmaps")
-                generate_unified_market_heatmap(_mkt_entries, save_dir=_mkt_dir, market_label=mkt.upper())
+                _HEATMAP_CACHE.setdefault(BAR_INTERVAL, {})[mkt] = _mkt_entries
 
         # 累计到全市场
         all_rows.extend(market_rows)
@@ -2798,3 +2855,7 @@ if __name__ == "__main__":
     # 三个周期都跑了才生成各周期数据对比
     if set(_ktypes) == {"week", "day", "60m"}:
         _generate_ktype_comparison()
+
+    # 统一热力图看板（覆盖所有已跑的 ktype × market）
+    if _HEATMAP_CACHE:
+        generate_heatmap_dashboard(_HEATMAP_CACHE)
