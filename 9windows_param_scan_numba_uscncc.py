@@ -58,7 +58,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -2614,12 +2614,12 @@ def run_trade():
                 if _ws is not None and not _ws.empty:
                     generate_stability_heatmap(_code, _ws, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
 
-            # 收集热力图数据到全局缓存（统一看板在回测完成后生成）
-            global _HEATMAP_CACHE
-            _mkt_entries = [(c, r, w, b, s) for c, r, w, b, s in _heatmap_cache
-                            if _market_subdir(c) == mkt]
-            if _mkt_entries:
-                _HEATMAP_CACHE.setdefault(BAR_INTERVAL, {})[mkt] = _mkt_entries
+        # 收集热力图数据到全局缓存（统一看板在回测完成后生成）
+        global _HEATMAP_CACHE
+        _mkt_entries = [(c, r, w, b, s) for c, r, w, b, s in _heatmap_cache
+                        if _market_subdir(c) == mkt]
+        if _mkt_entries:
+            _HEATMAP_CACHE.setdefault(BAR_INTERVAL, {})[mkt] = _mkt_entries
 
         # 累计到全市场
         all_rows.extend(market_rows)
