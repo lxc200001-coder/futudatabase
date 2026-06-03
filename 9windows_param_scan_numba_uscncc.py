@@ -930,7 +930,7 @@ def build_window_stability(summary_rows):
         win_rate_n = _norm(stats["盈利窗口占比"], higher_is_better=True)
         cagr_std_n = _norm(stats["年化收益率标准差"], higher_is_better=False)
 
-        stats["参数稳定性综合评分"] = (
+        stats["参数稳定性评分"] = (
             0.20 * avg_rank_n + 0.10 * top3_n + 0.15 * std_n
             + 0.25 * cagr_n + 0.20 * win_rate_n + 0.10 * cagr_std_n
         )
@@ -947,7 +947,7 @@ def build_window_stability(summary_rows):
         "年化收益率平均值", "年化收益率标准差",
         "策略评分排名Top3占比", "策略评分排名平均值",
         "策略评分排名标准差", "策略评分排名第一次数",
-        "参数稳定性综合评分", "是否最优",
+        "参数稳定性评分", "是否最优",
     ]
     result = result.reindex(columns=col_order)
     result = result.sort_values(["股票代码", "窗口", "均线周期"]).reset_index(drop=True)
@@ -956,7 +956,7 @@ def build_window_stability(summary_rows):
     result["是否最优"] = ""
     idx = (
         result
-        .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"],
+        .sort_values(["参数稳定性评分", "策略评分排名标准差", "年化收益率平均值"],
                       ascending=[False, True, False])
         .groupby(["股票代码", "窗口"], sort=False)
         .head(1)
@@ -1088,7 +1088,7 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
     """构建全窗口参数稳定性热力图，返回 go.Figure 或 None。"""
     if ws_df is None or ws_df.empty:
         return None
-    pivot = ws_df.pivot_table(index="均线周期", columns="窗口", values="参数稳定性综合评分", aggfunc="first")
+    pivot = ws_df.pivot_table(index="均线周期", columns="窗口", values="参数稳定性评分", aggfunc="first")
     pivot = pivot[sorted(pivot.columns)]
     if pivot.empty:
         return None
@@ -1457,7 +1457,7 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
             last_ws_df = window_stability_df[window_stability_df["窗口"] == _target]
             best_stab_ma = (
                 last_ws_df
-                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                .sort_values(["参数稳定性评分", "策略评分排名标准差"], ascending=[False, True])
                 .iloc[0]["均线周期"]
             )
 
@@ -1492,7 +1492,7 @@ def _round_display(df, pct_cols=None):
     """输出前统一处理浮点列：
     - 百分比字段 ÷100 → Excel 原生百分比格式
     - 其余 float 列保留 2 位小数
-    - 参数稳定性综合评分保留 3 位小数
+    - 参数稳定性评分保留 3 位小数
     不影响原始计算精度。
     """
     df = df.copy()
@@ -1500,7 +1500,7 @@ def _round_display(df, pct_cols=None):
     for col in df.select_dtypes(include=["float", "float64"]).columns:
         if col in pct_set:
             df[col] = (df[col] / 100.0).round(4)
-        elif col == "参数稳定性综合评分":
+        elif col == "参数稳定性评分":
             df[col] = df[col].round(6)
         else:
             df[col] = df[col].round(2)
@@ -1787,12 +1787,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "Sheet说明", "名称": "全窗口参数稳定性分析",
              "统计逻辑": "个股层面，对每个累积窗口阶段计算参数稳定性（独立parquet文件）"},
             {"类型": "Sheet说明", "名称": "各窗口最优参数变动情况",
-             "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性综合评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
+             "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
             {"类型": "", "名称": "", "统计逻辑": ""},
             # ── 评分模型 ──
             {"类型": "评分模型", "名称": "策略评分",
              "统计逻辑": "Score = 0.30*CAGR + 0.25*Sharpe + 0.20*(1-最大回撤) + 0.15*盈利因子 + 0.05*盈利交易率 + 0.05*交易次数；子指标min-max归一化，CAGR:0-30, Sharpe:0-2, 回撤:0-50, 盈利因子:1-3, 盈利率:30-80, 交易次数:10-100，加权求和范围0~100"},
-            {"类型": "评分模型", "名称": "参数稳定性综合评分",
+            {"类型": "评分模型", "名称": "参数稳定性评分",
              "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定；输出保留3位小数"},
             # ── 基本字段 ──
             {"类型": "基本字段", "名称": "股票代码",
@@ -1810,7 +1810,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "基本字段", "名称": "K线周期",
              "统计逻辑": "1W=周K, 1D=日K, 60m=60分钟K"},
             {"类型": "基本字段", "名称": "均线周期",
-             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性综合评分最高的均线周期，作为该股票的最优参数，跳过最后一个未完整窗口"},
+             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性评分最高的均线周期，作为该股票的最优参数，跳过最后一个未完整窗口"},
             # ── 策略表现 ──
             {"类型": "策略表现", "名称": "策略表现",
              "统计逻辑": "策略评分分档标签：≥80为「1优」，≥60为「2良」，≥40为「3中」，≥20为「4差」，<20为「5劣」"},
@@ -1912,7 +1912,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "从窗口内有效数据周期解析出的实际天数 = 结束日期 − 起始日期"},
             # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
-             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性综合评分最高的均线周期，选作信号扫描使用的参数"},
+             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性评分最高的均线周期，选作信号扫描使用的参数"},
             # ── 参数稳定性 ──
             {"类型": "参数稳定性", "名称": "窗口数量",
              "统计逻辑": "该均线周期参与计算的窗口总数"},
@@ -1930,12 +1930,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "该均线周期在各窗口中策略评分排名的标准差，越低越稳定"},
             {"类型": "参数稳定性", "名称": "策略评分排名第一次数",
              "统计逻辑": "该均线周期在各窗口中排名第一的次数，衡量夺冠能力"},
-            {"类型": "参数稳定性", "名称": "参数稳定性综合评分",
+            {"类型": "参数稳定性", "名称": "参数稳定性评分",
              "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定；输出保留3位小数"},
             {"类型": "参数稳定性", "名称": "策略评分排名Top3占比",
              "统计逻辑": "该均线周期在各窗口中排名前三的次数占比"},
             {"类型": "参数稳定性", "名称": "是否最优",
-             "统计逻辑": "每只股票每个窗口内参数稳定性综合评分最高者标记为「最优」，并列时以策略评分排名标准差升序+年化收益率平均值降序决胜，确保唯一"},
+             "统计逻辑": "每只股票每个窗口内参数稳定性评分最高者标记为「最优」，并列时以策略评分排名标准差升序+年化收益率平均值降序决胜，确保唯一"},
         ]
         pd.DataFrame(logic_rows).to_excel(writer, sheet_name="统计逻辑", index=False)
 
@@ -2052,7 +2052,7 @@ def run_trade():
             last_ws_mkt = all_ws_mkt[all_ws_mkt["窗口"] == _target]
             stab_mkt = (
                 last_ws_mkt
-                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+                .sort_values(["参数稳定性评分", "策略评分排名标准差"], ascending=[False, True])
                 .groupby("股票代码", sort=False)
                 .head(1)
                 .reset_index(drop=True)
@@ -2090,7 +2090,7 @@ def run_trade():
         last_ws = all_ws_stab[all_ws_stab["窗口"] == _target_ws]
         stab_best = (
             last_ws
-            .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
+            .sort_values(["参数稳定性评分", "策略评分排名标准差"], ascending=[False, True])
             .groupby("股票代码", sort=False)
             .head(1)
             .reset_index(drop=True)
