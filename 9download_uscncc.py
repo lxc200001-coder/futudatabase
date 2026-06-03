@@ -466,7 +466,6 @@ def run_plate_sync(selected_markets=None):
     # US: 富途板块数据
     us_symbols = [c for c in symbols if get_market(c) == "us"]
     if us_symbols:
-        print(f"\n同步 US 板块信息 ({len(us_symbols)} 只)...")
         quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
         try:
             df_us = fetch_all_stock_plates(us_symbols, quote_ctx)
@@ -481,7 +480,6 @@ def run_plate_sync(selected_markets=None):
     # CN: Baostock 行业数据
     cn_symbols = [c for c in symbols if get_market(c) == "cn"]
     if cn_symbols:
-        print(f"\n同步 CN 行业分类 ({len(cn_symbols)} 只)...")
         df_cn = fetch_cn_stock_industry(cn_symbols)
         if not df_cn.empty:
             for _, row in df_cn.iterrows():
@@ -489,8 +487,6 @@ def run_plate_sync(selected_markets=None):
                 if val:
                     plates_map[row["code"]] = val
 
-    if plates_map:
-        print(f"板块映射: {len(plates_map)} 只标的")
     return plates_map
 
 
@@ -698,7 +694,6 @@ def run_download(ktype="week", selected_markets=None):
         combined = combined[[c for c in base_cols if c in combined.columns]]
         out_path = os.path.join(DATA_DIR, KTYPE_DIR_MAP.get(ktype, ""), f"all_{suffix}.parquet")
         combined.to_parquet(out_path, index=False)
-        print(f"\n总表保存完成: {out_path} 共 {len(combined)} 条")
     else:
         print("\n无数据，跳过总表保存")
 
