@@ -1,9 +1,11 @@
 import os
 import glob
+import json
 import warnings
 import concurrent.futures
 import pandas as pd
 import numpy as np
+from plotly.io import to_json
 from tqdm import tqdm
 from openpyxl.styles import Alignment
 from numba import njit
@@ -1347,6 +1349,133 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
     fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
 
 
+# =========================================================
+# 统一热力图看板 — 图构建函数（返回 go.Figure，不写文件）
+# =========================================================
+
+def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
+                                  colorscale, center, best_ma=None, stock_name=""):
+    """构建单指标参数扫描热力图，返回 go.Figure 或 None。"""
+    if not scan_rows:
+        return None
+    df = pd.DataFrame(scan_rows)
+    if df.empty or df["窗口"].nunique() < 2:
+        return None
+    if metric_name not in df.columns:
+        return None
+
+    pivot = df.pivot_table(index="均线周期", columns="窗口", values=metric_name, aggfunc="first")
+    pivot = pivot[sorted(pivot.columns, key=lambda c: str(c))]
+    if pivot.empty:
+        return None
+
+    annot_text = [[f"{v:.1f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
+    # 每列第1名★标记
+    for col_idx, col_name in enumerate(pivot.columns):
+        col_data = pivot[col_name].dropna()
+        if col_data.empty:
+            continue
+        ranked = col_data.sort_values() if metric_name == "最大回撤" else col_data.sort_values(ascending=False)
+        for label, _ in ranked.head(1).items():
+            row_idx = list(pivot.index).index(label)
+            _raw = annot_text[row_idx][col_idx]
+            if _raw:
+                annot_text[row_idx][col_idx] = f"★{_raw}"
+
+    y_labels = [f"★{ma}" if best_ma is not None and ma == best_ma else str(ma) for ma in pivot.index]
+
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(
+        z=pivot.values, x=[str(c) for c in pivot.columns], y=y_labels,
+        text=annot_text, texttemplate="%{text}", textfont=dict(size=10),
+        colorscale=colorscale, zmid=0 if center else None,
+        hovertemplate="窗口: %{x}<br>均线: %{y}<br>值: %{text}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text=f"{code} {stock_name} {metric_title} 参数扫描热力图", font=dict(size=15)),
+        xaxis=dict(title="回测窗口", tickangle=45), yaxis=dict(title="均线周期"),
+        height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
+        margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
+    )
+    return fig
+
+
+def _build_sensitivity_figure(code, scan_rows, stock_name=""):
+    """构建参数敏感性折线图，返回 go.Figure 或 None。"""
+    if not scan_rows:
+        return None
+    df = pd.DataFrame(scan_rows)
+    if df.empty:
+        return None
+    grouped = df.groupby("均线周期")["策略评分"].agg(["mean", "std"]).dropna()
+    if len(grouped) < 3:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=grouped.index, y=grouped["mean"],
+        mode="lines+markers", name="均值",
+        line=dict(color="#2980b9", width=2), marker=dict(size=5),
+        error_y=dict(type="data", array=grouped["std"], visible=True, thickness=1.5, color="#2980b9"),
+    ))
+    fig.add_hline(y=0, line=dict(color="#cccccc", width=1, dash="dash"))
+    fig.update_layout(
+        title=dict(text=f"{code} {stock_name} 参数敏感性分析（均值±标准差）", font=dict(size=15)),
+        xaxis=dict(title="均线周期"), yaxis=dict(title="策略评分"),
+        height=420, width=850, margin=dict(l=60, r=40, t=60, b=60),
+        paper_bgcolor="white", showlegend=False,
+    )
+    return fig
+
+
+def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
+    """构建全窗口参数稳定性热力图，返回 go.Figure 或 None。"""
+    if ws_df is None or ws_df.empty:
+        return None
+    pivot = ws_df.pivot_table(index="均线周期", columns="窗口", values="参数稳定性综合评分", aggfunc="first")
+    pivot = pivot[sorted(pivot.columns)]
+    if pivot.empty:
+        return None
+
+    annot_text = [[f"{v:.3f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
+
+    best_shapes = []
+    best_annots = []
+    for col_idx, col_name in enumerate(pivot.columns):
+        col_data = pivot[col_name].dropna()
+        if col_data.empty:
+            continue
+        best_label = col_data.idxmax()
+        row_idx = list(pivot.index).index(best_label)
+        best_shapes.append(dict(
+            type="rect", x0=col_idx - 0.5, x1=col_idx + 0.5,
+            y0=row_idx - 0.5, y1=row_idx + 0.5,
+            line=dict(width=0), fillcolor="#000000", opacity=0.85, layer="below",
+        ))
+        best_annots.append(dict(
+            x=col_idx, y=row_idx, text=annot_text[row_idx][col_idx],
+            showarrow=False, font=dict(color="white", size=10), xref="x", yref="y",
+        ))
+
+    y_labels = [f"★{ma}" if best_ma is not None and ma == best_ma else str(ma) for ma in pivot.index]
+
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(
+        z=pivot.values, x=[str(c) for c in pivot.columns], y=y_labels,
+        text=annot_text, texttemplate="%{text}", textfont=dict(size=10),
+        colorscale="RdYlGn", zmid=0.5,
+        hovertemplate="窗口: %{x}<br>均线: %{y}<br>稳定性评分: %{text}<extra></extra>",
+    ))
+    fig.update_layout(shapes=best_shapes, annotations=best_annots)
+    fig.update_layout(
+        title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
+        xaxis=dict(title="窗口", tickangle=45), yaxis=dict(title="均线周期"),
+        height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
+        margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
+    )
+    return fig
+
+
 def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
     """生成全股票各窗口最优参数热力图（Plotly HTML 版本）。
     行=股票代码, 列=窗口, 值=最优均线周期。
@@ -1455,9 +1584,206 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 
 
 # =========================================================
-# 主程序
+# 统一热力图看板 — HTML 模板 + 生成函数
 # =========================================================
-def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
+
+def _build_dashboard_html_template(data_json, market_label, ktype_label):
+    """生成统一热力图看板 HTML（侧边栏选股票 + 顶部导航选类型）。"""
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>统一热力图看板 - {market_label} ({ktype_label})</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; height:100vh; overflow:hidden; background:#f5f5f5; }}
+#sidebar {{ width:280px; min-width:280px; background:#fff; border-right:1px solid #e0e0e0; display:flex; flex-direction:column; }}
+#sidebar-header {{ padding:16px; border-bottom:1px solid #e0e0e0; }}
+#sidebar-header h2 {{ font-size:15px; color:#333; }}
+#sidebar-header .badge {{ display:inline-block; padding:2px 10px; border-radius:10px; font-size:12px; background:#007bff; color:#fff; }}
+#search-wrap {{ padding:10px 16px; }}
+#search {{ width:100%; padding:7px 10px; border:1px solid #ddd; border-radius:5px; font-size:13px; outline:none; }}
+#search:focus {{ border-color:#007bff; }}
+#stock-count {{ padding:2px 16px 8px; font-size:11px; color:#999; }}
+#stock-list {{ flex:1; overflow-y:auto; }}
+.stock-item {{ padding:7px 16px; cursor:pointer; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; }}
+.stock-item:hover {{ background:#f0f7ff; }}
+.stock-item.active {{ background:#007bff; color:#fff; }}
+.stock-item .code {{ font-weight:500; font-size:13px; }}
+.stock-item .name {{ font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }}
+.stock-item.active .name {{ color:#cce5ff; }}
+#main {{ flex:1; display:flex; flex-direction:column; overflow:hidden; }}
+#navbar {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; flex-wrap:wrap; }}
+.tab {{ padding:10px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }}
+.tab:hover {{ color:#333; background:#f8f9fa; }}
+.tab.active {{ color:#007bff; border-bottom-color:#007bff; font-weight:500; }}
+#chart-area {{ flex:1; padding:16px; overflow:auto; display:flex; align-items:center; justify-content:center; }}
+#chart-container {{ width:100%; height:100%; min-height:500px; }}
+#empty-state {{ color:#999; font-size:14px; text-align:center; }}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h2>热力图看板</h2>
+    <span class="badge">{market_label}</span>
+    <span style="font-size:12px;color:#999;margin-left:8px;">{ktype_label}</span>
+  </div>
+  <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..." oninput="filterStocks(this.value)"></div>
+  <div id="stock-count"></div>
+  <div id="stock-list"></div>
+</div>
+<div id="main">
+  <div id="navbar"></div>
+  <div id="chart-area">
+    <div id="chart-container" style="display:none"></div>
+    <div id="empty-state">请选择左侧股票和上方图表类型</div>
+  </div>
+</div>
+<script>
+var CHART_TYPES = ["策略评分","年化收益率","夏普比率","最大回撤","参数敏感性分析","全窗口参数稳定性热力图"];
+var DATA = {data_json};
+var currentStock = null, currentType = "策略评分";
+
+function init(){{
+  renderStockList(DATA.stocks);
+  renderNavbar();
+  for(var i=0;i<DATA.stocks.length;i++){{var c=DATA.stocks[i].code; if(DATA.figures[c]&&Object.keys(DATA.figures[c]).length){{ selectStock(c); break; }} }}
+}}
+
+function renderStockList(stocks){{
+  var h='', k='';
+  for(var i=0;i<stocks.length;i++){{
+    var s=stocks[i], f=DATA.figures[s.code];
+    var ok=f&&Object.keys(f).length;
+    h+='<div class="stock-item" data-code="'+s.code+'" onclick="selectStock(\''+s.code+'\')">'+
+        '<div><div class="code">'+s.code+'</div>'+(s.name?'<div class="name">'+s.name+'</div>':'')+'</div>'+
+        '<span style="font-size:10px;color:'+(ok?'#27ae60':'#ccc')+';">'+(ok?'有数据':'无数据')+'</span></div>';
+  }}
+  document.getElementById('stock-list').innerHTML=h;
+  document.getElementById('stock-count').textContent='共 '+stocks.length+' 只股票';
+}}
+
+function renderNavbar(){{
+  var h='';
+  for(var i=0;i<CHART_TYPES.length;i++){{
+    h+='<div class="tab" data-type="'+CHART_TYPES[i]+'" onclick="selectType(\''+CHART_TYPES[i]+'\')">'+CHART_TYPES[i]+'</div>';
+  }}
+  document.getElementById('navbar').innerHTML=h;
+  document.querySelector('.tab').classList.add('active');
+}}
+
+function filterStocks(kw){{
+  kw=kw.toLowerCase();
+  var items=document.querySelectorAll('.stock-item'), cnt=0;
+  for(var i=0;i<items.length;i++){{
+    var t=items[i].textContent.toLowerCase(), m=t.indexOf(kw)>=0;
+    items[i].style.display=m?'': 'none';
+    if(m) cnt++;
+  }}
+  document.getElementById('stock-count').textContent='显示 '+cnt+' / '+DATA.stocks.length+' 只股票';
+}}
+
+function selectStock(code){{
+  document.querySelectorAll('.stock-item').forEach(function(el){{el.classList.toggle('active',el.dataset.code===code);}});
+  currentStock=code;
+  renderChart();
+}}
+
+function selectType(type){{
+  currentType=type;
+  document.querySelectorAll('.tab').forEach(function(el){{el.classList.toggle('active',el.dataset.type===type);}});
+  renderChart();
+}}
+
+function renderChart(){{
+  if(!currentStock) return;
+  var figs=DATA.figures[currentStock];
+  if(!figs||!figs[currentType]){{
+    document.getElementById('empty-state').style.display='';
+    document.getElementById('chart-container').style.display='none';
+    return;
+  }}
+  document.getElementById('empty-state').style.display='none';
+  document.getElementById('chart-container').style.display='';
+  var fd=figs[currentType];
+  Plotly.react('chart-container',fd.data,fd.layout,{{displayModeBar:false,responsive:true}});
+}}
+
+init();
+</script>
+</body>
+</html>'''
+
+
+def generate_unified_market_heatmap(heatmap_cache, save_dir, market_label):
+    """为单个市场生成统一热力图看板 HTML。
+
+    heatmap_cache: list of (code, scan_rows, ws_df, best_ma, stock_name)
+    save_dir: 输出目录
+    market_label: 显示标签如 US / CC / CN
+    """
+    METRIC_CONFIG = [
+        ("策略评分", "策略评分", "RdYlGn", True),
+        ("年化收益率", "年化收益率(%)", "RdYlGn", True),
+        ("夏普比率", "夏普比率", "RdYlGn", True),
+        ("最大回撤", "最大回撤(%)", "OrRd", False),
+    ]
+    SENSITIVITY_KEY = "参数敏感性分析"
+    STABILITY_KEY = "全窗口参数稳定性热力图"
+
+    if not heatmap_cache:
+        return
+
+    stock_list = []
+    figures_data = {}
+
+    for code, scan_rows, ws_df, best_ma, stock_name in heatmap_cache:
+        stock_list.append({"code": code, "name": stock_name or ""})
+        figs = {}
+
+        for chart_label, metric_name, colorscale, center in METRIC_CONFIG:
+            fig = _build_metric_heatmap_figure(
+                code, scan_rows, metric_name, chart_label,
+                colorscale, center, best_ma=best_ma, stock_name=stock_name,
+            )
+            if fig is not None:
+                d = json.loads(to_json(fig))
+                if "layout" in d and "template" in d["layout"]:
+                    del d["layout"]["template"]
+                figs[chart_label] = d
+
+        fig = _build_sensitivity_figure(code, scan_rows, stock_name=stock_name)
+        if fig is not None:
+            d = json.loads(to_json(fig))
+            if "layout" in d and "template" in d["layout"]:
+                del d["layout"]["template"]
+            figs[SENSITIVITY_KEY] = d
+
+        fig = _build_stability_figure(code, ws_df, best_ma=best_ma, stock_name=stock_name)
+        if fig is not None:
+            d = json.loads(to_json(fig))
+            if "layout" in d and "template" in d["layout"]:
+                del d["layout"]["template"]
+            figs[STABILITY_KEY] = d
+
+        figures_data[code] = figs
+
+    stock_list.sort(key=lambda x: x["code"])
+    payload = {"stocks": stock_list, "figures": figures_data}
+
+    _ktype_label = {"1W": "周K", "1D": "日K", "60m": "60分钟K"}.get(BAR_INTERVAL, BAR_INTERVAL)
+    html = _build_dashboard_html_template(
+        json.dumps(payload, ensure_ascii=False, default=str),
+        market_label, _ktype_label,
+    )
+
+    _p = os.path.join(save_dir, f"统一热力图看板{FILE_SUFFIX}.html")
+    with open(_p, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"  统一热力图看板({market_label}): {_p}")
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
     if ktype:
         _setup_ktype(ktype, ma_mode)
@@ -2195,6 +2521,13 @@ def run_trade():
                     generate_param_heatmap(_code, _rows, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
                 if _ws is not None and not _ws.empty:
                     generate_stability_heatmap(_code, _ws, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
+
+            # 统一热力图看板（当前市场的股票）
+            _mkt_entries = [(c, r, w, b, s) for c, r, w, b, s in _heatmap_cache
+                            if _market_subdir(c) == mkt]
+            if _mkt_entries:
+                _mkt_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, mkt, "heatmaps")
+                generate_unified_market_heatmap(_mkt_entries, save_dir=_mkt_dir, market_label=mkt.upper())
 
         # 累计到全市场
         all_rows.extend(market_rows)
