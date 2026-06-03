@@ -1594,7 +1594,7 @@ def generate_heatmap_dashboard(cache_data):
         ("最大回撤", "最大回撤", "OrRd", False),
     ]
     SENSITIVITY_KEY = "参数敏感性分析"
-    STABILITY_KEY = "全窗口参数稳定性热力图"
+    STABILITY_KEY = "参数稳定性评分"
 
     ALL_KTYPES = ["1W", "1D", "60m"]
     ALL_MARKETS = ["us", "cc", "cn"]
