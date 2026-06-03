@@ -763,17 +763,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="多市场 K 线数据下载")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=0,
-                        help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200)")
+    parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=200,
+                        help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200, 设为0跳过)")
     parser.add_argument("--skip-week", action="store_true", help="跳过周线下载")
     parser.add_argument("--skip-day", action="store_true", help="跳过日线下载")
     parser.add_argument("--skip-60m", action="store_true", help="跳过60分钟下载")
     args = parser.parse_args()
 
-    # 单独获取成交额排名
+    # 获取成交额排名（默认运行，设为 --top-turnover 0 跳过）
     if args.top_turnover:
         fetch_top_turnover_stocks(limit=args.top_turnover)
-        sys.exit(0)
 
     # 解析市场参数
     if args.market.lower() == "all":
