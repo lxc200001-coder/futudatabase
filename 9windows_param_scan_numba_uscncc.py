@@ -111,18 +111,8 @@ KLINE_MAP = {
 }
 
 def generate_ma_list(bar_interval, ma_mode="continuous"):
-    """根据K线周期和MA模式生成MA列表。
-
-    周线: 强制 continuous (step=1)
-    日线 continuous: 2..180 (step=1) / jump: 2,4,6..180 (step=2)
-    60m  continuous: 2..358 (step=1) / jump: 2,6,10..358 (step=4)
-    """
-    if bar_interval == "1W" or ma_mode == "continuous":
-        return KLINE_MAP[bar_interval]["ma_range"]
-    _steps = {"1D": 2, "60m": 4}
-    step = _steps[bar_interval]
-    _max = {"1D": 181, "60m": 359}
-    return list(range(2, _max[bar_interval], step))
+    """生成均线周期列表，步长始终为1。"""
+    return KLINE_MAP[bar_interval]["ma_range"]
 
 BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
 MA_LIST = generate_ma_list(BAR_INTERVAL, MA_MODE)
