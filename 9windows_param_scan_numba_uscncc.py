@@ -1611,7 +1611,8 @@ def generate_heatmap_dashboard(cache_data):
             stock_list = []
             figures_data = {}
             all_ws_list = []
-            for code, scan_rows, ws_df, best_ma, stock_name in entries:
+            _kt_lbl = {"1W":"周K","1D":"日K","60m":"60分"}.get(_bi,_bi)
+            for code, scan_rows, ws_df, best_ma, stock_name in tqdm(entries, desc=f"  看板({_kt_lbl},{_mkt_id.upper()})", unit="stock"):
                 stock_list.append({"code": code, "name": stock_name or ""})
                 figs = {}
                 for chart_label, metric_name, colorscale, center in METRIC_CONFIG:
