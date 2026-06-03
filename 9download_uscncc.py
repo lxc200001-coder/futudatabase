@@ -761,13 +761,15 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="多市场 K 线数据下载")
+    parser.add_argument("--ktype", default="all",
+                        help="K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接, 默认: all)")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=200,
                         help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200, 设为0跳过)")
-    parser.add_argument("--skip-week", action="store_true", help="跳过周线下载")
-    parser.add_argument("--skip-day", action="store_true", help="跳过日线下载")
-    parser.add_argument("--skip-60m", action="store_true", help="跳过60分钟下载")
+    parser.add_argument("--skip-week", action="store_true", help="跳过周线下载（已弃用，用 --ktype 替代）")
+    parser.add_argument("--skip-day", action="store_true", help="跳过日线下载（已弃用，用 --ktype 替代）")
+    parser.add_argument("--skip-60m", action="store_true", help="跳过60分钟下载（已弃用，用 --ktype 替代）")
     args = parser.parse_args()
 
     # 获取成交额排名（默认运行，设为 --top-turnover 0 跳过）
@@ -780,11 +782,30 @@ if __name__ == "__main__":
     else:
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
 
+    # 解析 ktype（支持逗号拼接，兼容旧版 skip 参数）
+    _ktypes = []
+    for _k in args.ktype.lower().replace("，", ",").split(","):
+        _k = _k.strip()
+        if _k == "all":
+            _ktypes = ["week", "day", "60m"]
+            break
+        if _k in ("week", "day", "60m") and _k not in _ktypes:
+            _ktypes.append(_k)
+    if not _ktypes:
+        _ktypes = ["week", "day", "60m"]
+    # 旧版 skip 参数覆盖
+    if args.skip_week and "week" in _ktypes:
+        _ktypes.remove("week")
+    if args.skip_day and "day" in _ktypes:
+        _ktypes.remove("day")
+    if args.skip_60m and "60m" in _ktypes:
+        _ktypes.remove("60m")
+
     # 分阶段下载 K 线数据
     run_download_all(selected_markets=selected_markets,
-                     skip_week=args.skip_week,
-                     skip_day=args.skip_day,
-                     skip_60m=args.skip_60m)
+                     skip_week="week" not in _ktypes,
+                     skip_day="day" not in _ktypes,
+                     skip_60m="60m" not in _ktypes)
 
     # 再同步板块/行业信息，并补写到各周期 K 线 parquet
     plates_map = run_plate_sync(selected_markets=selected_markets)
