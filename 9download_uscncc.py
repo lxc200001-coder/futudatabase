@@ -56,9 +56,7 @@ def wait_rate_limit():
         sleep_time = WINDOW_SECONDS - (now - request_times[0]) + 0.5
         sleep_time = max(0, sleep_time)
 
-        tqdm.write(f"  触发限频，等待 {sleep_time:.1f} 秒...")
         time.sleep(sleep_time)
-        tqdm.write("  继续执行")
 
     request_times.append(time.time())
 
