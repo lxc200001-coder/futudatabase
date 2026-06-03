@@ -2301,9 +2301,6 @@ def run_trade():
                 global_end = _max
         except Exception:
             continue
-    # 用最早数据日期作为窗口起始
-    global WINDOW_START_DATE
-    WINDOW_START_DATE = str(global_start.date())
     windows = generate_windows(end_date=global_end)
     print(f"窗口范围: {global_start.date()} ~ {global_end.date()}, 共 {len(windows)} 个窗口")
 
