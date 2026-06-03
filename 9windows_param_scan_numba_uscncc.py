@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import warnings
+from datetime import datetime
 import concurrent.futures
 import pandas as pd
 import numpy as np
@@ -58,7 +59,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -1652,7 +1653,8 @@ def generate_heatmap_dashboard(cache_data):
             payload_data[_bi][_mkt_id] = {"stocks": stock_list, "figures": figures_data}
 
     _json_str = _sanitize_json_for_html(json.dumps(payload_data, ensure_ascii=False))
-    html = _build_heatmap_dashboard_html(_json_str)
+    _ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    html = _build_heatmap_dashboard_html(_json_str, timestamp=_ts)
     _p = os.path.join(TRADE_DIR, "统一热力图看板.html")
     os.makedirs(TRADE_DIR, exist_ok=True)
     with open(_p, "w", encoding="utf-8") as f:
@@ -1660,11 +1662,11 @@ def generate_heatmap_dashboard(cache_data):
     print(f"统一热力图看板: {_p}")
 
 
-def _build_heatmap_dashboard_html(data_json):
+def _build_heatmap_dashboard_html(data_json, timestamp=""):
     """生成包含 ktype + market 双导航栏的统一热力图看板 HTML。"""
     _tmpl = os.path.join(os.path.dirname(__file__), "heatmap_dashboard_template.html")
     with open(_tmpl, "r", encoding="utf-8") as _f:
-        return _f.read().replace("__DATA__", data_json)
+        return _f.read().replace("__DATA__", data_json).replace("__TIMESTAMP__", timestamp)
 
 
 # =========================================================
