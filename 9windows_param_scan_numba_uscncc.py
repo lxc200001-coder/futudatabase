@@ -1212,33 +1212,17 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, s
 
         annot_text = [[f"{v:.1f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
 
-        # 每个窗口前3最优格标记
-        rank_colors = ['#000000', '#555555', '#999999']
-        top3_shapes = []
-        top3_annots = []
+        # 每个窗口第1名标记（在数值前加★）
         for col_idx, col_name in enumerate(pivot.columns):
             col_data = pivot[col_name].dropna()
             if col_data.empty:
                 continue
             ranked = col_data.sort_values() if metric == "最大回撤" else col_data.sort_values(ascending=False)
-            for rank, (label, _) in enumerate(ranked.head(3).items()):
+            for label, _ in ranked.head(1).items():
                 row_idx = list(pivot.index).index(label)
-                top3_shapes.append(dict(
-                    type="rect",
-                    x0=col_idx - 0.5, x1=col_idx + 0.5,
-                    y0=row_idx - 0.5, y1=row_idx + 0.5,
-                    line=dict(width=0),
-                    fillcolor=rank_colors[rank],
-                    opacity=0.85,
-                    layer="below",
-                ))
-                top3_annots.append(dict(
-                    x=col_idx, y=row_idx,
-                    text=annot_text[row_idx][col_idx],
-                    showarrow=False,
-                    font=dict(color="white", size=10),
-                    xref="x", yref="y",
-                ))
+                _raw = annot_text[row_idx][col_idx]
+                if _raw:
+                    annot_text[row_idx][col_idx] = f"★{_raw}"
 
         # Y轴标签：最优参数行加★
         y_labels = [f"★{ma}" if best_ma is not None and ma == best_ma else str(ma) for ma in pivot.index]
@@ -1255,7 +1239,6 @@ def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, s
             zmid=0 if center else None,
             hovertemplate="窗口: %{x}<br>均线: %{y}<br>值: %{text}<extra></extra>",
         ))
-        fig.update_layout(shapes=top3_shapes, annotations=top3_annots)
         fig.update_layout(
             title=dict(text=f"{code} {stock_name} {title} 参数扫描热力图", font=dict(size=15)),
             xaxis=dict(title="回测窗口", tickangle=45),
@@ -1407,10 +1390,10 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
     n_stocks, n_windows = pivot.shape
     n_extra = len(extra_cols)
 
-    # 合并 z：窗口列用原始值，附加列填 NaN（不上色）
+    # 合并 z：窗口列用原始值，附加列填 0（通过色阶映射为灰色）
     all_data = pivot.copy()
     for col in extra_cols:
-        all_data[col] = np.nan
+        all_data[col] = 0.0
     z_full = all_data.values.astype(float)
 
     # 标注矩阵
@@ -1430,23 +1413,24 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
                 row.append(f"{v:.1f}" if pd.notna(v) else "")
         annot_text.append(row)
 
+    # 色阶：0→灰色，>0→YlOrRd
+    z_min = 0
+    z_max = max(np.nanmax(pivot.values), 2)
+    custom_scale = [
+        [0, "#f0f0f0"],
+        [1.0 / z_max, "#ffffcc"],
+        [1, "#bd0026"],
+    ]
+
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
-        z=z_full,
-        colorscale="YlOrRd",
+        z=z_full, zmin=z_min, zmax=z_max,
+        colorscale=custom_scale,
         x=[str(c) for c in all_data.columns],
         y=list(all_data.index),
         text=annot_text, texttemplate="%{text}", textfont=dict(size=9),
         hovertemplate="股票: %{y}<br>窗口: %{x}<br>值: %{text}<extra></extra>",
     ))
-
-    # 附加列灰色背景
-    for ei in range(n_extra):
-        fig.add_shape(type="rect",
-            x0=(n_windows + ei) - 0.5, x1=(n_windows + ei) + 0.5,
-            y0=-0.5, y1=n_stocks - 0.5,
-            fillcolor="#f0f0f0", layer="below", line=dict(width=0),
-        )
 
     # 附加列与窗口列的竖分隔线
     fig.add_shape(type="line",
