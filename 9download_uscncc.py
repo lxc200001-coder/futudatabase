@@ -186,7 +186,6 @@ def fetch_binance_data(code, start_str, end_str, ktype="week"):
         return pd.DataFrame()
 
     interval = {"week": "1w", "day": "1d", "60m": "1h"}.get(ktype, "1w")
-    print(f"  Binance: {binance_symbol} {ktype}线 {start_str} ~ {end_str}")
 
     base_url = "https://api.binance.com/api/v3/klines"
     start_ms = int(pd.Timestamp(start_str).timestamp() * 1000)
@@ -233,12 +232,10 @@ def fetch_binance_data(code, start_str, end_str, ktype="week"):
         current_start = klines[-1][6] + 1
         if len(klines) < 1000:
             break
-        print(f"  Binance 分页: 已获取 {len(all_rows)} 条")
 
     if not all_rows:
         return pd.DataFrame()
 
-    print(f"  Binance: 共获取 {len(all_rows)} 条 {ktype}线数据")
     return pd.DataFrame(all_rows)
 
 
@@ -298,7 +295,6 @@ def fetch_cn_data(code, start_str, end_str, ktype="week"):
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    print(f"  Baostock: 共获取 {len(df)} 条 {ktype}线数据")
     return df
 
 
@@ -379,9 +375,7 @@ def fetch_stock_basicinfo_map(symbols, quote_ctx):
 # =========================================================
 def fetch_all_stock_plates(symbols, quote_ctx):
     """获取所有股票的板块信息，返回 DataFrame"""
-    print("获取股票名称...")
     name_map, stock_codes = fetch_stock_basicinfo_map(symbols, quote_ctx)
-    print(f"正股 {len(stock_codes)} 只（排除非正股 {len(symbols) - len(stock_codes)} 只）")
 
     all_rows = []
     batch_size = 200
@@ -573,7 +567,7 @@ def fetch_stock_names(symbols, quote_ctx):
             if ret == RET_OK and data is not None:
                 for _, row in data.iterrows():
                     name_map[row["code"]] = row.get("name", "")
-        print(f"  名称: US {len([c for c in us_codes if c in name_map])}/{len(us_codes)}")
+        pass
 
     # CN: baostock
     if cn_codes:
@@ -589,7 +583,6 @@ def fetch_stock_names(symbols, quote_ctx):
                             name_map[c] = row_data[1]
             finally:
                 bs.logout()
-        print(f"  名称: CN {len([c for c in cn_codes if c in name_map])}/{len(cn_codes)}")
 
     # CC: 直接用 symbol 显示名
     for c in cc_codes:
@@ -685,8 +678,6 @@ def run_download(ktype="week", selected_markets=None):
     us_codes = [c for c in symbols if get_market(c) == "us"]
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111) if us_codes else None
 
-    # 预取名称
-    print("预取标的名称...")
     name_map = fetch_stock_names(symbols, quote_ctx)
 
     all_dfs = []
