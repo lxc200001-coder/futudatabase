@@ -1315,7 +1315,7 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
         xaxis=dict(title="窗口", tickangle=45),
-        yaxis=dict(title="均线周期"),
+        yaxis=dict(title="均线周期", dtick=1),
         height=max(500, len(pivot.index) * 26),
         width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80),
@@ -1377,7 +1377,7 @@ def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} {metric_title} 参数扫描热力图", font=dict(size=15)),
         xaxis=dict(title="回测窗口", tickangle=45),
-        yaxis=dict(title="均线周期"),
+        yaxis=dict(title="均线周期", dtick=1),
         height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
     )
@@ -1453,7 +1453,7 @@ def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
     fig.update_layout(
         title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
         xaxis=dict(title="窗口", tickangle=45),
-        yaxis=dict(title="均线周期"),
+        yaxis=dict(title="均线周期", dtick=1),
         height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
         margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
     )
