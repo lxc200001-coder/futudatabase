@@ -59,7 +59,7 @@ FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
-MA_MODE = "jump"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
+MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
 # 中文映射
@@ -2390,15 +2390,6 @@ def run_trade():
 
         # 本市场信号扫描
         signal_mkt = _build_signal_scan(market_df, market_signal_maps, stab_mkt, all_signal_maps)
-
-        if not signal_mkt.empty:
-            # 主进程生成 per-stock 热力图（避免 worker 中 matplotlib 开销）
-            for _code, _rows, _ws, _best_ma, _sname in tqdm(_heatmap_cache, desc=f"  热力图({mkt.upper()})", unit="stock"):
-                _heat_dir = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(_code), "heatmaps")
-                if _rows:
-                    generate_param_heatmap(_code, _rows, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
-                if _ws is not None and not _ws.empty:
-                    generate_stability_heatmap(_code, _ws, save_dir=_heat_dir, best_ma=_best_ma, stock_name=_sname)
 
         # 收集热力图数据到全局缓存（统一看板在回测完成后生成）
         global _HEATMAP_CACHE
