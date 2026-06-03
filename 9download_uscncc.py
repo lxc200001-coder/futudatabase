@@ -23,6 +23,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_KTYPE = "all"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
 
 # ktype → 子目录名 / 文件后缀 映射
 KTYPE_DIR_MAP = {"week": "1w", "day": "1d", "60m": "60m"}
@@ -761,7 +762,7 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="多市场 K 线数据下载")
-    parser.add_argument("--ktype", default="all",
+    parser.add_argument("--ktype", default=DEFAULT_KTYPE,
                         help="K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接, 默认: all)")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
