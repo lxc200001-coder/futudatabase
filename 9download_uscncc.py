@@ -526,15 +526,21 @@ def add_plates_to_parquets(ktype, plates_map):
                 continue
             files.append(os.path.join(dir_path, fname))
 
+    _ok = _skip = 0
     for path in files:
         df = pd.read_parquet(path)
         if "plates" in df.columns:
+            _skip += 1
             continue
         code = df["code"].iloc[0]
         df["plates"] = plates_map.get(code, "")
         df.to_parquet(path, index=False)
         if df["plates"].iloc[0]:
-            print(f"  补充板块: {code} → {df['plates'].iloc[0]}")
+            _ok += 1
+        else:
+            _skip += 1
+    if _ok:
+        print(f"  板块补充完成: {_ok} 只成功")
 
     # 总表也补上
     all_path = os.path.join(DATA_DIR, ktype_dir, f"all_{suffix}.parquet")
