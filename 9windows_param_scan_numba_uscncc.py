@@ -1365,9 +1365,9 @@ def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, s
 
 
 def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
-    """生成全股票各窗口最优参数热力图。
+    """生成全股票各窗口最优参数热力图（Plotly HTML 版本）。
     行=股票代码, 列=窗口, 值=最优均线周期。
-    末尾3列为股性指标（不参与热力图上色）。
+    末尾3列为股性指标（灰色背景不上色）。
     """
     if all_ws is None or all_ws.empty:
         return
@@ -1380,7 +1380,6 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
         index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
     )
     pivot = pivot[sorted(pivot.columns)]
-
     if pivot.empty:
         return
 
@@ -1396,10 +1395,8 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
     metrics_df = pivot.apply(_row_personality, axis=1)
     changes_col = metrics_df.iloc[:, 0]
     std_col = metrics_df.iloc[:, 1]
-
     score_col = (changes_col.combine(std_col, lambda c, s: round(max(0, 100 - c * 5 - s * 2), 1)))
 
-    # 窗口列（热力图） + 3 个附加列
     extra_cols = ["最优参数变动次数", "最优参数标准差", "股性评分"]
     extra_data = pd.DataFrame({
         "最优参数变动次数": changes_col,
@@ -1409,68 +1406,68 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
 
     n_stocks, n_windows = pivot.shape
     n_extra = len(extra_cols)
-    fig_height = max(10, n_stocks * 0.22)
-    fig_width = max(12, n_windows * 0.55 + n_extra * 0.9)
 
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    # 合并 z：窗口列用原始值，附加列填 0（映射为灰色）
+    all_data = pivot.copy()
+    for col in extra_cols:
+        all_data[col] = 0.0
+    z_full = all_data.values.astype(float)
 
-    annot = pivot.map(lambda v: f"{int(v)}" if pd.notna(v) else "")
-
-    sns.heatmap(
-        pivot, annot=annot, fmt="", cmap="YlOrRd",
-        linewidths=0.3, linecolor="#e0e0e0",
-        ax=ax, cbar_kws={"shrink": 0.6, "label": "最优均线周期"},
-    )
-
-    # --- 在热力图右侧绘制 3 个股性指标列（纯文本，不上色）---
-    # 获取热力图的坐标范围
-    x0, x1 = ax.get_xlim()
-    y0, y1 = ax.get_ylim()
-    cell_w = (x1 - x0) / n_windows
-    cell_h = (y1 - y0) / n_stocks
-
-    # 画浅灰背景区
-    bg_x = x1
-    bg_w = n_extra * cell_w
-    rect = patches.Rectangle(
-        (bg_x, y0), bg_w, y1 - y0,
-        facecolor="#f0f0f0", edgecolor="none", zorder=-1
-    )
-    ax.add_patch(rect)
-
-    # 竖分隔线
-    sep = patches.Rectangle(
-        (x1 - cell_w * 0.03, y0), cell_w * 0.06, y1 - y0,
-        facecolor="#d0d0d0", edgecolor="none", zorder=-1
-    )
-    ax.add_patch(sep)
-
-    # 添加文本
+    # 标注矩阵
+    annot_text = []
     for ri in range(n_stocks):
-        for ei in range(n_extra):
-            val = extra_data.iloc[ri, ei]
-            label_str = f"{val}" if pd.notna(val) else ""
-            tx = x1 + (ei + 0.5) * cell_w
-            # heatmap y 轴从上到下，所以 ri=0 在最上面，对应 y1-cell_h/2
-            ty = y1 - (ri + 0.5) * cell_h
-            ax.text(tx, ty, label_str, ha="center", va="center",
-                    fontsize=6, fontfamily="monospace")
+        row = []
+        for ci in range(n_windows):
+            v = pivot.iloc[ri, ci]
+            row.append(f"{int(v)}" if pd.notna(v) else "")
+        for ei, col_name in enumerate(extra_cols):
+            v = extra_data.iloc[ri, ei]
+            if col_name == "最优参数变动次数":
+                row.append(f"{int(v)}" if pd.notna(v) else "")
+            elif col_name == "最优参数标准差":
+                row.append(f"{v:.1f}" if pd.notna(v) else "")
+            else:
+                row.append(f"{v:.1f}" if pd.notna(v) else "")
+        annot_text.append(row)
 
-    # 设置 x 轴标签包括窗口列 + 附加列
-    all_labels = list(pivot.columns) + extra_cols
-    ax.set_xticks(np.arange(len(all_labels)) + 0.5)
-    ax.set_xticklabels(all_labels, rotation=45, ha="right", fontsize=8)
+    # 自定义色阶：0→灰色，>0→YlOrRd
+    z_max = max(pivot.values.max(), 1)
+    custom_scale = [
+        [0, "#f0f0f0"],
+        [1 / z_max * 1.01, "#ffffcc"],
+        [1, "#bd0026"],
+    ]
 
-    ax.set_title("全股票各窗口最优参数变动情况", fontsize=16, fontweight="bold", pad=16)
-    ax.set_xlabel("")
-    ax.set_ylabel("股票代码", fontsize=12)
-    ax.tick_params(axis="y", rotation=0, labelsize=6)
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(
+        z=z_full, zmin=0, zmax=z_max,
+        colorscale=custom_scale,
+        x=[str(c) for c in all_data.columns],
+        y=list(all_data.index),
+        text=annot_text, texttemplate="%{text}", textfont=dict(size=9),
+        hovertemplate="股票: %{y}<br>窗口: %{x}<br>值: %{text}<extra></extra>",
+    ))
 
-    plt.tight_layout()
-    path = os.path.join(save_dir, "all_全股票各窗口最优参数变动情况热力图.png")
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"全股票最优参数热力图: {path}")
+    # 附加列与窗口列的竖分隔线
+    fig.add_shape(type="line",
+        x0=n_windows - 0.5, x1=n_windows - 0.5,
+        y0=-0.5, y1=n_stocks - 0.5,
+        line=dict(color="#999999", width=2),
+    )
+
+    fig.update_layout(
+        title=dict(text="全股票各窗口最优参数变动情况", font=dict(size=16)),
+        xaxis=dict(tickangle=45),
+        yaxis=dict(title="股票代码"),
+        height=max(400, n_stocks * 22),
+        width=max(800, n_windows * 90 + n_extra * 100),
+        margin=dict(l=120, r=60, t=80, b=120),
+        paper_bgcolor="white",
+    )
+
+    _p = os.path.join(save_dir, "all_全股票各窗口最优参数变动情况热力图.html")
+    fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
+    print(f"全股票最优参数热力图: {_p}")
 
 
 # =========================================================
