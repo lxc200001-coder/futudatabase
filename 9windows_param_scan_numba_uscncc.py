@@ -1689,8 +1689,9 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 .stock-item {{ padding:7px 16px; cursor:pointer; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; }}
 .stock-item:hover {{ background:#f0f7ff; }}
 .stock-item.active {{ background:#007bff; color:#fff; }}
-.stock-item .code {{ font-weight:500; font-size:13px; }}
-.stock-item .name {{ font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }}
+.stock-item .code-name {{ display:flex; align-items:baseline; gap:6px; }}
+.stock-item .code {{ font-weight:600; font-size:13px; }}
+.stock-item .name {{ font-size:11px; color:#999; }}
 .stock-item.active .name {{ color:#cce5ff; }}
 #main {{ flex:1; display:flex; flex-direction:column; overflow:hidden; }}
 #nav-chart, #nav-market, #nav-ktype {{ background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }}
@@ -1817,7 +1818,7 @@ function renderStockList(stocks, figs){{
   for(var i=0;i<stocks.length;i++){{
     var s=stocks[i], f=figs[s.code], ok=f&&Object.keys(f).length;
     h+='<div class="stock-item" data-code="'+s.code+'" onclick="selectStock(\''+s.code+'\')">'+
-        '<div><div class="code">'+s.code+'</div>'+(s.name?'<div class="name">'+s.name+'</div>':'')+'</div>'+
+        '<div class="code-name"><span class="code">'+s.code+'</span>'+(s.name?'<span class="name">'+s.name+'</span>':'')+'</div>'+
         '<span style="font-size:10px;color:'+(ok?'#27ae60':'#ccc')+';">'+(ok?'有数据':'无数据')+'</span></div>';
   }}
   document.getElementById('stock-list').innerHTML=h;
