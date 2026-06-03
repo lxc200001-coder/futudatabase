@@ -1407,10 +1407,10 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
     n_stocks, n_windows = pivot.shape
     n_extra = len(extra_cols)
 
-    # 合并 z：窗口列用原始值，附加列填 0（映射为灰色）
+    # 合并 z：窗口列用原始值，附加列填 NaN（不上色）
     all_data = pivot.copy()
     for col in extra_cols:
-        all_data[col] = 0.0
+        all_data[col] = np.nan
     z_full = all_data.values.astype(float)
 
     # 标注矩阵
@@ -1430,23 +1430,23 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
                 row.append(f"{v:.1f}" if pd.notna(v) else "")
         annot_text.append(row)
 
-    # 自定义色阶：0→灰色，>0→YlOrRd
-    z_max = max(np.nanmax(pivot.values), 1)
-    custom_scale = [
-        [0, "#f0f0f0"],
-        [1 / z_max * 1.01, "#ffffcc"],
-        [1, "#bd0026"],
-    ]
-
     fig = go.Figure()
     fig.add_trace(go.Heatmap(
-        z=z_full, zmin=0, zmax=z_max,
-        colorscale=custom_scale,
+        z=z_full,
+        colorscale="YlOrRd",
         x=[str(c) for c in all_data.columns],
         y=list(all_data.index),
         text=annot_text, texttemplate="%{text}", textfont=dict(size=9),
         hovertemplate="股票: %{y}<br>窗口: %{x}<br>值: %{text}<extra></extra>",
     ))
+
+    # 附加列灰色背景
+    for ei in range(n_extra):
+        fig.add_shape(type="rect",
+            x0=(n_windows + ei) - 0.5, x1=(n_windows + ei) + 0.5,
+            y0=-0.5, y1=n_stocks - 0.5,
+            fillcolor="#f0f0f0", layer="below", line=dict(width=0),
+        )
 
     # 附加列与窗口列的竖分隔线
     fig.add_shape(type="line",
