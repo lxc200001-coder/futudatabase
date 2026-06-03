@@ -1431,7 +1431,7 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
         annot_text.append(row)
 
     # 自定义色阶：0→灰色，>0→YlOrRd
-    z_max = max(pivot.values.max(), 1)
+    z_max = max(np.nanmax(pivot.values), 1)
     custom_scale = [
         [0, "#f0f0f0"],
         [1 / z_max * 1.01, "#ffffcc"],
