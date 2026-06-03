@@ -601,6 +601,7 @@ def fetch_stock_names(symbols, quote_ctx):
 
 def fetch_top_turnover_stocks(limit=200):
     """通过 Futu OpenD 获取当日成交额前 N 的美股，保存到 symbols/top_turnover_{YYYYMMDD}.csv"""
+    _t0 = time.time()
     from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
@@ -631,7 +632,7 @@ def fetch_top_turnover_stocks(limit=200):
                 snap_map[str(row.get("code", ""))] = row
 
         records = []
-        for i, code in enumerate(codes, 1):
+        for code in tqdm(codes, desc="  成交额排名", unit="stock"):
             name = ""
             price = 0.0
             turnover = 0.0
@@ -642,7 +643,7 @@ def fetch_top_turnover_stocks(limit=200):
                 turnover = float(snap.get("turnover", 0) or 0)
             turnover_val = round(turnover / 1e8, 2)
             records.append({
-                "排名": i,
+                "排名": 0,
                 "代码": code,
                 "名称": name,
                 "最新价": price,
@@ -656,7 +657,9 @@ def fetch_top_turnover_stocks(limit=200):
         out_path = os.path.join("symbols", f"top_turnover_{date_str}.csv")
         os.makedirs("symbols", exist_ok=True)
         df.to_csv(out_path, index=False, encoding="utf-8-sig")
-        print(f"成交额前{limit}美股已保存: {out_path}")
+        _elapsed = time.time() - _t0
+        print(f"  成交额排名完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
+        print(f"  已保存: {out_path}")
         return out_path
     finally:
         quote_ctx.close()
