@@ -1721,9 +1721,10 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
     <div id="empty-state">请选择周期和市场</div>
   </div>
 </div>
+<script id="heatmap-data" type="application/json">{data_json}</script>
 <script>
 try {{
-var D = {data_json};
+var D = JSON.parse(document.getElementById('heatmap-data').textContent);
 var ALL_KTYPES = ["1W","1D","60m"];
 var ALL_MARKETS = ["us","cc","cn"];
 var KT_LABELS = {{"1W":"周K","1D":"日K","60m":"60分钟K"}};
