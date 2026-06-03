@@ -385,9 +385,9 @@ def fetch_all_stock_plates(symbols, quote_ctx):
 
     all_rows = []
     batch_size = 200
-    for batch_start in range(0, len(stock_codes), batch_size):
+    _batches = list(range(0, len(stock_codes), batch_size))
+    for batch_start in tqdm(_batches, desc="  板块信息", unit="batch"):
         batch = stock_codes[batch_start:batch_start + batch_size]
-        print(f"板块批次 [{batch_start + 1}..{min(batch_start + batch_size, len(stock_codes))}/{len(stock_codes)}]")
 
         ret, data = quote_ctx.get_owner_plate(batch)
         if ret == RET_OK and data is not None and not data.empty:
@@ -528,7 +528,7 @@ def add_plates_to_parquets(ktype, plates_map):
             files.append(os.path.join(dir_path, fname))
 
     _ok = _skip = 0
-    for path in files:
+    for path in tqdm(files, desc=f"  补充板块({ktype})", unit="file"):
         df = pd.read_parquet(path)
         if "plates" in df.columns:
             _skip += 1
