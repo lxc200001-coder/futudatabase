@@ -3,6 +3,7 @@ import sys
 import time
 import argparse
 import logging
+from tqdm import tqdm
 import requests
 import urllib3
 import pandas as pd
@@ -343,7 +344,7 @@ def save_data(df, code, ktype="week", name_map=None):
 
     df.to_parquet(file_path, index=False)
 
-    print(code, f"保存完成: {len(df)} 条 → {market}/{code}_{suffix}.parquet")
+    pass  # 保存成功，日志由上层汇总
 
 
 # =========================================================
@@ -686,17 +687,13 @@ def run_download(ktype="week", selected_markets=None):
     name_map = fetch_stock_names(symbols, quote_ctx)
 
     all_dfs = []
+    _ok = _fail = 0
 
-    for i, code in enumerate(symbols, 1):
+    for code in tqdm(symbols, desc=f"{ktype}下载", unit="stock"):
         name = name_map.get(code, "")
-        print("\n================================================")
-        print(f"{i}/{len(symbols)} 下载: {code}  {name}")
-        print("================================================")
-
         start = get_start_date_by_ktype(ktype)
         start_str = start.strftime("%Y-%m-%d")
         market = get_market(code)
-        print(f"  市场: {market}  周期: {ktype}  范围: {start_str} ~ {end_str}")
 
         if market == "cc":
             df = fetch_binance_data(code, start_str, end_str, ktype)
@@ -708,6 +705,10 @@ def run_download(ktype="week", selected_markets=None):
         save_data(df, code, ktype, name_map)
         if not df.empty:
             all_dfs.append(df)
+            _ok += 1
+        else:
+            _fail += 1
+    print(f"  {ktype} 下载完成: {_ok} 成功" + (f", {_fail} 失败" if _fail else ""))
 
     if quote_ctx is not None:
         quote_ctx.close()
