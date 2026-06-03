@@ -1715,6 +1715,7 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 <div id="main">
   <div id="nav-ktype"></div>
   <div id="nav-market"></div>
+  <div id="nav-chart" style="background:#fff;border-bottom:1px solid #e0e0e0;padding:0 16px;display:flex;"></div>
   <div id="chart-area">
     <div id="chart-container" style="display:none"></div>
     <div id="empty-state">请选择周期和市场</div>
@@ -1732,6 +1733,7 @@ var currentKtype = null, currentMarket = null, currentType = "策略评分";
 
 function init(){{
   renderNavs();
+  renderChartNav();
   // 选中第一个有数据的 (ktype, market) 组合
   for(var i=0;i<ALL_KTYPES.length;i++){{
     for(var j=0;j<ALL_MARKETS.length;j++){{
@@ -1754,6 +1756,21 @@ function renderNavs(){{
     h+='<div class="tab" data-market="'+ALL_MARKETS[i]+'" onclick="selectMarket(\''+ALL_MARKETS[i]+'\')">'+MK_LABELS[ALL_MARKETS[i]]+'</div>';
   }}
   document.getElementById('nav-market').innerHTML=h;
+}}
+
+function renderChartNav(){{
+  var h='';
+  for(var i=0;i<CHART_TYPES.length;i++){{
+    h+='<div class="tab" data-chart="'+CHART_TYPES[i]+'" onclick="selectType(\''+CHART_TYPES[i]+'\')">'+CHART_TYPES[i]+'</div>';
+  }}
+  document.getElementById('nav-chart').innerHTML=h;
+  document.querySelector('#nav-chart .tab').classList.add('active');
+}}
+
+function selectType(type){{
+  currentType=type;
+  document.querySelectorAll('#nav-chart .tab').forEach(function(el){{el.classList.toggle('active',el.dataset.chart===type);}});
+  renderChart();
 }}
 
 function getCombination(){{
