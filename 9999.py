@@ -1,12 +1,8 @@
 import os
-import glob
-import json
 import warnings
-from datetime import datetime
 import concurrent.futures
 import pandas as pd
 import numpy as np
-from plotly.io import to_json
 from tqdm import tqdm
 from openpyxl.styles import Alignment
 from numba import njit
@@ -17,22 +13,9 @@ import matplotlib.patches as patches
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial"]
 plt.rcParams["axes.unicode_minus"] = False
 import seaborn as sns
-import plotly.graph_objects as go
 
 # 屏蔽pandas concat空列FutureWarning（不影响功能）
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation", category=FutureWarning)
-
-
-def _load_top_turnover_map():
-    """读取最新 top_turnover 文件，返回 {代码: 排名} 映射表。"""
-    files = sorted(glob.glob(os.path.join("symbols", "top_turnover_*.csv")))
-    if not files:
-        return {}
-    try:
-        df = pd.read_csv(files[-1])
-        return dict(zip(df["代码"].dropna().astype(str), df["排名"].dropna().astype(int)))
-    except Exception:
-        return {}
 
 
 def _apply_sheet_format(ws):
@@ -55,13 +38,17 @@ SYMBOL_FILE = "symbols/symbols.csv"
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
 
+# 按市场创建输出子目录
+for _m in ("us", "cn", "cc"):
+    os.makedirs(os.path.join(TRADE_DIR, _m), exist_ok=True)
+    os.makedirs(os.path.join(TRADE_DIR, _m, "heatmaps"), exist_ok=True)
+os.makedirs(os.path.join(TRADE_DIR, "heatmaps"), exist_ok=True)
+
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "week"     # 默认K线周期: day / week
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
-MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
-_HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
@@ -80,7 +67,7 @@ def _market_subdir(code):
 
 
 def _find_data_file(code):
-    """在 data_uscncc/{ktype_dir}/{market}/ 中查找 parquet 文件，兼容旧目录。"""
+    """在 data_uscncc/{us,cn,cc}/ 子目录中查找 parquet 文件"""
     if code.startswith("CC."):
         market = "cc"
     elif code.startswith(("SH.", "SZ.")):
@@ -89,10 +76,7 @@ def _find_data_file(code):
         market = "us"
     else:
         raise ValueError(f"未知代码前缀: {code}")
-
-    _dir_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
-    _ktype_dir = _dir_map.get(BAR_INTERVAL, "")
-    path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
+    path = os.path.join(DATA_DIR, market, f"{code}{FILE_SUFFIX}.parquet")
     return path if os.path.exists(path) else None
 
 def apply_cn_mapping(df):
@@ -108,64 +92,45 @@ def apply_cn_mapping(df):
 KLINE_MAP = {
     "1D": {"display": "日K", "suffix": "_1d", "period": 252, "ma_range": list(range(2, 181))},
     "1W": {"display": "周K", "suffix": "_1w", "period": 52, "ma_range": list(range(2, 61))},
-    "60m": {"display": "60分钟K", "suffix": "_60m", "period": 1638, "ma_range": list(range(2, 359))},
 }
-
-def generate_ma_list(bar_interval, ma_mode="continuous"):
-    """根据K线周期和MA模式生成MA列表。
-
-    周线: 强制 continuous (step=1)
-    日线 continuous: 2..180 (step=1) / jump: 2,4,6..180 (step=2)
-    60m  continuous: 2..358 (step=1) / jump: 2,6,10..358 (step=4)
-    """
-    if bar_interval == "1W" or ma_mode == "continuous":
-        return KLINE_MAP[bar_interval]["ma_range"]
-    _steps = {"1D": 2, "60m": 4}
-    step = _steps[bar_interval]
-    _max = {"1D": 181, "60m": 359}
-    return list(range(2, _max[bar_interval], step))
-
 BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
-MA_LIST = generate_ma_list(BAR_INTERVAL, MA_MODE)
+MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
 FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
 TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
-KTYPE_DIR_MAP = {"1W": "1w", "1D": "1d", "60m": "60m"}
-TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-for _m in ("us", "cn", "cc"):
-    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
-    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
-os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
+STEP_YEARS = 1
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
-def _setup_ktype(ktype, ma_mode="continuous"):
-    """设置回测周期的全局变量（供 worker 进程调用）。"""
-    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS, MA_MODE
-    MA_MODE = ma_mode
-    if ktype == "60m":
-        BAR_INTERVAL = "60m"
-    elif ktype == "day":
-        BAR_INTERVAL = "1D"
-    else:
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    # 兼容旧版 sync 参数
+    if len(sys.argv) > 1 and sys.argv[1] == "sync":
+        print("sync 模式已移除")
+        sys.exit(0)
+
+    parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
+    parser.add_argument("--ktype", choices=["day", "week"], default=DEFAULT_KTYPE,
+                        help=f"K线周期: day=日K, week=周K (默认: {DEFAULT_KTYPE})")
+    parser.add_argument("--market", default=DEFAULT_MARKET,
+                        help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
+    _CLI_ARGS = parser.parse_args()
+
+    # 只用改 BAR_INTERVAL，其余从 KLINE_MAP 自动推导
+    if _CLI_ARGS.ktype == "week":
         BAR_INTERVAL = "1W"
-    MA_LIST = generate_ma_list(BAR_INTERVAL, MA_MODE)
+    else:
+        BAR_INTERVAL = "1D"
+    MA_LIST = KLINE_MAP[BAR_INTERVAL]["ma_range"]
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
-    TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-    STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
-    for _m in ("us", "cn", "cc"):
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
-        os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
-    os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-
 
 # 百分比字段（原始值=百分比数值，如 5.23 表示 5.23%；
 # 输出时 ÷100 再设 Excel 单元格格式为 0.00%，实现 Excel 原生百分比显示）
 PCT_COLS = [
-    "预计持仓进度", "预计涨幅进度",
+    "预计持仓进度",
     "距离历史信号收盘价涨跌幅", "持仓日化收益率",
-    "平均每笔收益率", "平均盈利比", "平均亏损比",
     "收益率", "年化收益率", "买入持有收益率", "超额收益率",
     "最大回撤", "盈利交易率",
 ]
@@ -302,9 +267,21 @@ def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
     return trades[:trade_count], equity, trade_count
 
 
-def _build_trades_from_arrays(code_val, market_val, datetime_arr, ma_len,
-                               trades_arr, equity_arr, n_trades):
-    """从 Numba 返回的裸数组构建交易 DataFrame（无 pandas 中间层）。"""
+def _build_trades_numba(df, ma_len):
+    """替换 build_trades + equity_curve 的 Numba 加速版本。
+
+    返回 (trades_df, equity_arr)。
+    """
+    code_val = df["code"].iloc[0]
+    market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
+    datetime_arr = df["datetime"].values
+
+    close = df["close"].values.astype(np.float64)
+    buy = df["buy"].values.astype(np.bool_)
+    sell = df["sell"].values.astype(np.bool_)
+
+    trades_arr, equity_arr, n_trades = _numba_backtest(close, buy, sell, INITIAL_CASH, FEE_RATE)
+
     if n_trades == 0:
         return pd.DataFrame(), equity_arr
 
@@ -473,15 +450,12 @@ def get_last_signal_info(df):
         hist_change = None
         hist_daily = None
 
-    # 最新信号确认（仅周线需要判断，日线/60分钟默认已确认）
-    if BAR_INTERVAL == "1W":
-        if signal in ("BUY", "SELL") and (
-            (signal == "BUY" and buy_days is not None and buy_days < 5) or
-            (signal == "SELL" and sell_days is not None and sell_days < 5)
-        ):
-            confirm = "待确认，周K未正式收盘"
-        else:
-            confirm = "已确认"
+    # 最新信号确认
+    if signal in ("BUY", "SELL") and (
+        (signal == "BUY" and buy_days is not None and buy_days < 5) or
+        (signal == "SELL" and sell_days is not None and sell_days < 5)
+    ):
+        confirm = "待确认，周K未正式收盘"
     else:
         confirm = "已确认"
 
@@ -561,6 +535,102 @@ def _make_trade_record(code_val, ma_len, entry_price, position, entry_time, entr
         "回测周期": backtest_period
     }
 
+
+def build_trades(df, ma_len):
+
+    df = df.copy()
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    df = df.sort_values("datetime")
+
+    cash = INITIAL_CASH
+    available_cash = cash
+
+    position = 0
+    entry_price = 0
+    entry_time = None
+    entry_index = 0
+
+    trades = []
+
+    backtest_period = f"{df['datetime'].iloc[0]} ~ {df['datetime'].iloc[-1]}"
+
+    # numpy arrays for faster row access
+    close_arr = df["close"].values
+    buy_arr = df["buy"].values
+    sell_arr = df["sell"].values
+    datetime_arr = df["datetime"].values
+    code_val = df["code"].iloc[0]
+    market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
+
+    for i in range(len(df)):
+
+        price = float(close_arr[i])
+
+        if pd.isna(price) or price <= 0:
+            continue
+
+        time = datetime_arr[i]
+
+        if buy_arr[i] and position == 0:
+
+            cash_before_buy = available_cash
+
+            shares = int(available_cash / (price * (1 + FEE_RATE)))
+
+            if shares <= 0:
+                continue
+
+            cost = shares * price
+            buy_fee = cost * FEE_RATE
+
+            available_cash -= (cost + buy_fee)
+            cash_after_buy = available_cash
+
+            position = shares
+            entry_price = price
+            entry_time = time
+            entry_index = i
+
+        elif sell_arr[i] and position > 0:
+
+            cash_before_sell = available_cash
+            sell_value = position * price
+            sell_fee = sell_value * FEE_RATE
+            available_cash += (sell_value - sell_fee)
+            cash_after_sell = available_cash
+
+            trades.append(_make_trade_record(
+                code_val, ma_len, entry_price, position, entry_time, entry_index,
+                price, time, i,
+                cash_before_buy, cash_after_buy, cash_before_sell, cash_after_sell,
+                "已平仓", backtest_period, market_val
+            ))
+
+            position = 0
+
+    if position > 0:
+
+        price = float(close_arr[-1])
+        time = datetime_arr[-1]
+
+        cash_before_sell = available_cash
+        sell_value = position * price
+        sell_fee = sell_value * FEE_RATE
+        available_cash += (sell_value - sell_fee)
+        cash_after_sell = available_cash
+
+        trades.append(_make_trade_record(
+            code_val, ma_len, entry_price, position, entry_time, entry_index,
+            price, time, len(df) - 1,
+            None, None, cash_before_sell, cash_after_sell,
+            "未平仓(强制结算)", backtest_period, market_val
+        ))
+
+    return pd.DataFrame(trades)
+
+# =========================================================
+# 资金曲线
+# =========================================================
 def equity_curve(df, trades_df):
 
     df = df.copy()
@@ -697,10 +767,10 @@ def calc_score_row(row):
     return score
 
 # =========================================================
-# 窗口生成
+# 5年滚动窗口生成
 # =========================================================
 def generate_windows(df=None, end_date=None):
-    """生成累积扩展窗口：起点固定，终点按月步长递增。
+    """生成累积扩展窗口：起点固定，终点每年步长递增。
        所有股票使用相同的 end_date 以保证窗口一致。
        传 df 时（单个股票）取该股票数据的最后一天作为终点。"""
     if end_date is None and df is not None:
@@ -713,11 +783,11 @@ def generate_windows(df=None, end_date=None):
     end = pd.Timestamp(end_date)
 
     windows = []
-    cur = start + pd.DateOffset(months=STEP_MONTHS)
+    cur = start + pd.DateOffset(years=STEP_YEARS)
 
     while cur < end:
         windows.append((start, cur))
-        cur += pd.DateOffset(months=STEP_MONTHS)
+        cur += pd.DateOffset(years=STEP_YEARS)
 
     # 追加一个完整步长窗口，替代非整年兜底
     windows.append((start, cur))
@@ -753,7 +823,6 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
             "年化收益率": 0,
             "买入持有收益率": 0,
             "超额收益率": 0,
-            "平均每笔收益率": 0,
 
             "最大回撤": 0,
             "夏普比率": 0,
@@ -765,9 +834,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
             "盈亏比": 0,
 
             "平均盈利": 0,
-            "平均盈利比": 0,
             "平均亏损": 0,
-            "平均亏损比": 0,
             "最大单笔盈利": 0,
             "最大单笔亏损": 0,
 
@@ -801,9 +868,6 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
     avg_win = win["收益金额"].mean() if len(win) else 0
     avg_loss = abs(loss["收益金额"].mean()) if len(loss) else 0
 
-    avg_win_pct = win["收益率(%)"].mean() if len(win) else 0
-    avg_loss_pct = loss["收益率(%)"].mean() if len(loss) else 0
-
     payoff = avg_win / avg_loss if avg_loss else 0
 
     max_win_trade = trades_df["收益金额"].max()
@@ -823,7 +887,6 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         "年化收益率": float(cagr),
         "买入持有收益率": float(buy_hold),
         "超额收益率": float(alpha),
-        "平均每笔收益率": float(trades_df["收益率(%)"].mean()) if not trades_df.empty else 0,
 
         "最大回撤": float(mdd),
         "夏普比率": float(sh),
@@ -835,9 +898,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         "盈亏比": float(payoff),
 
         "平均盈利": float(avg_win),
-        "平均盈利比": float(avg_win_pct),
         "平均亏损": float(avg_loss),
-        "平均亏损比": float(avg_loss_pct),
         "最大单笔盈利": float(max_win_trade),
         "最大单笔亏损": float(max_loss_trade),
 
@@ -870,6 +931,91 @@ def reorder_columns(df):
 # =========================================================
 # 参数稳定性分析
 # =========================================================
+def calc_param_stability(summary_rows):
+    df = pd.DataFrame(summary_rows)
+
+    # 排除所有评分均为0的窗口（无交易窗口）
+    valid = df.groupby("窗口")["策略评分"].transform("max") > 0
+    df = df[valid]
+
+    if df.empty or df["窗口"].nunique() < 2:
+        return pd.DataFrame()
+
+    # 每窗口内按策略评分排名（同分取最小排名）
+    df["窗口内排名"] = df.groupby(["股票代码", "窗口"])["策略评分"].rank(ascending=False, method="min")
+
+    # 提取固定信息
+    code_val = df["股票代码"].iloc[0]
+    bar_val = df["K线周期"].iloc[0]
+
+    # 按均线周期汇总
+    stats = df.groupby("均线周期").agg(
+        窗口数量=("窗口", "nunique"),
+        盈利窗口数量=("年化收益率", lambda x: (x > 0).sum()),
+        策略评分排名平均值=("窗口内排名", "mean"),
+        策略评分排名第一次数=("窗口内排名", lambda x: (x == 1).sum()),
+        策略评分排名Top3占比=("窗口内排名", lambda x: (x <= 3).sum() / max(len(x), 1) * 100),
+        策略评分排名标准差=("窗口内排名", "std"),
+        年化收益率平均值=("年化收益率", "mean"),
+        年化收益率标准差=("年化收益率", "std")
+    ).reset_index()
+
+    stats["盈利窗口占比"] = stats["盈利窗口数量"] / stats["窗口数量"] * 100
+    stats["年化收益率平均值"] = stats["年化收益率平均值"]
+    stats["年化收益率标准差"] = stats["年化收益率标准差"].fillna(0)
+
+    stats["策略评分排名平均值"] = stats["策略评分排名平均值"]
+    stats["策略评分排名标准差"] = stats["策略评分排名标准差"].fillna(0)
+
+    # =========================================================
+    # 参数稳定性综合评分（加权归一化，越高越好）
+    # =========================================================
+    # 指标方向：平均值(低→好)、标准差(低→好)、Top3占比(高→好)、第一次数(高→好)
+    # 归一化方式：(max - v) / (max - min) 或 (v - min) / (max - min)
+    def _norm(series, higher_is_better=True):
+        lo, hi = series.min(), series.max()
+        if hi == lo:
+            return pd.Series(0.5, index=series.index)
+        return (series - lo) / (hi - lo) if higher_is_better else (hi - series) / (hi - lo)
+
+    avg_rank_n = _norm(stats["策略评分排名平均值"], higher_is_better=False)
+    top3_n = _norm(stats["策略评分排名Top3占比"], higher_is_better=True)
+    std_n = _norm(stats["策略评分排名标准差"], higher_is_better=False)
+    cagr_n = _norm(stats["年化收益率平均值"], higher_is_better=True)
+    win_rate_n = _norm(stats["盈利窗口占比"], higher_is_better=True)
+    cagr_std_n = _norm(stats["年化收益率标准差"], higher_is_better=False)
+
+    stats["参数稳定性综合评分"] = (
+        0.20 * avg_rank_n + 0.10 * top3_n + 0.15 * std_n +
+        0.25 * cagr_n + 0.20 * win_rate_n + 0.10 * cagr_std_n
+    )
+
+    # 排序后重排列顺序
+    col_order = ["股票代码", "K线周期", "均线周期", "窗口数量",
+                 "盈利窗口数量", "盈利窗口占比",
+                 "年化收益率平均值", "年化收益率标准差",
+                 "策略评分排名Top3占比", "策略评分排名平均值",
+                 "策略评分排名标准差", "策略评分排名第一次数",
+                 "参数稳定性综合评分", "是否最优"]
+    stats.insert(0, "K线周期", bar_val)
+    stats.insert(0, "股票代码", code_val)
+
+    stats = stats.reindex(columns=col_order)
+
+    # 标记最优参数（每股票一个最优）
+    stats["是否最优"] = ""
+    idx = (
+        stats
+        .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"],
+                      ascending=[False, True, False])
+        .head(1)
+        .index
+    )
+    stats.loc[idx, "是否最优"] = "最优"
+    return stats
+
+
+
 def build_window_stability(summary_rows):
     """对每个累积窗口阶段计算参数稳定性（同 calc_param_stability 逻辑，按阶段展开）。
 
@@ -930,7 +1076,7 @@ def build_window_stability(summary_rows):
         win_rate_n = _norm(stats["盈利窗口占比"], higher_is_better=True)
         cagr_std_n = _norm(stats["年化收益率标准差"], higher_is_better=False)
 
-        stats["参数稳定性评分"] = (
+        stats["参数稳定性综合评分"] = (
             0.20 * avg_rank_n + 0.10 * top3_n + 0.15 * std_n
             + 0.25 * cagr_n + 0.20 * win_rate_n + 0.10 * cagr_std_n
         )
@@ -947,7 +1093,7 @@ def build_window_stability(summary_rows):
         "年化收益率平均值", "年化收益率标准差",
         "策略评分排名Top3占比", "策略评分排名平均值",
         "策略评分排名标准差", "策略评分排名第一次数",
-        "参数稳定性评分", "是否最优",
+        "参数稳定性综合评分", "是否最优",
     ]
     result = result.reindex(columns=col_order)
     result = result.sort_values(["股票代码", "窗口", "均线周期"]).reset_index(drop=True)
@@ -956,7 +1102,7 @@ def build_window_stability(summary_rows):
     result["是否最优"] = ""
     idx = (
         result
-        .sort_values(["参数稳定性评分", "策略评分排名标准差", "年化收益率平均值"],
+        .sort_values(["参数稳定性综合评分", "策略评分排名标准差", "年化收益率平均值"],
                       ascending=[False, True, False])
         .groupby(["股票代码", "窗口"], sort=False)
         .head(1)
@@ -1008,131 +1154,185 @@ def build_score_matrix(summary_rows):
 # =========================================================
 # 参数扫描热力图
 # =========================================================
-def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
-                                  colorscale, center, best_ma=None, stock_name=""):
-    """构建单指标参数扫描热力图，返回 go.Figure 或 None。"""
+def generate_param_heatmap(code, scan_rows, save_dir="heatmaps", best_ma=None, stock_name=""):
+    """从窗口回测数据生成参数扫描热力图"""
     if not scan_rows:
-        return None
+        return
     df = pd.DataFrame(scan_rows)
     if df.empty or df["窗口"].nunique() < 2:
-        return None
-    if metric_name not in df.columns:
-        return None
+        return
 
-    pivot = df.pivot_table(index="均线周期", columns="窗口", values=metric_name, aggfunc="first")
-    pivot = pivot[sorted(pivot.columns, key=lambda c: str(c))]
-    if pivot.empty:
-        return None
+    code_safe = code.replace(".", "_")
+    stock_name_safe = stock_name.replace(".", "_").replace(" ", "_").replace("(", "_").replace(")", "_").replace("/", "_") if stock_name else "未知"
+    metrics = [
+        ("策略评分", "策略评分", "RdYlGn", True),
+        ("年化收益率", "年化收益率(%)", "RdYlGn", True),
+        ("夏普比率", "夏普比率", "RdYlGn", True),
+        ("最大回撤", "最大回撤(%)", "OrRd", False),
+    ]
 
-    annot_text = [[f"{v:.1f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
-    # 每列第1名★标记
-    for col_idx, col_name in enumerate(pivot.columns):
-        col_data = pivot[col_name].dropna()
-        if col_data.empty:
+    for metric, title, cmap, center in metrics:
+        if metric not in df.columns:
             continue
-        ranked = col_data.sort_values() if metric_name == "最大回撤" else col_data.sort_values(ascending=False)
-        for label, _ in ranked.head(1).items():
-            row_idx = list(pivot.index).index(label)
-            _raw = annot_text[row_idx][col_idx]
-            if _raw:
-                annot_text[row_idx][col_idx] = f"{_raw}"
+        pivot = df.pivot_table(index="均线周期", columns="窗口", values=metric, aggfunc="first")
+        pivot = pivot[sorted(pivot.columns, key=lambda c: str(c))]
 
-    y_labels = [str(ma) for ma in pivot.index]
+        if pivot.empty:
+            continue
 
-    fig = go.Figure()
-    fig.add_trace(go.Heatmap(
-        z=pivot.values, x=[str(c) for c in pivot.columns], y=y_labels,
-        text=annot_text, texttemplate="%{text}", textfont=dict(size=10),
-        colorscale=colorscale, zmid=0 if center else None,
-        hovertemplate="窗口: %{x}<br>均线: %{y}<br>值: %{text}<extra></extra>",
-    ))
-    fig.update_layout(
-        title=dict(text=f"{code} {stock_name} {metric_title} 参数扫描热力图", font=dict(size=15)),
-        xaxis=dict(title="回测窗口", tickangle=45),
-        yaxis=dict(title="均线周期", dtick=1),
-        height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
-        margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
-    )
-    return fig
+        # 构建标注矩阵
+        annot_df = pivot.copy().astype(str)
+        for col in pivot.columns:
+            annot_df[col] = pivot[col].apply(lambda v: f"{v:.1f}" if pd.notna(v) else "")
 
+        fig, ax = plt.subplots(figsize=(max(10, len(pivot.columns) * 0.7), max(7, len(pivot) * 0.45)))
+        sns.heatmap(
+            pivot, annot=annot_df, fmt="", cmap=cmap,
+            center=0 if center else None,
+            linewidths=0.5, linecolor="#e0e0e0",
+            ax=ax, cbar_kws={"shrink": 0.8}
+        )
 
-def _build_sensitivity_figure(code, scan_rows, stock_name=""):
-    """构建参数敏感性折线图，返回 go.Figure 或 None。"""
-    if not scan_rows:
-        return None
-    df = pd.DataFrame(scan_rows)
-    if df.empty:
-        return None
+        # 每个窗口前3最优格标记：第1黑色、第2深灰、第3浅灰，数字白色
+        rank_colors = ['#000000', '#555555', '#999999']
+        top3_lookup = {}
+        for col_idx, col_name in enumerate(pivot.columns):
+            col_data = pivot[col_name].dropna()
+            if col_data.empty:
+                continue
+            ranked = col_data.sort_values() if metric == "最大回撤" else col_data.sort_values(ascending=False)
+            for rank, (label, _) in enumerate(ranked.head(3).items()):
+                row_idx = pivot.index.get_loc(label)
+                top3_lookup[(col_idx, row_idx)] = rank
+                ax.add_patch(patches.Rectangle(
+                    (col_idx + 0.02, row_idx + 0.02), 0.96, 0.96,
+                    fill=True, color=rank_colors[rank], linewidth=0, zorder=2
+                ))
+        n_rows, n_cols = len(pivot.index), len(pivot.columns)
+        for t in ax.texts:
+            x, y = t.get_position()
+            col, row = round(x - 0.5), round(y - 0.5)
+            if 0 <= col < n_cols and 0 <= row < n_rows and (col, row) in top3_lookup:
+                t.set_color("white")
+
+        # Y轴标签：最优参数行加★
+        if best_ma is not None and best_ma in pivot.index:
+            labels = [str(ma) if ma != best_ma else f"★{ma}" for ma in pivot.index]
+            ax.set_yticklabels(labels, rotation=0)
+        ax.set_title(f"{code} {stock_name} {title} 参数扫描热力图", fontsize=14, fontweight="bold", pad=16)
+        ax.set_xlabel("回测窗口", fontsize=11)
+        ax.set_ylabel("均线周期", fontsize=11)
+        ax.tick_params(axis="x", rotation=45)
+        ax.tick_params(axis="y", rotation=0)
+        ax.text(0.5, 1.02,
+                "▎黑/深灰/浅灰底 = 窗口内第1/2/3名   ▎★Y轴 = 最优参数   ▎行=均线周期 列=回测窗口 值越大颜色越暖（最大回撤除外）",
+                transform=ax.transAxes, ha="center", va="bottom",
+                fontsize=9, color="#666666")
+        plt.tight_layout()
+        path = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_{metric}.png")
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close()
+
+    # 参数敏感性折线图（各窗口均值 ± 标准差）
     grouped = df.groupby("均线周期")["策略评分"].agg(["mean", "std"]).dropna()
-    if len(grouped) < 3:
-        return None
+    if len(grouped) >= 3:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(grouped.index, grouped["mean"], "o-", color="#2980b9", linewidth=2, markersize=5)
+        ax.fill_between(
+            grouped.index,
+            grouped["mean"] - grouped["std"],
+            grouped["mean"] + grouped["std"],
+            alpha=0.2, color="#2980b9"
+        )
+        ax.axhline(0, color="#cccccc", linewidth=0.8, linestyle="--")
+        ax.set_xlabel("均线周期", fontsize=11)
+        ax.set_ylabel("策略评分", fontsize=11)
+        ax.set_title(f"{code} {stock_name} 参数敏感性分析（均值±标准差）", fontsize=14, fontweight="bold", pad=16)
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        path = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_参数敏感性分析.png")
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close()
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=grouped.index, y=grouped["mean"],
-        mode="lines+markers", name="均值",
-        line=dict(color="#2980b9", width=2), marker=dict(size=5),
-        error_y=dict(type="data", array=grouped["std"], visible=True, thickness=1.5, color="#2980b9"),
-    ))
-    fig.add_hline(y=0, line=dict(color="#cccccc", width=1, dash="dash"))
-    fig.update_layout(
-        title=dict(text=f"{code} {stock_name} 参数敏感性分析（均值±标准差）", font=dict(size=15)),
-        xaxis=dict(title="均线周期"), yaxis=dict(title="策略评分"),
-        height=420, width=850, margin=dict(l=60, r=40, t=60, b=60),
-        paper_bgcolor="white", showlegend=False,
-    )
-    return fig
 
+def generate_stability_heatmap(code, ws_df, save_dir="heatmaps", best_ma=None, stock_name=""):
+    """生成全窗口参数稳定性热力图。
 
-def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
-    """构建全窗口参数稳定性热力图，返回 go.Figure 或 None。"""
+    行=均线周期, 列=窗口, 值=参数稳定性综合评分。
+    每列第1名黑色背景+白色文字。
+    """
     if ws_df is None or ws_df.empty:
-        return None
-    pivot = ws_df.pivot_table(index="均线周期", columns="窗口", values="参数稳定性评分", aggfunc="first")
-    pivot = pivot[sorted(pivot.columns)]
-    if pivot.empty:
-        return None
+        return
+    code_safe = code.replace(".", "_")
+    stock_name_safe = stock_name.replace(".", "_").replace(" ", "_").replace("(", "_").replace(")", "_").replace("/", "_") if stock_name else "未知"
 
-    annot_text = [[f"{v:.3f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
-    # 每列第1名★标记
+    pivot = ws_df.pivot_table(
+        index="均线周期", columns="窗口", values="参数稳定性综合评分", aggfunc="first"
+    )
+
+    # 确保列按窗口顺序排列
+    pivot = pivot[sorted(pivot.columns)]
+
+    if pivot.empty:
+        return
+
+    fig, ax = plt.subplots(figsize=(max(10, len(pivot.columns) * 0.6), max(7, len(pivot) * 0.45)))
+
+    # 标注矩阵
+    annot = pivot.map(lambda v: f"{v:.3f}" if pd.notna(v) else "")
+
+    sns.heatmap(
+        pivot, annot=annot, fmt="", cmap="RdYlGn",
+        center=0.5, linewidths=0.5, linecolor="#e0e0e0",
+        ax=ax, cbar_kws={"shrink": 0.8, "label": "参数稳定性综合评分"},
+    )
+
+    # 每列第1名标记黑色背景 + 白色文字
     for col_idx, col_name in enumerate(pivot.columns):
         col_data = pivot[col_name].dropna()
         if col_data.empty:
             continue
-        ranked = col_data.sort_values(ascending=False)
-        for label, _ in ranked.head(1).items():
-            row_idx = list(pivot.index).index(label)
-            _raw = annot_text[row_idx][col_idx]
-            if _raw:
-                annot_text[row_idx][col_idx] = f"{_raw}"
+        best_label = col_data.idxmax()
+        row_idx = pivot.index.get_loc(best_label)
+        ax.add_patch(patches.Rectangle(
+            (col_idx + 0.02, row_idx + 0.02), 0.96, 0.96,
+            fill=True, color="#000000", linewidth=0, zorder=2,
+        ))
 
-    y_labels = [str(ma) for ma in pivot.index]
+    n_rows, n_cols = len(pivot.index), len(pivot.columns)
+    for t in ax.texts:
+        x, y = t.get_position()
+        col, row = round(x - 0.5), round(y - 0.5)
+        if 0 <= col < n_cols and 0 <= row < n_rows:
+            col_name = pivot.columns[col]
+            best = pivot[col_name].dropna().idxmax()
+            if pivot.index[row] == best:
+                t.set_color("white")
 
-    fig = go.Figure()
-    fig.add_trace(go.Heatmap(
-        z=pivot.values, x=[str(c) for c in pivot.columns], y=y_labels,
-        text=annot_text, texttemplate="%{text}", textfont=dict(size=10),
-        colorscale="RdYlGn", zmid=0.5,
-        hovertemplate="窗口: %{x}<br>均线: %{y}<br>稳定性评分: %{text}<extra></extra>",
-    ))
-    fig.update_layout(
-        title=dict(text=f"{code} {stock_name} 全窗口参数稳定性热力图", font=dict(size=15)),
-        xaxis=dict(title="窗口", tickangle=45),
-        yaxis=dict(title="均线周期", dtick=1),
-        height=max(500, len(pivot.index) * 26), width=max(700, len(pivot.columns) * 110),
-        margin=dict(l=80, r=40, t=80, b=80), paper_bgcolor="white",
-    )
-    return fig
+    ax.set_title(f"{code} {stock_name} 全窗口参数稳定性热力图", fontsize=14, fontweight="bold", pad=16)
+    ax.set_xlabel("窗口", fontsize=11)
+    ax.set_ylabel("均线周期", fontsize=11)
+    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="y", rotation=0)
+
+    # Y轴标签：最优参数行加★
+    if best_ma is not None and best_ma in pivot.index:
+        labels = [str(ma) if ma != best_ma else f"★{ma}" for ma in pivot.index]
+        ax.set_yticklabels(labels, rotation=0)
+
+    plt.tight_layout()
+    path = os.path.join(save_dir, f"{code_safe}_{stock_name_safe}_全窗口参数稳定性热力图.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
 
 
-def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps", return_fig=False):
-    """生成全股票各窗口最优参数热力图（Plotly HTML 版本）。
+def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps"):
+    """生成全股票各窗口最优参数热力图。
     行=股票代码, 列=窗口, 值=最优均线周期。
-    末尾3列为股性指标（灰色背景不上色）。
-    return_fig=True 时返回 go.Figure，不写文件。
+    末尾3列为股性指标（不参与热力图上色）。
     """
     if all_ws is None or all_ws.empty:
-        return None if return_fig else None
+        return
 
     best = all_ws[all_ws["是否最优"] == "最优"].copy()
     if best.empty:
@@ -1142,6 +1342,7 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps", return_fig=F
         index="股票代码", columns="窗口", values="均线周期", aggfunc="first"
     )
     pivot = pivot[sorted(pivot.columns)]
+
     if pivot.empty:
         return
 
@@ -1157,8 +1358,10 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps", return_fig=F
     metrics_df = pivot.apply(_row_personality, axis=1)
     changes_col = metrics_df.iloc[:, 0]
     std_col = metrics_df.iloc[:, 1]
+
     score_col = (changes_col.combine(std_col, lambda c, s: round(max(0, 100 - c * 5 - s * 2), 1)))
 
+    # 窗口列（热力图） + 3 个附加列
     extra_cols = ["最优参数变动次数", "最优参数标准差", "股性评分"]
     extra_data = pd.DataFrame({
         "最优参数变动次数": changes_col,
@@ -1168,189 +1371,82 @@ def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps", return_fig=F
 
     n_stocks, n_windows = pivot.shape
     n_extra = len(extra_cols)
+    fig_height = max(10, n_stocks * 0.22)
+    fig_width = max(12, n_windows * 0.55 + n_extra * 0.9)
 
-    # 合并 z：窗口列用原始值，附加列填 0（通过色阶映射为灰色）
-    all_data = pivot.copy()
-    for col in extra_cols:
-        all_data[col] = 0.0
-    z_full = all_data.values.astype(float)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
-    # 标注矩阵
-    annot_text = []
+    annot = pivot.map(lambda v: f"{int(v)}" if pd.notna(v) else "")
+
+    sns.heatmap(
+        pivot, annot=annot, fmt="", cmap="YlOrRd",
+        linewidths=0.3, linecolor="#e0e0e0",
+        ax=ax, cbar_kws={"shrink": 0.6, "label": "最优均线周期"},
+    )
+
+    # --- 在热力图右侧绘制 3 个股性指标列（纯文本，不上色）---
+    # 获取热力图的坐标范围
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    cell_w = (x1 - x0) / n_windows
+    cell_h = (y1 - y0) / n_stocks
+
+    # 画浅灰背景区
+    bg_x = x1
+    bg_w = n_extra * cell_w
+    rect = patches.Rectangle(
+        (bg_x, y0), bg_w, y1 - y0,
+        facecolor="#f0f0f0", edgecolor="none", zorder=-1
+    )
+    ax.add_patch(rect)
+
+    # 竖分隔线
+    sep = patches.Rectangle(
+        (x1 - cell_w * 0.03, y0), cell_w * 0.06, y1 - y0,
+        facecolor="#d0d0d0", edgecolor="none", zorder=-1
+    )
+    ax.add_patch(sep)
+
+    # 添加文本
     for ri in range(n_stocks):
-        row = []
-        for ci in range(n_windows):
-            v = pivot.iloc[ri, ci]
-            row.append(f"{int(v)}" if pd.notna(v) else "")
-        for ei, col_name in enumerate(extra_cols):
-            v = extra_data.iloc[ri, ei]
-            if col_name == "最优参数变动次数":
-                row.append(f"{int(v)}" if pd.notna(v) else "")
-            elif col_name == "最优参数标准差":
-                row.append(f"{v:.1f}" if pd.notna(v) else "")
-            else:
-                row.append(f"{v:.1f}" if pd.notna(v) else "")
-        annot_text.append(row)
+        for ei in range(n_extra):
+            val = extra_data.iloc[ri, ei]
+            label_str = f"{val}" if pd.notna(val) else ""
+            tx = x1 + (ei + 0.5) * cell_w
+            # heatmap y 轴从上到下，所以 ri=0 在最上面，对应 y1-cell_h/2
+            ty = y1 - (ri + 0.5) * cell_h
+            ax.text(tx, ty, label_str, ha="center", va="center",
+                    fontsize=6, fontfamily="monospace")
 
-    # 色阶：0→灰色，>0→YlOrRd
-    z_min = 0
-    z_max = max(np.nanmax(pivot.values), 2)
-    custom_scale = [
-        [0, "#f0f0f0"],
-        [1.0 / z_max, "#ffffcc"],
-        [1, "#bd0026"],
-    ]
+    # 设置 x 轴标签包括窗口列 + 附加列
+    all_labels = list(pivot.columns) + extra_cols
+    ax.set_xticks(np.arange(len(all_labels)) + 0.5)
+    ax.set_xticklabels(all_labels, rotation=45, ha="right", fontsize=8)
 
-    fig = go.Figure()
-    fig.add_trace(go.Heatmap(
-        z=z_full, zmin=z_min, zmax=z_max,
-        colorscale=custom_scale,
-        x=[str(c) for c in all_data.columns],
-        y=list(all_data.index),
-        text=annot_text, texttemplate="%{text}", textfont=dict(size=9),
-        hovertemplate="股票: %{y}<br>窗口: %{x}<br>值: %{text}<extra></extra>",
-    ))
+    ax.set_title("全股票各窗口最优参数变动情况", fontsize=16, fontweight="bold", pad=16)
+    ax.set_xlabel("")
+    ax.set_ylabel("股票代码", fontsize=12)
+    ax.tick_params(axis="y", rotation=0, labelsize=6)
 
-    # 附加列与窗口列的竖分隔线
-    fig.add_shape(type="line",
-        x0=n_windows - 0.5, x1=n_windows - 0.5,
-        y0=-0.5, y1=n_stocks - 0.5,
-        line=dict(color="#999999", width=2),
-    )
-
-    fig.update_layout(
-        title=dict(text="全股票各窗口最优参数变动情况", font=dict(size=16)),
-        xaxis=dict(tickangle=45),
-        yaxis=dict(title="股票代码"),
-        height=max(400, n_stocks * 22),
-        width=max(800, n_windows * 90 + n_extra * 100),
-        margin=dict(l=120, r=60, t=80, b=120),
-        paper_bgcolor="white",
-    )
-
-    if return_fig:
-        return fig
-    _p = os.path.join(save_dir, f"all_全股票各窗口最优参数变动情况热力图{FILE_SUFFIX}.html")
-    fig.write_html(_p, include_plotlyjs="cdn", config={"displayModeBar": False})
-    print(f"全股票最优参数热力图: {_p}")
-
-
-# =========================================================
-
-def _sanitize_json_for_html(data_json):
-    """净化 JSON 字符串，确保安全嵌入 HTML script 标签。"""
-    # 防止 </script> 提前关闭 script 标签
-    return data_json.replace("</script>", "<\\/script>")
-
-
-# =========================================================
-# 统一热力图看板（全周期 × 全市场）
-# =========================================================
-
-def generate_heatmap_dashboard(cache_data):
-    """在所有回测完成后生成统一热力图看板，覆盖所有已跑的 ktype × market 组合。
-
-    cache_data: {BAR_INTERVAL: {market: [(code, rows, ws_df, best_ma, name), ...]}}
-    输出: {TRADE_DIR}/统一热力图看板.html
-    """
-    if not cache_data:
-        return
-
-    METRIC_CONFIG = [
-        ("策略评分", "策略评分", "RdYlGn", True),
-        ("年化收益率", "年化收益率", "RdYlGn", True),
-        ("夏普比率", "夏普比率", "RdYlGn", True),
-        ("最大回撤", "最大回撤", "OrRd", False),
-    ]
-    SENSITIVITY_KEY = "参数敏感性分析"
-    STABILITY_KEY = "参数稳定性评分"
-
-    ALL_KTYPES = ["1W", "1D", "60m"]
-    ALL_MARKETS = ["us", "cc", "cn"]
-
-    payload_data = {}  # {ktype: {market: {stocks: [...], figures: {code: {type: fig_json}}}}}
-
-    for _bi in ALL_KTYPES:
-        payload_data[_bi] = {}
-        for _mkt_id in ALL_MARKETS:
-            entries = cache_data.get(_bi, {}).get(_mkt_id, [])
-            if not entries:
-                payload_data[_bi][_mkt_id] = None
-                continue
-            stock_list = []
-            figures_data = {}
-            all_ws_list = []
-            _kt_lbl = {"1W":"周K","1D":"日K","60m":"60分"}.get(_bi,_bi)
-            for code, scan_rows, ws_df, best_ma, stock_name in tqdm(entries, desc=f"  看板({_kt_lbl},{_mkt_id.upper()})", unit="stock"):
-                stock_list.append({"code": code, "name": stock_name or ""})
-                figs = {}
-                for chart_label, metric_name, colorscale, center in METRIC_CONFIG:
-                    fig = _build_metric_heatmap_figure(
-                        code, scan_rows, metric_name, chart_label,
-                        colorscale, center, best_ma=best_ma, stock_name=stock_name,
-                    )
-                    if fig is not None:
-                        d = json.loads(to_json(fig))
-                        if "layout" in d and "template" in d["layout"]:
-                            del d["layout"]["template"]
-                        figs[chart_label] = d
-                fig = _build_sensitivity_figure(code, scan_rows, stock_name=stock_name)
-                if fig is not None:
-                    d = json.loads(to_json(fig))
-                    if "layout" in d and "template" in d["layout"]:
-                        del d["layout"]["template"]
-                    figs[SENSITIVITY_KEY] = d
-                fig = _build_stability_figure(code, ws_df, best_ma=best_ma, stock_name=stock_name)
-                if fig is not None:
-                    d = json.loads(to_json(fig))
-                    if "layout" in d and "template" in d["layout"]:
-                        del d["layout"]["template"]
-                    figs[STABILITY_KEY] = d
-                figures_data[code] = figs
-                if ws_df is not None and not ws_df.empty:
-                    all_ws_list.append(ws_df)
-            stock_list.sort(key=lambda x: x["code"])
-            if all_ws_list:
-                all_ws_concat = pd.concat(all_ws_list, ignore_index=True)
-                _fig = generate_all_stock_best_ma_heatmap(all_ws_concat, return_fig=True)
-                if _fig is not None:
-                    _d = json.loads(to_json(_fig))
-                    _d.get("layout", {}).pop("template", None)
-                    figures_data["__ALL__"] = {"全股票最优参数变动": _d}
-                    stock_list.insert(0, {"code": "__ALL__", "name": "📊 全股票汇总"})
-            payload_data[_bi][_mkt_id] = {"stocks": stock_list, "figures": figures_data}
-
-    _json_str = _sanitize_json_for_html(json.dumps(payload_data, ensure_ascii=False))
-    _ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    html = _build_heatmap_dashboard_html(_json_str, timestamp=_ts)
-    _p = os.path.join(TRADE_DIR, "统一热力图看板.html")
-    os.makedirs(TRADE_DIR, exist_ok=True)
-    with open(_p, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"统一热力图看板: {_p}")
-
-
-def _build_heatmap_dashboard_html(data_json, timestamp=""):
-    """生成包含 ktype + market 双导航栏的统一热力图看板 HTML。"""
-    _tmpl = os.path.join(os.path.dirname(__file__), "heatmap_dashboard_template.html")
-    with open(_tmpl, "r", encoding="utf-8") as _f:
-        return _f.read().replace("__DATA__", data_json).replace("__TIMESTAMP__", timestamp)
+    plt.tight_layout()
+    path = os.path.join(save_dir, "all_全股票各窗口最优参数变动情况热力图.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"全股票最优参数热力图: {path}")
 
 
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
+def _process_one_stock(code, windows=None):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
-    if ktype:
-        _setup_ktype(ktype, ma_mode)
     path = _find_data_file(code)
     if not path:
-        return [], [], {}, None, None
+        return [], [], {}, None
     df = pd.read_parquet(path)
     df = df.sort_values("datetime")
     df["code"] = code
-    out_file = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), f"{code}_trades.xlsx")
+    out_file = os.path.join(TRADE_DIR, _market_subdir(code), f"{code}_trades.xlsx")
     stock_name = str(df["stock_name"].iloc[0]) if "stock_name" in df.columns else ""
     stock_plates = str(df["plates"].iloc[0]) if "plates" in df.columns else ""
     stock_all_rows = []
@@ -1370,14 +1466,10 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
     for ma in MA_LIST:
         ma_cache[ma] = ha_close_full.rolling(ma, min_periods=ma).mean()
 
-    # 提前提取每只股票的固定值
-    code_val = code
-    market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
-
     for ws, we in windows:
 
         window_mask = (pd.to_datetime(df["datetime"]) >= ws) & (pd.to_datetime(df["datetime"]) < we)
-        df_w = df[window_mask]  # 只读切片，不 copy
+        df_w = df[window_mask].copy()
 
         if df_w.empty:
             continue
@@ -1387,32 +1479,14 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
         eff_end = pd.to_datetime(df_w["datetime"]).max()
         effective_range = f"{eff_start.date()}~{eff_end.date()}"
 
-        # 每窗口预计算一次（各 MA 共用）
-        close_w_arr = df_w["close"].values.astype(np.float64)
-        datetime_w_arr = df_w["datetime"].values
-
         for ma in MA_LIST:
-            ma_arr = ma_cache[ma][window_mask].values.astype(np.float64)
+            df_w["ha_close"] = ha_close_full[window_mask]
+            df_w["ma"] = ma_cache[ma][window_mask]
+            df_w["dir"] = np.where(df_w["ma"] > df_w["ma"].shift(1), 1, -1)
+            df_w["buy"] = (df_w["dir"] == 1) & (df_w["dir"].shift(1) == -1)
+            df_w["sell"] = (df_w["dir"] == -1) & (df_w["dir"].shift(1) == 1)
 
-            # numpy 直接计算买卖信号（无 pandas 列赋值）
-            dir_arr = np.zeros(len(ma_arr), dtype=np.int8)
-            dir_arr[0] = -1
-            dir_arr[1:] = np.where(ma_arr[1:] > ma_arr[:-1], 1, -1)
-
-            buy_arr = np.zeros(len(ma_arr), dtype=np.bool_)
-            buy_arr[1:] = (dir_arr[1:] == 1) & (dir_arr[:-1] == -1)
-
-            sell_arr = np.zeros(len(ma_arr), dtype=np.bool_)
-            sell_arr[1:] = (dir_arr[1:] == -1) & (dir_arr[:-1] == 1)
-
-            trades_arr, equity_arr, n_trades = _numba_backtest(
-                close_w_arr, buy_arr, sell_arr, INITIAL_CASH, FEE_RATE
-            )
-
-            trades, _ = _build_trades_from_arrays(
-                code_val, market_val, datetime_w_arr, ma,
-                trades_arr, equity_arr, n_trades
-            )
+            trades, equity_arr = _build_trades_numba(df_w, ma)
 
             if not trades.empty:
                 trades["窗口"] = window_label
@@ -1422,7 +1496,6 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
             summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
             summary["窗口"] = window_label
             summary["窗口内有效数据周期"] = effective_range
-            summary["窗口内有效数据K线数"] = len(df_w)
             summary["策略评分"] = calc_score_row(summary)
 
             window_summary_rows.append(summary)
@@ -1458,42 +1531,54 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
             last_ws_df = window_stability_df[window_stability_df["窗口"] == _target]
             best_stab_ma = (
                 last_ws_df
-                .sort_values(["参数稳定性评分", "策略评分排名标准差"], ascending=[False, True])
+                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
                 .iloc[0]["均线周期"]
             )
 
     # =============================================
-    # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
-    # 直接修改 df 列，无需 .copy()——get_last_signal_info 只读最后一行
+    # 参数扫描热力图（PNG 写入开销小，保留在 worker 中）
     # =============================================
-    _top_turnover_map = _load_top_turnover_map()
+    if window_summary_rows:
+        generate_param_heatmap(code, window_summary_rows, save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"), best_ma=best_stab_ma, stock_name=stock_name)
+
+    if window_stability_df is not None and not window_stability_df.empty:
+        generate_stability_heatmap(
+            code, window_stability_df,
+            save_dir=os.path.join(TRADE_DIR, _market_subdir(code), "heatmaps"),
+            best_ma=best_stab_ma,
+            stock_name=stock_name,
+        )
+
+    # =============================================
+    # 从全量数据计算当前信号（用于信号扫描，复用预计算的 HA 和均线）
+    # =============================================
     signal_map = {}
     for ma in MA_LIST:
-        df["ha_close"] = ha_close_full
-        df["ma"] = ma_cache[ma]
-        df["dir"] = np.where(df["ma"] > df["ma"].shift(1), 1, -1)
-        df["buy"] = (df["dir"] == 1) & (df["dir"].shift(1) == -1)
-        df["sell"] = (df["dir"] == -1) & (df["dir"].shift(1) == 1)
-        signal_info = get_last_signal_info(df)
+        d = df.copy()
+        d["ha_close"] = ha_close_full
+        d["ma"] = ma_cache[ma]
+        d["dir"] = np.where(d["ma"] > d["ma"].shift(1), 1, -1)
+        d["buy"] = (d["dir"] == 1) & (d["dir"].shift(1) == -1)
+        d["sell"] = (d["dir"] == -1) & (d["dir"].shift(1) == 1)
+        signal_info = get_last_signal_info(d)
         signal_info["K线周期"] = BAR_INTERVAL
         signal_info["均线周期"] = ma
         signal_info["股票代码"] = code
         signal_info["股票名称"] = stock_name
         signal_info["所属板块"] = stock_plates
-        _turnover_rank = _top_turnover_map.get(code)
-        signal_info["是否全市场成交额前200"] = "是" if _turnover_rank else "否"
-        signal_info["全市场成交额排名"] = _turnover_rank
-        signal_info["市场"] = market_val
+        # 从 df 读取 market 字段
+        _market_val = str(df.get("market", pd.Series([""])).iloc[0]) if "market" in df.columns else ""
+        signal_info["市场"] = _market_val
         signal_map[ma] = signal_info
 
-    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file, stock_name, best_stab_ma
+    return stock_all_rows, stock_stability_dfs, signal_map, window_stability_df, out_file
 
 
 def _round_display(df, pct_cols=None):
     """输出前统一处理浮点列：
     - 百分比字段 ÷100 → Excel 原生百分比格式
     - 其余 float 列保留 2 位小数
-    - 参数稳定性评分保留 3 位小数
+    - 参数稳定性综合评分保留 3 位小数
     不影响原始计算精度。
     """
     df = df.copy()
@@ -1501,8 +1586,8 @@ def _round_display(df, pct_cols=None):
     for col in df.select_dtypes(include=["float", "float64"]).columns:
         if col in pct_set:
             df[col] = (df[col] / 100.0).round(4)
-        elif col == "参数稳定性评分":
-            df[col] = df[col].round(6)
+        elif col == "参数稳定性综合评分":
+            df[col] = df[col].round(3)
         else:
             df[col] = df[col].round(2)
     return df
@@ -1534,10 +1619,10 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
             last_df = all_df[all_df["窗口"] == _wins[-1]]
 
     # 回测指标字段（2.py 参考清单）
-    BT_COLS = ["策略评分", "收益率", "年化收益率", "买入持有收益率", "超额收益率", "平均每笔收益率",
+    BT_COLS = ["策略评分", "收益率", "年化收益率", "买入持有收益率", "超额收益率",
                "最大回撤", "夏普比率", "卡尔玛比率",
                "交易次数", "盈利交易率", "盈利因子", "盈亏比",
-               "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
+               "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
                "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
                "初始资金", "最终资金", "窗口", "窗口内有效数据周期"]
 
@@ -1577,8 +1662,6 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
                 for col in BT_COLS:
                     if col in _r:
                         row[col] = _r[col]
-                if "窗口内有效数据K线数" in _r:
-                    row["窗口内有效数据K线数"] = int(_r["窗口内有效数据K线数"])
 
         # 均线趋势共振（2.py 原版逻辑）
         trend_lookup = {ma: info.get("趋势方向") for ma, info in sig_map.items()}
@@ -1605,15 +1688,18 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
         else:
             row["预计持仓进度"] = None
 
-        # 预计涨幅进度 = 距离历史信号收盘价涨跌幅 / 平均每笔收益率（仅多头且收益率 > 0）
-        _hist_change = row.get("距离历史信号收盘价涨跌幅")
-        _avg_trade_ret = row.get("平均每笔收益率")
-        if row.get("趋势方向") == 1 and _hist_change is not None and _avg_trade_ret is not None and _avg_trade_ret > 0:
-            row["预计涨幅进度"] = round(min(_hist_change / _avg_trade_ret * 100, 100), 2)
+        # 窗口内有效数据天数 = 解析 "窗口内有效数据周期" 日期范围
+        _win_period = row.get("窗口内有效数据周期", "")
+        if isinstance(_win_period, str) and "~" in _win_period:
+            try:
+                parts = _win_period.split("~")
+                _d1 = pd.Timestamp(parts[0])
+                _d2 = pd.Timestamp(parts[1])
+                row["窗口内有效数据天数"] = (_d2 - _d1).days
+            except Exception:
+                row["窗口内有效数据天数"] = None
         else:
-            row["预计涨幅进度"] = None
-
-        # 窗口内有效数据K线数（由 _process_one_stock 预计算，上方已从 last_df 复制）
+            row["窗口内有效数据天数"] = None
 
         rows.append(row)
 
@@ -1652,22 +1738,21 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
 
 
 SIGNAL_COLS = [
-    "股票代码", "股票名称", "所属板块", "市场", "是否全市场成交额前200", "全市场成交额排名", "K线周期", "均线周期",
+    "股票代码", "股票名称", "所属板块", "市场", "K线周期", "均线周期",
     "策略评分", "策略表现",
     "时间", "收盘价", "HA收盘价", "HA均线值",
     "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
     "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
     "预计持仓进度",
-    "距离历史信号收盘价涨跌幅", "预计涨幅进度",
-    "持仓日化收益率",
+    "距离历史信号收盘价涨跌幅", "持仓日化收益率",
     "均线趋势共振方向", "共振均线数量", "共振均线列表",
-    "收益率", "年化收益率", "买入持有收益率", "超额收益率", "平均每笔收益率",
+    "收益率", "年化收益率", "买入持有收益率", "超额收益率",
     "最大回撤", "夏普比率", "卡尔玛比率",
     "交易次数", "盈利交易率", "盈利因子", "盈亏比",
-    "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
+    "平均盈利", "平均亏损", "最大单笔盈利", "最大单笔亏损",
     "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
     "初始资金", "最终资金",
-    "窗口", "窗口内有效数据周期", "窗口内有效数据K线数",
+    "窗口", "窗口内有效数据周期", "窗口内有效数据天数",
 ]
 
 
@@ -1675,29 +1760,7 @@ SIGNAL_COLS = [
 
 def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
                           window_stability_dfs, market_label):
-    """写入汇总 Excel（信号扫描 + WalkForward + 最优参数 + 统计逻辑）+ 4 个独立 parquet。"""
-    _base = out_path.replace(".xlsx", "")
-
-    # 独立 parquet：回测汇总
-    if all_df is not None and not all_df.empty:
-        _all_out = reorder_columns(all_df)
-        apply_cn_mapping(_all_out)
-        _all_out = _round_display(_all_out, PCT_COLS)
-        _all_out.to_parquet(f"{_base}_回测汇总.parquet", index=False)
-
-    # 独立 parquet：策略评分明细 / 排名
-    if score_matrix is not None and not score_matrix.empty:
-        _round_display(score_matrix).to_parquet(f"{_base}_策略评分明细.parquet", index=False)
-    if rank_matrix is not None and not rank_matrix.empty:
-        _round_display(rank_matrix).to_parquet(f"{_base}_策略评分排名.parquet", index=False)
-
-    # 独立 parquet：全窗口参数稳定性分析
-    if window_stability_dfs:
-        _ws = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
-        _wpct = ["盈利窗口占比", "年化收益率平均值"]
-        _ws_out = _round_display(_ws, _wpct)
-        _ws_out.to_parquet(f"{_base}_全窗口参数稳定性分析.parquet", index=False)
-
+    """写入多 sheet 综合 Excel（信号扫描 + 汇总 + 评分 + 稳定性 + 统计逻辑）。"""
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         # --- 1. 信号扫描（列顺序匹配 2py）---
         sig_out = signal_df[[c for c in SIGNAL_COLS if c in signal_df.columns]]
@@ -1720,26 +1783,29 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
                     f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
                 )
 
-        # 预计涨幅进度列：绿色实心填充数据条
-        if "预计涨幅进度" in sig_out.columns:
-            from openpyxl.formatting.rule import DataBarRule
-            from openpyxl.utils import get_column_letter
-            _col_letter = get_column_letter(list(sig_out.columns).index("预计涨幅进度") + 1)
-            _nrows = len(sig_out)
-            if _nrows > 0:
-                _rule = DataBarRule(start_type="min", end_type="max",
-                                    color="27AE60",
-                                    showValue=True,
-                                    minLength=None, maxLength=None)
-                writer.sheets["信号扫描"].conditional_formatting.add(
-                    f"{_col_letter}2:{_col_letter}{_nrows + 1}", _rule
-                )
+        # --- 2. 回测汇总 ---
+        all_out = reorder_columns(all_df)
+        apply_cn_mapping(all_out)
+        all_out = _round_display(all_out, PCT_COLS)
+        all_out.to_excel(writer, sheet_name="回测汇总", index=False)
+        _set_pct_format(writer.sheets["回测汇总"], all_out, PCT_COLS)
 
-        # --- 2. Walk-Forward回测汇总（如果有）---
-        if "Walk-Forward回测汇总" in [s for s in signal_df.columns if False]:
-            pass  # 已通过 seq_trades_dfs 写入
+        # --- 3. 策略评分明细 ---
+        if score_matrix is not None and not score_matrix.empty:
+            _round_display(score_matrix).to_excel(writer, sheet_name="策略评分明细", index=False)
 
-        # --- 3. 各窗口最优参数变动情况 ---
+        # --- 4. 策略评分排名 ---
+        if rank_matrix is not None and not rank_matrix.empty:
+            _round_display(rank_matrix).to_excel(writer, sheet_name="策略评分排名", index=False)
+
+        # --- 5. 全窗口参数稳定性分析 ---
+        if window_stability_dfs:
+            _ws = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
+            _wpct = ["盈利窗口占比", "年化收益率平均值"]
+            _round_display(_ws, _wpct).to_excel(writer, sheet_name="全窗口参数稳定性分析", index=False)
+            _set_pct_format(writer.sheets["全窗口参数稳定性分析"], _ws, _wpct)
+
+        # --- 6. 各窗口最优参数变动情况 ---
         if window_stability_dfs:
             _ws2 = pd.concat(window_stability_dfs, ignore_index=True) if isinstance(window_stability_dfs, list) else window_stability_dfs
             best_all_ws = _ws2[_ws2["是否最优"] == "最优"].copy()
@@ -1771,20 +1837,20 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "Sheet说明", "名称": "信号扫描",
              "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（买入/卖出/持有/观察）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按策略评分降序排列；均线趋势共振分析检测各周期方向一致性"},
             {"类型": "Sheet说明", "名称": "回测汇总",
-             "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（独立parquet文件）"},
+             "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（含策略评分、窗口标签、收益/风险指标等）"},
             {"类型": "Sheet说明", "名称": "策略评分明细",
-             "统计逻辑": "透视表，行=股票代码+K线周期+均线周期，列=窗口时间区间，值=策略评分（独立parquet文件）"},
+             "统计逻辑": "透视表，行=股票代码+K线周期+均线周期，列=窗口时间区间，值=策略评分"},
             {"类型": "Sheet说明", "名称": "策略评分排名",
-             "统计逻辑": "透视表，同上结构，值改为窗口内排名（独立parquet文件）"},
+             "统计逻辑": "透视表，同上结构，值改为窗口内排名（每窗口每股票内的参数间排名，同分取最小排名）"},
             {"类型": "Sheet说明", "名称": "全窗口参数稳定性分析",
-             "统计逻辑": "个股层面，对每个累积窗口阶段计算参数稳定性（独立parquet文件）"},
+             "统计逻辑": "个股层面，对每个累积窗口阶段计算参数稳定性（同参数稳定性分析逻辑，按窗口展开），排序=股票代码↑|窗口↑|均线周期↑"},
             {"类型": "Sheet说明", "名称": "各窗口最优参数变动情况",
-             "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
+             "统计逻辑": "透视表，行=股票代码，列=窗口，值=均线周期；选取每只股票每个窗口中参数稳定性综合评分最高的均线周期，展示最优参数随窗口变化的趋势；末尾3列为股性指标：最优参数变动次数（相邻窗口间最优参数切换次数）、最优参数标准差（最优参数的分散程度）、股性评分（固定扣分公式 = max(0, 100 − 变动次数×5 − 标准差×2)，变动越少越稳定得分越高）"},
             {"类型": "", "名称": "", "统计逻辑": ""},
             # ── 评分模型 ──
             {"类型": "评分模型", "名称": "策略评分",
              "统计逻辑": "Score = 0.30*CAGR + 0.25*Sharpe + 0.20*(1-最大回撤) + 0.15*盈利因子 + 0.05*盈利交易率 + 0.05*交易次数；子指标min-max归一化，CAGR:0-30, Sharpe:0-2, 回撤:0-50, 盈利因子:1-3, 盈利率:30-80, 交易次数:10-100，加权求和范围0~100"},
-            {"类型": "评分模型", "名称": "参数稳定性评分",
+            {"类型": "评分模型", "名称": "参数稳定性综合评分",
              "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定；输出保留3位小数"},
             # ── 基本字段 ──
             {"类型": "基本字段", "名称": "股票代码",
@@ -1793,16 +1859,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "股票中文名称，来源于 parquet 数据文件"},
             {"类型": "基本字段", "名称": "所属板块",
              "统计逻辑": "股票行业/板块分类，来源于 parquet 数据文件"},
-            {"类型": "基本字段", "名称": "是否全市场成交额前200",
-             "统计逻辑": "是否在当日成交额前200美股列表中，由9download_uscncc.py --top-turnover生成，用于筛选高流动性标的"},
-            {"类型": "基本字段", "名称": "全市场成交额排名",
-             "统计逻辑": "该股在当日美股成交额中的排名（1~200），仅当是否全市场成交额前200为是时有效"},
             {"类型": "基本字段", "名称": "市场",
              "统计逻辑": "US=美股, CN=A股, CC=加密货币"},
             {"类型": "基本字段", "名称": "K线周期",
-             "统计逻辑": "1W=周K, 1D=日K, 60m=60分钟K"},
+             "统计逻辑": "1D=日K, 1W=周K"},
             {"类型": "基本字段", "名称": "均线周期",
-             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性评分最高的均线周期，作为该股票的最优参数，跳过最后一个未完整窗口"},
+             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性综合评分最高的均线周期，作为该股票的最优参数，跳过最后一个未完整窗口"},
             # ── 策略表现 ──
             {"类型": "策略表现", "名称": "策略表现",
              "统计逻辑": "策略评分分档标签：≥80为「1优」，≥60为「2良」，≥40为「3中」，≥20为「4差」，<20为「5劣」"},
@@ -1824,7 +1886,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "信号字段", "名称": "最新信号收盘价",
              "统计逻辑": "最新信号时间对应的原始收盘价"},
             {"类型": "信号字段", "名称": "最新信号确认",
-             "统计逻辑": "仅周线生效：BUY/SELL信号且距离最近一次信号<5根K线为「待确认，周K未正式收盘」，否则为「已确认」；日线和60分钟始终为「已确认」"},
+             "统计逻辑": "BUY/SELL信号且距离最近一次信号<5根K线为「待确认，K线未正式收盘」，否则为「已确认」"},
             {"类型": "信号字段", "名称": "历史信号",
              "统计逻辑": "倒数第二次出现的 BUY/SELL 信号方向"},
             {"类型": "信号字段", "名称": "历史信号时间",
@@ -1835,8 +1897,6 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "当前最新K线日期 − 历史信号日期，单位自然日"},
             {"类型": "信号字段", "名称": "预计持仓进度",
              "统计逻辑": "仅多头计算 = min(已过天数 / 平均持仓天数 × 100%, 100%)，反映当前持仓占平均持仓周期的进度"},
-            {"类型": "信号字段", "名称": "预计涨幅进度",
-             "统计逻辑": "仅多头且平均每笔收益率>0时计算 = min(涨跌幅 / 平均每笔收益率 × 100%, 100%)，反映当前涨幅已实现的平均收益进度"},
             {"类型": "信号字段", "名称": "距离历史信号收盘价涨跌幅",
              "统计逻辑": "(当前收盘价 − 历史信号收盘价) / 历史信号收盘价 × 100%"},
             {"类型": "信号字段", "名称": "持仓日化收益率",
@@ -1857,8 +1917,6 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "同期简单买入持有策略的收益率 = (窗口最后收盘价 − 窗口最初收盘价) / 窗口最初收盘价 × 100%"},
             {"类型": "回测指标", "名称": "超额收益率",
              "统计逻辑": "策略年化收益率 − 买入持有年化收益率，衡量策略相对基准的超额收益"},
-            {"类型": "回测指标", "名称": "平均每笔收益率",
-             "统计逻辑": "所有交易收益率(%)的算术平均值 = sum(每笔收益率%) / 交易次数，衡量单笔交易的平均收益水平"},
             {"类型": "回测指标", "名称": "最大回撤",
              "统计逻辑": "资金曲线从峰值到谷底的最大跌幅 = max(1 − 当日资金/当日之前峰值资金) × 100%"},
             {"类型": "回测指标", "名称": "夏普比率",
@@ -1875,12 +1933,8 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "平均盈利 / 平均亏损（绝对值），衡量单次盈利与亏损的比例；>2为良好"},
             {"类型": "回测指标", "名称": "平均盈利",
              "统计逻辑": "所有盈利交易的平均盈利金额"},
-            {"类型": "回测指标", "名称": "平均盈利比",
-             "统计逻辑": "所有盈利交易的平均盈亏百分比"},
             {"类型": "回测指标", "名称": "平均亏损",
              "统计逻辑": "所有亏损交易的平均亏损金额（正数表示）"},
-            {"类型": "回测指标", "名称": "平均亏损比",
-             "统计逻辑": "所有亏损交易的平均盈亏百分比（负数）"},
             {"类型": "回测指标", "名称": "最大单笔盈利",
              "统计逻辑": "所有盈利交易中最大的一笔盈利金额"},
             {"类型": "回测指标", "名称": "最大单笔亏损",
@@ -1897,14 +1951,14 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "回测结束后账户总资金 = 初始资金 + 累计盈亏"},
             # ── 窗口信息 ──
             {"类型": "窗口信息", "名称": "窗口",
-             "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；起始日期为各周期数据的最早日期，步长：周线12个月/日线6个月/60分钟3个月，所有股票共享同一套窗口列表"},
+             "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；从2000-01-03起按1年步长递增，所有股票共享同一套窗口列表"},
             {"类型": "窗口信息", "名称": "窗口内有效数据周期",
              "统计逻辑": "该窗口实际数据的起止日期区间，格式 起始日期~结束日期；若股票上市晚于窗口起始，起始日期为数据首日"},
-            {"类型": "窗口信息", "名称": "窗口内有效数据K线数",
+            {"类型": "窗口信息", "名称": "窗口内有效数据天数",
              "统计逻辑": "从窗口内有效数据周期解析出的实际天数 = 结束日期 − 起始日期"},
             # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
-             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性评分最高的均线周期，选作信号扫描使用的参数"},
+             "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性综合评分最高的均线周期，选作信号扫描使用的参数"},
             # ── 参数稳定性 ──
             {"类型": "参数稳定性", "名称": "窗口数量",
              "统计逻辑": "该均线周期参与计算的窗口总数"},
@@ -1922,12 +1976,12 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "该均线周期在各窗口中策略评分排名的标准差，越低越稳定"},
             {"类型": "参数稳定性", "名称": "策略评分排名第一次数",
              "统计逻辑": "该均线周期在各窗口中排名第一的次数，衡量夺冠能力"},
-            {"类型": "参数稳定性", "名称": "参数稳定性评分",
+            {"类型": "参数稳定性", "名称": "参数稳定性综合评分",
              "统计逻辑": "Score = 0.20*avg_rank_n + 0.10*top3_n + 0.15*std_n + 0.25*cagr_n + 0.20*win_rate_n + 0.10*cagr_std_n；各指标min-max归一化，排名类占0.45，收益类(均值+占比+标准差)占0.55，越高越稳定；输出保留3位小数"},
             {"类型": "参数稳定性", "名称": "策略评分排名Top3占比",
              "统计逻辑": "该均线周期在各窗口中排名前三的次数占比"},
             {"类型": "参数稳定性", "名称": "是否最优",
-             "统计逻辑": "每只股票每个窗口内参数稳定性评分最高者标记为「最优」，并列时以策略评分排名标准差升序+年化收益率平均值降序决胜，确保唯一"},
+             "统计逻辑": "每只股票每个窗口内参数稳定性综合评分最高者标记为「最优」，并列时以策略评分排名标准差升序+年化收益率平均值降序决胜，确保唯一"},
         ]
         pd.DataFrame(logic_rows).to_excel(writer, sheet_name="统计逻辑", index=False)
 
@@ -1944,8 +1998,7 @@ def run_trade():
     # 过滤出有数据文件的股票，用于进度条总计数
     available = [s for s in symbols if _find_data_file(s)]
 
-    # 扫描全市场数据，取最早和最晚日期作为窗口范围
-    global_start = pd.Timestamp("2099-12-31")
+    # 扫描全市场数据，取最晚日期作为全局窗口终点
     global_end = pd.Timestamp("2000-01-01")
     for s in available:
         try:
@@ -1953,21 +2006,13 @@ def run_trade():
             if not _path:
                 continue
             _tmp = pd.read_parquet(_path, columns=["datetime"])
-            _min = pd.to_datetime(_tmp["datetime"]).min()
             _max = pd.to_datetime(_tmp["datetime"]).max()
-            if _min < global_start:
-                global_start = _min
             if _max > global_end:
                 global_end = _max
         except Exception:
             continue
-    global WINDOW_START_DATE
-    # 按周期步长对齐窗口起点
-    _s = {12: 12, 6: 6, 3: 3}.get(STEP_MONTHS, 12)
-    _am = ((global_start.month - 1) // _s) * _s + 1
-    WINDOW_START_DATE = f"{global_start.year}-{_am:02d}-03"
     windows = generate_windows(end_date=global_end)
-    print(f"窗口范围: {WINDOW_START_DATE} ~ {global_end.date()}, 共 {len(windows)} 个窗口")
+    print(f"全局窗口终点: {global_end.date()}, 共 {len(windows)} 个窗口")
 
     # 按市场分组
     def _market_group(code):
@@ -1985,7 +2030,6 @@ def run_trade():
     all_rows = []
     all_signal_maps = {}
     window_stability_dfs = []
-    _heatmap_cache = []  # (code, summary_rows, stability_df, best_ma, stock_name)
 
     for mkt in market_order:
         group = market_groups[mkt]
@@ -1998,39 +2042,30 @@ def run_trade():
         market_signal_maps = {}
         market_window_stability = []
 
-        _results = {}
-        _kt = {"1W": "week", "1D": "day", "60m": "60m"}.get(BAR_INTERVAL, "week")
-        _workers = os.cpu_count() - 1
-        with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
-            future_to_code = {executor.submit(_process_one_stock, code, windows, _kt, MA_MODE): code for code in group}
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() - 1) as executor:
+            future_to_code = {executor.submit(_process_one_stock, code, windows): code for code in group}
+            _results = {}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
-                    for future in concurrent.futures.as_completed(future_to_code):
-                        code = future_to_code[future]
-                        try:
-                            _results[code] = future.result()
-                        except Exception as e:
-                            _results[code] = e
-                        finally:
-                            pbar.update(1)
+                for future in concurrent.futures.as_completed(future_to_code):
+                    code = future_to_code[future]
+                    try:
+                        _results[code] = future.result()
+                    except Exception as e:
+                        _results[code] = e
+                    finally:
+                        pbar.update(1)
 
-        _success = 0
-        _failed = []
-        for code in sorted(_results.keys()):
+            for code in sorted(_results.keys()):
                 result = _results[code]
                 if isinstance(result, Exception):
-                    _failed.append((code, str(result)))
+                    tqdm.write(f"  失败: {code} {result}")
                 else:
-                    _success += 1
-                    s_all, s_stab, sig_map, s_ws, out_f, stock_name, best_ma = result
+                    s_all, s_stab, sig_map, s_ws, out_f = result
                     market_rows.extend(s_all)
                     market_signal_maps[code] = sig_map
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
-                    # 收集热力图数据（主进程统一生成，避免 worker 中 matplotlib 开销）
-                    _heatmap_cache.append((code, s_all, s_ws, best_ma, stock_name))
-        tqdm.write(f"  {mkt.upper()} 完成: {_success} 成功")
-        if _failed:
-            tqdm.write(f"  {mkt.upper()} 失败: {len(_failed)} 只 — {'; '.join(f'{c}({e})' for c, e in _failed)}")
+                    tqdm.write(f"  完成: {code}")
 
         # ---- 本市场汇总 ----
         if not market_rows:
@@ -2047,7 +2082,7 @@ def run_trade():
             last_ws_mkt = all_ws_mkt[all_ws_mkt["窗口"] == _target]
             stab_mkt = (
                 last_ws_mkt
-                .sort_values(["参数稳定性评分", "策略评分排名标准差"], ascending=[False, True])
+                .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
                 .groupby("股票代码", sort=False)
                 .head(1)
                 .reset_index(drop=True)
@@ -2056,12 +2091,14 @@ def run_trade():
         # 本市场信号扫描
         signal_mkt = _build_signal_scan(market_df, market_signal_maps, stab_mkt, all_signal_maps)
 
-        # 收集热力图数据到全局缓存（统一看板在回测完成后生成）
-        global _HEATMAP_CACHE
-        _mkt_entries = [(c, r, w, b, s) for c, r, w, b, s in _heatmap_cache
-                        if _market_subdir(c) == mkt]
-        if _mkt_entries:
-            _HEATMAP_CACHE.setdefault(BAR_INTERVAL, {})[mkt] = _mkt_entries
+        if not signal_mkt.empty:
+            # 本市场全股票热力图
+            mkt_dir = os.path.join(TRADE_DIR, mkt)
+            if market_window_stability:
+                all_ws_mkt = pd.concat(market_window_stability, ignore_index=True)
+                generate_all_stock_best_ma_heatmap(
+                    all_ws_mkt, save_dir=os.path.join(mkt_dir, "heatmaps")
+                )
 
         # 累计到全市场
         all_rows.extend(market_rows)
@@ -2085,7 +2122,7 @@ def run_trade():
         last_ws = all_ws_stab[all_ws_stab["窗口"] == _target_ws]
         stab_best = (
             last_ws
-            .sort_values(["参数稳定性评分", "策略评分排名标准差"], ascending=[False, True])
+            .sort_values(["参数稳定性综合评分", "策略评分排名标准差"], ascending=[False, True])
             .groupby("股票代码", sort=False)
             .head(1)
             .reset_index(drop=True)
@@ -2111,7 +2148,7 @@ def run_trade():
         else:
             missing_codes.append(code)
 
-    tv_path = os.path.join(TRADE_DIR, TRADE_SUBDIR, "tradingview_params.txt")
+    tv_path = os.path.join(TRADE_DIR, "tradingview_params.txt")
     with open(tv_path, "w", encoding="utf-8") as f:
         f.write("\n".join(tv_lines) + "\n")
     print(f"\nTradingView 配置文件: {tv_path} 共 {len(tv_lines)} 只股票")
@@ -2123,11 +2160,17 @@ def run_trade():
 
     # 全市场汇总 Excel
     date_str = pd.Timestamp.today().strftime("%Y%m%d")
-    all_out = os.path.join(TRADE_DIR, TRADE_SUBDIR, f"{date_str}_{TRADE_SUBDIR}_信号汇总.xlsx")
+    all_out = os.path.join(TRADE_DIR, f"all_summary_param_scan_{date_str}.xlsx")
     _write_summary_excel(all_out, signal_all, all_df, score_all, rank_all,
                         window_stability_dfs, "全市场")
     print(f"全市场完成: {all_out}")
 
+    # 全股票各窗口最优参数热力图
+    if window_stability_dfs:
+        all_ws_hm = pd.concat(window_stability_dfs, ignore_index=True)
+        generate_all_stock_best_ma_heatmap(
+            all_ws_hm, save_dir=os.path.join(TRADE_DIR, "heatmaps")
+        )
 
 # =========================================================
 # 富途自选股分组同步
@@ -2135,223 +2178,8 @@ def run_trade():
 # 同步和导出功能已移除
 
 # =========================================================
-def generate_unified_signal_excel(ktypes_run):
-    """读取各周期信号汇总Excel，生成统一信号汇总Excel。
-
-    Sheet1: 信号扫描（合并所有周期，K线周期排首位）
-    Sheet2: 各周期信号对比（横向对比 + 方向共振统计）
-    Sheet3~: {周期}_最优参数变动（每个周期一个sheet）
-    SheetN: 统计逻辑
-    """
-    import glob as _glob
-    _kt_dir = {"week": "1w", "day": "1d", "60m": "60m"}
-    _kt_label = {"1w": "1W", "1d": "1D", "60m": "60m"}
-    _kt_order = {"1W": 0, "1D": 1, "60m": 2}
-    _cmp_label = {"1w": "（周线）", "1d": "（日线）", "60m": "（60分钟）"}
-    _kt_dirs_used = [_kt_dir[k] for k in ktypes_run if k in _kt_dir]
-
-    if not _kt_dirs_used:
-        return
-
-    # ── 读取各周期数据 ──
-    _sig_dfs = {}  # {1w: DataFrame}
-    _param_dfs = {}  # {1w: DataFrame}
-    _stats_df = None
-    for _d in _kt_dirs_used:
-        _files = sorted(_glob.glob(os.path.join(TRADE_DIR, _d, "*_信号汇总.xlsx")))
-        if not _files:
-            continue
-        _fp = _files[-1]
-        try:
-            _df = pd.read_excel(_fp, sheet_name="信号扫描")
-            if not _df.empty:
-                _df["K线周期"] = _kt_label[_d]
-                _sig_dfs[_d] = _df
-        except Exception:
-            pass
-        try:
-            _pdf = pd.read_excel(_fp, sheet_name="各窗口最优参数变动情况")
-            if not _pdf.empty:
-                _param_dfs[_d] = _pdf
-        except Exception:
-            pass
-        if _stats_df is None:
-            try:
-                _stats_df = pd.read_excel(_fp, sheet_name="统计逻辑")
-            except Exception:
-                pass
-
-    if not _sig_dfs:
-        return
-
-    _date_str = pd.Timestamp.today().strftime("%Y%m%d")
-    _out_path = os.path.join(TRADE_DIR, f"{_date_str}_各周期信号汇总.xlsx")
-
-    with pd.ExcelWriter(_out_path, engine="openpyxl") as _writer:
-
-        # ── Sheet 1: 信号扫描（合并所有周期）──
-        _all_sig = pd.concat(list(_sig_dfs.values()), ignore_index=True, sort=False)
-        # 排序：按 1W 的趋势方向→天数→评分排股票，再按 K线周期 排个股
-        _w1 = _all_sig[_all_sig["K线周期"] == "1W"][["股票代码", "趋势方向", "距离历史信号已过天数", "策略评分"]].copy()
-        _w1 = _w1.rename(columns={"趋势方向": "_w1_dir", "距离历史信号已过天数": "_w1_days", "策略评分": "_w1_score"})
-        _w1["_w1_dir"] = _w1["_w1_dir"].map({"多头": 0, "空头": 1}).fillna(1)
-        _w1["_w1_days"] = _w1["_w1_days"].fillna(9999)
-        _w1["_w1_score"] = -_w1["_w1_score"].fillna(0)
-        _all_sig = _all_sig.merge(_w1, on="股票代码", how="left")
-        _all_sig["_w1_dir"] = _all_sig["_w1_dir"].fillna(1)
-        _all_sig["_w1_days"] = _all_sig["_w1_days"].fillna(9999)
-        _all_sig["_w1_score"] = _all_sig["_w1_score"].fillna(0)
-        _all_sig["_k"] = _all_sig["K线周期"].map(_kt_order).fillna(0)
-        _all_sig = _all_sig.sort_values(["_w1_dir", "_w1_days", "_w1_score", "_k"]).drop(
-            columns=["_w1_dir", "_w1_days", "_w1_score", "_k"], errors="ignore"
-        ).reset_index(drop=True)
-        _all_sig.to_excel(_writer, sheet_name="信号扫描", index=False)
-        _set_pct_format(_writer.sheets["信号扫描"], _all_sig, PCT_COLS)
-        # 日期列格式对齐 YYYY-MM-DD
-        from openpyxl.utils import get_column_letter as _cl
-        for _date_col in ["时间", "最新信号时间", "历史信号时间"]:
-            if _date_col in _all_sig.columns:
-                _ws = _writer.sheets["信号扫描"]
-                _col_idx = list(_all_sig.columns).index(_date_col) + 1
-                for _cell in _ws[_cl(_col_idx)]:
-                    if _cell.row > 1 and isinstance(_cell.value, pd.Timestamp):
-                        _cell.number_format = "YYYY-MM-DD"
-
-        # 数据条（按各自周期范围）：预计持仓进度（蓝色）、预计涨幅进度（绿色）
-        _kt_kt_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
-        for _col_name in ["预计持仓进度", "预计涨幅进度"]:
-            if _col_name in _all_sig.columns:
-                from openpyxl.formatting.rule import DataBarRule
-                from openpyxl.utils import get_column_letter
-                _col_letter = get_column_letter(list(_all_sig.columns).index(_col_name) + 1)
-                _color = "5B9BD5" if _col_name == "预计持仓进度" else "70AD47"
-                # 按 K线周期 分组各自应用数据条范围
-                _row = 2  # Excel 首行是表头
-                for _kt in [_kt_label[d] for d in _kt_dirs_used]:
-                    _count = (_all_sig["K线周期"] == _kt).sum()
-                    if _count > 0:
-                        _end_row = _row + _count - 1
-                        _bar_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=1,
-                                                color=_color, showValue=True)
-                        _writer.sheets["信号扫描"].conditional_formatting.add(
-                            f"{_col_letter}{_row}:{_col_letter}{_end_row}", _bar_rule
-                        )
-                        _row += _count
-
-        # ── Sheet 2: 各周期信号对比 ──
-        _base_cols = ["股票代码", "股票名称", "所属板块", "市场",
-                      "是否全市场成交额前200", "全市场成交额排名"]
-        _cmp_fields = ["均线周期", "策略评分", "策略表现", "趋势方向", "最新信号"]
-
-        # 按股票代码合并各周期
-        _merged = None
-        for _d in _kt_dirs_used:
-            _df = _sig_dfs[_d].copy()
-            _rename = {c: f"{c}{_cmp_label[_d]}" for c in _df.columns
-                       if c not in _base_cols and c != "K线周期"}
-            _renamed = _df.rename(columns=_rename)
-            _keep = _base_cols + [f"{f}{_cmp_label[_d]}" for f in _cmp_fields]
-            _keep = [c for c in _keep if c in _renamed.columns]
-            _merged_part = _renamed[_keep].set_index("股票代码")
-            if _merged is None:
-                _merged = _merged_part
-            else:
-                _merged_part = _merged_part.drop(columns=[c for c in _base_cols if c in _merged_part.columns], errors="ignore")
-                _merged = _merged.join(_merged_part, how="outer")
-
-        if _merged is not None:
-            _merged = _merged.reset_index()
-            # 计算方向共振
-            _dir_cols = [f"趋势方向{_cmp_label[d]}" for d in _kt_dirs_used]
-            _exist_dir = [c for c in _dir_cols if c in _merged.columns]
-            if _exist_dir:
-                _merged["多头趋势方向多周期共振数量"] = _merged[_exist_dir].apply(
-                    lambda r: (r == "多头").sum(), axis=1)
-                _merged["空头趋势方向多周期共振数量"] = _merged[_exist_dir].apply(
-                    lambda r: (r == "空头").sum(), axis=1)
-                _merged = _merged.sort_values(
-                    ["多头趋势方向多周期共振数量", "股票代码"],
-                    ascending=[False, True]
-                ).reset_index(drop=True)
-            # 按字段分组重排列序
-            _col_order = [c for c in _base_cols if c in _merged.columns]
-            for _f in _cmp_fields:
-                for _d in _kt_dirs_used:
-                    _col = f"{_f}{_cmp_label[_d]}"
-                    if _col in _merged.columns:
-                        _col_order.append(_col)
-            for _c in ["多头趋势方向多周期共振数量", "空头趋势方向多周期共振数量"]:
-                if _c in _merged.columns:
-                    _col_order.append(_c)
-            _merged = _merged[[c for c in _col_order if c in _merged.columns]]
-            _merged.to_excel(_writer, sheet_name="各周期信号对比", index=False)
-
-        # ── Sheet 3~: 各周期最优参数变动 ──
-        for _d, _pdf in _param_dfs.items():
-            _sheet_name = f"{_d}_最优参数变动"
-            _pdf.to_excel(_writer, sheet_name=_sheet_name, index=False)
-
-        # ── 统计逻辑（追加新功能说明）──
-        if _stats_df is not None:
-            _new_rows = [
-                {"类型": "Sheet说明", "名称": "各周期信号对比",
-                 "统计逻辑": "横向对比各周期信号：行=股票代码，列=均线周期/策略评分/策略表现/趋势方向/最新信号（加周期后缀）；末尾2列为多头/空头趋势方向多周期共振数量，统计该股票在所有已跑周期中方向一致的个数"},
-                {"类型": "基本字段", "名称": "K线周期",
-                 "统计逻辑": "1W=周K, 1D=日K, 60m=60分钟K；在信号扫描sheet中作为第一排序字段，顺序为周K→日K→60分钟"},
-                {"类型": "信号字段", "名称": "多头趋势方向多周期共振数量",
-                 "统计逻辑": "该股票在所有已跑周期中趋势方向为「多头」的个数，反映多周期共振强度；仅在各周期信号对比sheet中出现"},
-                {"类型": "信号字段", "名称": "空头趋势方向多周期共振数量",
-                 "统计逻辑": "该股票在所有已跑周期中趋势方向为「空头」的个数，反映多周期共振强度；仅在各周期信号对比sheet中出现"},
-            ]
-            _stats_df = pd.concat([_stats_df, pd.DataFrame(_new_rows)], ignore_index=True, sort=False)
-            _stats_df.to_excel(_writer, sheet_name="统计逻辑", index=False)
-
-        for _ws in _writer.sheets.values():
-            _apply_sheet_format(_ws)
-
-    print(f"各周期信号汇总: {_out_path}")
-
-
-
-
 if __name__ == "__main__":
-    import argparse
-    import sys
-
-    # 兼容旧版 sync 参数
-    if len(sys.argv) > 1 and sys.argv[1] == "sync":
-        print("sync 模式已移除")
-        sys.exit(0)
-
-    parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
-    parser.add_argument("--ktype", default=DEFAULT_KTYPE,
-                        help=f"K线周期: day/周K, week/周K, 60m/60分钟, 逗号拼接如week,day, all=三者全部 (默认: {DEFAULT_KTYPE})")
-    parser.add_argument("--market", default=DEFAULT_MARKET,
-                        help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--ma-mode", choices=["continuous", "jump"], default=MA_MODE,
-                        help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,60m step=4,周线强制连续)")
-    _CLI_ARGS = parser.parse_args()
-    MA_MODE = _CLI_ARGS.ma_mode
-
-    # 解析 ktype 列表（支持逗号拼接）
-    _KT_MAP = {"day": "日K", "week": "周K", "60m": "60分钟K", "all": "全部"}
-    _raw = _CLI_ARGS.ktype.lower().replace("，", ",").split(",")
-    _ktypes = []
-    for _k in _raw:
-        _k = _k.strip()
-        if _k == "all":
-            _ktypes = ["week", "day", "60m"]
-            break
-        if _k in _KT_MAP:
-            if _k not in _ktypes:
-                _ktypes.append(_k)
-    if not _ktypes:
-        print(f"错误: 无效的 --ktype '{_CLI_ARGS.ktype}'，可选 week/day/60m/all 或逗号拼接")
-        sys.exit(1)
-
-    # 初始设置（用第一个 ktype 初始化全局变量）
-    _setup_ktype(_ktypes[0], MA_MODE)
-
+    # _CLI_ARGS 和 ktype 覆盖已在顶部 __main__ 块中完成
     def _filter_symbols(symbols):
         markets = _CLI_ARGS.market.upper().split(",")
         if "ALL" in markets:
@@ -2374,21 +2202,4 @@ if __name__ == "__main__":
     _mod.load_symbols = lambda path: _filter_symbols(_orig_load(path))
 
     init_symbols_file(SYMBOL_FILE)
-
-    import time as _t
-    for i, _kt in enumerate(_ktypes):
-        _t0 = _t.time()
-        print(f"\n{'='*60}")
-        print(f"  开始 {_kt} 回测 ({i+1}/{len(_ktypes)})")
-        print(f"{'='*60}")
-        _setup_ktype(_kt, MA_MODE)
-        run_trade()
-        _elapsed = _t.time() - _t0
-        print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
-
-    # 统一信号汇总 Excel（合并所有已跑周期的信号 + 对比 + 最优参数）
-    generate_unified_signal_excel(_ktypes)
-
-    # 统一热力图看板（覆盖所有已跑的 ktype × market）
-    if _HEATMAP_CACHE:
-        generate_heatmap_dashboard(_HEATMAP_CACHE)
+    run_trade()
