@@ -2182,7 +2182,7 @@ def generate_unified_signal_excel(ktypes_run):
         return
 
     _date_str = pd.Timestamp.today().strftime("%Y%m%d")
-    _out_path = os.path.join(TRADE_DIR, f"{_date_str}_信号汇总.xlsx")
+    _out_path = os.path.join(TRADE_DIR, f"{_date_str}_各周期信号汇总.xlsx")
 
     with pd.ExcelWriter(_out_path, engine="openpyxl") as _writer:
 
@@ -2274,7 +2274,7 @@ def generate_unified_signal_excel(ktypes_run):
         for _ws in _writer.sheets.values():
             _apply_sheet_format(_ws)
 
-    print(f"统一信号汇总: {_out_path}")
+    print(f"各周期信号汇总: {_out_path}")
 
 
 
