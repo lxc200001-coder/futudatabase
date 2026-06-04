@@ -1,11 +1,13 @@
 # 市场数据
 data/
+data_uscncc/
 
 # 回测输出
 trades/
 
 # 扫描结果
 results/
+results_uscncc/
 
 # TradingView 导出
 tradingview/
