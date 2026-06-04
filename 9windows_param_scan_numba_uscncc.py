@@ -58,8 +58,8 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -2261,6 +2261,9 @@ def generate_unified_signal_excel(ktypes_run):
             ]
             _stats_df = pd.concat([_stats_df, pd.DataFrame(_new_rows)], ignore_index=True, sort=False)
             _stats_df.to_excel(_writer, sheet_name="统计逻辑", index=False)
+
+        for _ws in _writer.sheets.values():
+            _apply_sheet_format(_ws)
 
     print(f"统一信号汇总: {_out_path}")
 
