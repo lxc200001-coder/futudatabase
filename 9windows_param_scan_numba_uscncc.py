@@ -1422,6 +1422,7 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
             summary = build_summary(trades, ma, df_w, equity_arr=equity_arr)
             summary["窗口"] = window_label
             summary["窗口内有效数据周期"] = effective_range
+            summary["窗口内有效数据K线数"] = len(df_w)
             summary["策略评分"] = calc_score_row(summary)
 
             window_summary_rows.append(summary)
@@ -1610,18 +1611,8 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
         else:
             row["预计涨幅进度"] = None
 
-        # 窗口内有效数据天数 = 解析 "窗口内有效数据周期" 日期范围
-        _win_period = row.get("窗口内有效数据周期", "")
-        if isinstance(_win_period, str) and "~" in _win_period:
-            try:
-                parts = _win_period.split("~")
-                _d1 = pd.Timestamp(parts[0])
-                _d2 = pd.Timestamp(parts[1])
-                row["窗口内有效数据天数"] = (_d2 - _d1).days
-            except Exception:
-                row["窗口内有效数据天数"] = None
-        else:
-            row["窗口内有效数据天数"] = None
+        # 窗口内有效数据K线数（由 _process_one_stock 预计算，信号扫描中无原始K线数据）
+        row["窗口内有效数据K线数"] = None
 
         rows.append(row)
 
@@ -1675,7 +1666,7 @@ SIGNAL_COLS = [
     "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
     "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
     "初始资金", "最终资金",
-    "窗口", "窗口内有效数据周期", "窗口内有效数据天数",
+    "窗口", "窗口内有效数据周期", "窗口内有效数据K线数",
 ]
 
 
@@ -1908,7 +1899,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "回测窗口的时间区间标签，格式 起始日期~结束日期；起始日期为各周期数据的最早日期，步长：周线12个月/日线6个月/60分钟3个月，所有股票共享同一套窗口列表"},
             {"类型": "窗口信息", "名称": "窗口内有效数据周期",
              "统计逻辑": "该窗口实际数据的起止日期区间，格式 起始日期~结束日期；若股票上市晚于窗口起始，起始日期为数据首日"},
-            {"类型": "窗口信息", "名称": "窗口内有效数据天数",
+            {"类型": "窗口信息", "名称": "窗口内有效数据K线数",
              "统计逻辑": "从窗口内有效数据周期解析出的实际天数 = 结束日期 − 起始日期"},
             # ── 参数选择 ──
             {"类型": "参数选择", "名称": "最优均线周期",
