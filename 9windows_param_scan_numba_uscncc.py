@@ -2247,8 +2247,19 @@ def generate_unified_signal_excel(ktypes_run):
             _sheet_name = f"{_d}_最优参数变动"
             _pdf.to_excel(_writer, sheet_name=_sheet_name, index=False)
 
-        # ── 统计逻辑 ──
+        # ── 统计逻辑（追加新功能说明）──
         if _stats_df is not None:
+            _new_rows = [
+                {"类型": "Sheet说明", "名称": "各周期信号对比",
+                 "统计逻辑": "横向对比各周期信号：行=股票代码，列=均线周期/策略评分/策略表现/趋势方向/最新信号（加周期后缀）；末尾2列为多头/空头趋势方向多周期共振数量，统计该股票在所有已跑周期中方向一致的个数"},
+                {"类型": "基本字段", "名称": "K线周期",
+                 "统计逻辑": "1W=周K, 1D=日K, 60m=60分钟K；在信号扫描sheet中作为第一排序字段，顺序为周K→日K→60分钟"},
+                {"类型": "信号字段", "名称": "多头趋势方向多周期共振数量",
+                 "统计逻辑": "该股票在所有已跑周期中趋势方向为「多头」的个数，反映多周期共振强度；仅在各周期信号对比sheet中出现"},
+                {"类型": "信号字段", "名称": "空头趋势方向多周期共振数量",
+                 "统计逻辑": "该股票在所有已跑周期中趋势方向为「空头」的个数，反映多周期共振强度；仅在各周期信号对比sheet中出现"},
+            ]
+            _stats_df = pd.concat([_stats_df, pd.DataFrame(_new_rows)], ignore_index=True, sort=False)
             _stats_df.to_excel(_writer, sheet_name="统计逻辑", index=False)
 
     print(f"统一信号汇总: {_out_path}")
