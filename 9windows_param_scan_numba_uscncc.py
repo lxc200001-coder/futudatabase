@@ -58,7 +58,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
@@ -1962,9 +1962,12 @@ def run_trade():
         except Exception:
             continue
     global WINDOW_START_DATE
-    WINDOW_START_DATE = str(global_start.date())
+    # 按周期步长对齐窗口起点
+    _s = {12: 12, 6: 6, 3: 3}.get(STEP_MONTHS, 12)
+    _am = ((global_start.month - 1) // _s) * _s + 1
+    WINDOW_START_DATE = f"{global_start.year}-{_am:02d}-03"
     windows = generate_windows(end_date=global_end)
-    print(f"窗口范围: {global_start.date()} ~ {global_end.date()}, 共 {len(windows)} 个窗口")
+    print(f"窗口范围: {WINDOW_START_DATE} ~ {global_end.date()}, 共 {len(windows)} 个窗口")
 
     # 按市场分组
     def _market_group(code):
