@@ -1577,6 +1577,8 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
                 for col in BT_COLS:
                     if col in _r:
                         row[col] = _r[col]
+                if "窗口内有效数据K线数" in _r:
+                    row["窗口内有效数据K线数"] = int(_r["窗口内有效数据K线数"])
 
         # 均线趋势共振（2.py 原版逻辑）
         trend_lookup = {ma: info.get("趋势方向") for ma, info in sig_map.items()}
@@ -1611,8 +1613,7 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
         else:
             row["预计涨幅进度"] = None
 
-        # 窗口内有效数据K线数（由 _process_one_stock 预计算，信号扫描中无原始K线数据）
-        row["窗口内有效数据K线数"] = None
+        # 窗口内有效数据K线数（由 _process_one_stock 预计算，上方已从 last_df 复制）
 
         rows.append(row)
 
