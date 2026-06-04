@@ -59,7 +59,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -2222,7 +2222,7 @@ def generate_unified_signal_excel(ktypes_run):
                     _count = (_all_sig["K线周期"] == _kt).sum()
                     if _count > 0:
                         _end_row = _row + _count - 1
-                        _bar_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=100,
+                        _bar_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=1,
                                                 color=_color, showValue=True)
                         _writer.sheets["信号扫描"].conditional_formatting.add(
                             f"{_col_letter}{_row}:{_col_letter}{_end_row}", _bar_rule
