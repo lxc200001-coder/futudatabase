@@ -58,7 +58,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
@@ -2239,6 +2239,124 @@ def _generate_ktype_comparison():
     print(f"各周期数据对比: {_out_path}")
 
 
+# =========================================================
+# 统一信号汇总 Excel（合并多周期信号 + 对比 + 最优参数）
+# =========================================================
+
+def generate_unified_signal_excel(ktypes_run):
+    """读取各周期信号汇总Excel，生成统一信号汇总Excel。
+
+    Sheet1: 信号扫描（合并所有周期，K线周期排首位）
+    Sheet2: 各周期信号对比（横向对比 + 方向共振统计）
+    Sheet3~: {周期}_最优参数变动（每个周期一个sheet）
+    SheetN: 统计逻辑
+    """
+    import glob as _glob
+    _kt_dir = {"week": "1w", "day": "1d", "60m": "60m"}
+    _kt_label = {"1w": "1W", "1d": "1D", "60m": "60m"}
+    _kt_order = {"1W": 0, "1D": 1, "60m": 2}
+    _cmp_label = {"1w": "（周线）", "1d": "（日线）", "60m": "（60分钟）"}
+    _kt_dirs_used = [_kt_dir[k] for k in ktypes_run if k in _kt_dir]
+
+    if not _kt_dirs_used:
+        return
+
+    # ── 读取各周期数据 ──
+    _sig_dfs = {}  # {1w: DataFrame}
+    _param_dfs = {}  # {1w: DataFrame}
+    _stats_df = None
+    for _d in _kt_dirs_used:
+        _files = sorted(_glob.glob(os.path.join(TRADE_DIR, _d, "*_信号汇总.xlsx")))
+        if not _files:
+            continue
+        _fp = _files[-1]
+        try:
+            _df = pd.read_excel(_fp, sheet_name="信号扫描")
+            if not _df.empty:
+                _df["K线周期"] = _kt_label[_d]
+                _sig_dfs[_d] = _df
+        except Exception:
+            pass
+        try:
+            _pdf = pd.read_excel(_fp, sheet_name="各窗口最优参数变动情况")
+            if not _pdf.empty:
+                _param_dfs[_d] = _pdf
+        except Exception:
+            pass
+        if _stats_df is None:
+            try:
+                _stats_df = pd.read_excel(_fp, sheet_name="统计逻辑")
+            except Exception:
+                pass
+
+    if not _sig_dfs:
+        return
+
+    _date_str = pd.Timestamp.today().strftime("%Y%m%d")
+    _out_path = os.path.join(TRADE_DIR, f"{_date_str}_信号汇总.xlsx")
+
+    with pd.ExcelWriter(_out_path, engine="openpyxl") as _writer:
+
+        # ── Sheet 1: 信号扫描（合并所有周期）──
+        _all_sig = pd.concat(list(_sig_dfs.values()), ignore_index=True, sort=False)
+        # 排序：K线周期(1W→1D→60m) → 多头在前 → 天数↑ → 评分↓
+        _all_sig["_k"] = _all_sig["K线周期"].map(_kt_order).fillna(0)
+        _all_sig["_d"] = _all_sig["趋势方向"].map({"多头": 0, "空头": 1}).fillna(1)
+        _all_sig["_s"] = _all_sig["距离历史信号已过天数"].fillna(9999)
+        _all_sig["_c"] = -_all_sig["策略评分"].fillna(0)
+        _all_sig = _all_sig.sort_values(["_k", "_d", "_s", "_c"]).drop(
+            columns=["_k", "_d", "_s", "_c"], errors="ignore"
+        ).reset_index(drop=True)
+        _all_sig.to_excel(_writer, sheet_name="信号扫描", index=False)
+
+        # ── Sheet 2: 各周期信号对比 ──
+        _base_cols = ["股票代码", "股票名称", "所属板块",
+                      "是否全市场成交额前200", "全市场成交额排名", "市场"]
+        _cmp_fields = ["均线周期", "策略评分", "策略表现", "趋势方向", "最新信号"]
+
+        # 按股票代码合并各周期
+        _merged = None
+        for _d in _kt_dirs_used:
+            _df = _sig_dfs[_d].copy()
+            _rename = {c: f"{c}{_cmp_label[_d]}" for c in _df.columns
+                       if c not in _base_cols and c != "K线周期"}
+            _renamed = _df.rename(columns=_rename)
+            _keep = _base_cols + [f"{f}{_cmp_label[_d]}" for f in _cmp_fields]
+            _keep = [c for c in _keep if c in _renamed.columns]
+            _merged_part = _renamed[_keep].set_index("股票代码")
+            if _merged is None:
+                _merged = _merged_part
+            else:
+                _merged = _merged.join(_merged_part, how="outer")
+
+        if _merged is not None:
+            _merged = _merged.reset_index()
+            # 计算方向共振
+            _dir_cols = [f"趋势方向{_cmp_label[d]}" for d in _kt_dirs_used]
+            _exist_dir = [c for c in _dir_cols if c in _merged.columns]
+            if _exist_dir:
+                _merged["多头趋势方向多周期共振数量"] = _merged[_exist_dir].apply(
+                    lambda r: (r == "多头").sum(), axis=1)
+                _merged["空头趋势方向多周期共振数量"] = _merged[_exist_dir].apply(
+                    lambda r: (r == "空头").sum(), axis=1)
+                _merged = _merged.sort_values(
+                    ["多头趋势方向多周期共振数量", "股票代码"],
+                    ascending=[False, True]
+                ).reset_index(drop=True)
+            _merged.to_excel(_writer, sheet_name="各周期信号对比", index=False)
+
+        # ── Sheet 3~: 各周期最优参数变动 ──
+        for _d, _pdf in _param_dfs.items():
+            _sheet_name = f"{_d}_最优参数变动"
+            _pdf.to_excel(_writer, sheet_name=_sheet_name, index=False)
+
+        # ── 统计逻辑 ──
+        if _stats_df is not None:
+            _stats_df.to_excel(_writer, sheet_name="统计逻辑", index=False)
+
+    print(f"统一信号汇总: {_out_path}")
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -2310,6 +2428,9 @@ if __name__ == "__main__":
         run_trade()
         _elapsed = _t.time() - _t0
         print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
+
+    # 统一信号汇总 Excel（合并所有已跑周期的信号 + 对比 + 最优参数）
+    generate_unified_signal_excel(_ktypes)
 
     # 三个周期都跑了才生成各周期数据对比
     if set(_ktypes) == {"week", "day", "60m"}:
