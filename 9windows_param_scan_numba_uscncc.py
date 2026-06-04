@@ -2213,7 +2213,7 @@ def generate_unified_signal_excel(ktypes_run):
                     _count = (_all_sig["K线周期"] == _kt).sum()
                     if _count > 0:
                         _end_row = _row + _count - 1
-                        _bar_rule = DataBarRule(start_type="min", end_type="max",
+                        _bar_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=100,
                                                 color=_color, showValue=True)
                         _writer.sheets["信号扫描"].conditional_formatting.add(
                             f"{_col_letter}{_row}:{_col_letter}{_end_row}", _bar_rule
