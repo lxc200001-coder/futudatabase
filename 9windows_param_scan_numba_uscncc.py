@@ -2198,6 +2198,15 @@ def generate_unified_signal_excel(ktypes_run):
         ).reset_index(drop=True)
         _all_sig.to_excel(_writer, sheet_name="信号扫描", index=False)
         _set_pct_format(_writer.sheets["信号扫描"], _all_sig, PCT_COLS)
+        # 日期列格式对齐 YYYY-MM-DD
+        from openpyxl.utils import get_column_letter as _cl
+        for _date_col in ["时间", "最新信号时间", "历史信号时间"]:
+            if _date_col in _all_sig.columns:
+                _ws = _writer.sheets["信号扫描"]
+                _col_idx = list(_all_sig.columns).index(_date_col) + 1
+                for _cell in _ws[_cl(_col_idx)]:
+                    if _cell.row > 1 and isinstance(_cell.value, pd.Timestamp):
+                        _cell.number_format = "YYYY-MM-DD"
 
         # 数据条（按各自周期范围）：预计持仓进度（蓝色）、预计涨幅进度（绿色）
         _kt_kt_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
