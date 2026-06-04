@@ -59,7 +59,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "all"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -2199,20 +2199,26 @@ def generate_unified_signal_excel(ktypes_run):
         _all_sig.to_excel(_writer, sheet_name="信号扫描", index=False)
         _set_pct_format(_writer.sheets["信号扫描"], _all_sig, PCT_COLS)
 
-        # 数据条：预计持仓进度（蓝色）、预计涨幅进度（绿色）
+        # 数据条（按各自周期范围）：预计持仓进度（蓝色）、预计涨幅进度（绿色）
+        _kt_kt_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
         for _col_name in ["预计持仓进度", "预计涨幅进度"]:
             if _col_name in _all_sig.columns:
                 from openpyxl.formatting.rule import DataBarRule
                 from openpyxl.utils import get_column_letter
                 _col_letter = get_column_letter(list(_all_sig.columns).index(_col_name) + 1)
-                _nrows = len(_all_sig)
-                if _nrows > 0:
-                    _color = "5B9BD5" if _col_name == "预计持仓进度" else "70AD47"
-                    _bar_rule = DataBarRule(start_type="min", end_type="max",
-                                            color=_color, showValue=True)
-                    _writer.sheets["信号扫描"].conditional_formatting.add(
-                        f"{_col_letter}2:{_col_letter}{_nrows + 1}", _bar_rule
-                    )
+                _color = "5B9BD5" if _col_name == "预计持仓进度" else "70AD47"
+                # 按 K线周期 分组各自应用数据条范围
+                _row = 2  # Excel 首行是表头
+                for _kt in [_kt_label[d] for d in _kt_dirs_used]:
+                    _count = (_all_sig["K线周期"] == _kt).sum()
+                    if _count > 0:
+                        _end_row = _row + _count - 1
+                        _bar_rule = DataBarRule(start_type="min", end_type="max",
+                                                color=_color, showValue=True)
+                        _writer.sheets["信号扫描"].conditional_formatting.add(
+                            f"{_col_letter}{_row}:{_col_letter}{_end_row}", _bar_rule
+                        )
+                        _row += _count
 
         # ── Sheet 2: 各周期信号对比 ──
         _base_cols = ["股票代码", "股票名称", "所属板块",
