@@ -2188,13 +2188,19 @@ def generate_unified_signal_excel(ktypes_run):
 
         # ── Sheet 1: 信号扫描（合并所有周期）──
         _all_sig = pd.concat(list(_sig_dfs.values()), ignore_index=True, sort=False)
-        # 排序：K线周期(1W→1D→60m) → 多头在前 → 天数↑ → 评分↓
+        # 排序：按 1W 的趋势方向→天数→评分排股票，再按 K线周期 排个股
+        _w1 = _all_sig[_all_sig["K线周期"] == "1W"][["股票代码", "趋势方向", "距离历史信号已过天数", "策略评分"]].copy()
+        _w1 = _w1.rename(columns={"趋势方向": "_w1_dir", "距离历史信号已过天数": "_w1_days", "策略评分": "_w1_score"})
+        _w1["_w1_dir"] = _w1["_w1_dir"].map({"多头": 0, "空头": 1}).fillna(1)
+        _w1["_w1_days"] = _w1["_w1_days"].fillna(9999)
+        _w1["_w1_score"] = -_w1["_w1_score"].fillna(0)
+        _all_sig = _all_sig.merge(_w1, on="股票代码", how="left")
+        _all_sig["_w1_dir"] = _all_sig["_w1_dir"].fillna(1)
+        _all_sig["_w1_days"] = _all_sig["_w1_days"].fillna(9999)
+        _all_sig["_w1_score"] = _all_sig["_w1_score"].fillna(0)
         _all_sig["_k"] = _all_sig["K线周期"].map(_kt_order).fillna(0)
-        _all_sig["_d"] = _all_sig["趋势方向"].map({"多头": 0, "空头": 1}).fillna(1)
-        _all_sig["_s"] = _all_sig["距离历史信号已过天数"].fillna(9999)
-        _all_sig["_c"] = -_all_sig["策略评分"].fillna(0)
-        _all_sig = _all_sig.sort_values(["_k", "_d", "_s", "_c"]).drop(
-            columns=["_k", "_d", "_s", "_c"], errors="ignore"
+        _all_sig = _all_sig.sort_values(["_w1_dir", "_w1_days", "_w1_score", "_k"]).drop(
+            columns=["_w1_dir", "_w1_days", "_w1_score", "_k"], errors="ignore"
         ).reset_index(drop=True)
         _all_sig.to_excel(_writer, sheet_name="信号扫描", index=False)
         _set_pct_format(_writer.sheets["信号扫描"], _all_sig, PCT_COLS)
