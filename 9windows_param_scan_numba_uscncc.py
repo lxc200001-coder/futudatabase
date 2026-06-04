@@ -2249,6 +2249,17 @@ def generate_unified_signal_excel(ktypes_run):
                     ["多头趋势方向多周期共振数量", "股票代码"],
                     ascending=[False, True]
                 ).reset_index(drop=True)
+            # 按字段分组重排列序
+            _col_order = [c for c in _base_cols if c in _merged.columns]
+            for _f in _cmp_fields:
+                for _d in _kt_dirs_used:
+                    _col = f"{_f}{_cmp_label[_d]}"
+                    if _col in _merged.columns:
+                        _col_order.append(_col)
+            for _c in ["多头趋势方向多周期共振数量", "空头趋势方向多周期共振数量"]:
+                if _c in _merged.columns:
+                    _col_order.append(_c)
+            _merged = _merged[[c for c in _col_order if c in _merged.columns]]
             _merged.to_excel(_writer, sheet_name="各周期信号对比", index=False)
 
         # ── Sheet 3~: 各周期最优参数变动 ──
