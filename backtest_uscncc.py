@@ -24,15 +24,18 @@ warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenati
 
 
 def _load_top_turnover_map():
-    """读取最新 top_turnover 文件，返回 {代码: 排名} 映射表。"""
-    files = sorted(glob.glob(os.path.join("symbols", "top_turnover_*.csv")))
-    if not files:
-        return {}
-    try:
-        df = pd.read_csv(files[-1])
-        return dict(zip(df["代码"].dropna().astype(str), df["排名"].dropna().astype(int)))
-    except Exception:
-        return {}
+    """读取最新 top_turnover 文件（美股 + A 股），返回 {代码: 排名} 映射表。"""
+    result = {}
+    for pattern in ["top_turnover_*.csv", "top_turnover_cn_*.csv"]:
+        files = sorted(glob.glob(os.path.join("symbols", pattern)))
+        if not files:
+            continue
+        try:
+            df = pd.read_csv(files[-1])
+            result.update(dict(zip(df["代码"].dropna().astype(str), df["排名"].dropna().astype(int))))
+        except Exception:
+            pass
+    return result
 
 
 def _apply_sheet_format(ws):
@@ -58,8 +61,8 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_MARKET = "all"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name, sig_map), ...]}}
 

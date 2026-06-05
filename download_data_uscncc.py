@@ -9,6 +9,7 @@ import urllib3
 import pandas as pd
 import baostock as bs
 
+import contextlib
 from collections import deque
 from datetime import datetime
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
@@ -24,7 +25,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CN"   # 默认市场: all / US / CN / CC / US,CC
 DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
 
 # ktype → 子目录名 / 文件后缀 映射
@@ -244,7 +245,8 @@ def fetch_cn_data(code, start_str, end_str, ktype="week"):
     frequency = {"week": "w", "day": "d", "60m": "60"}.get(ktype, "w")
     adjustflag = "2"  # 前复权
 
-    lg = bs.login()
+    with contextlib.redirect_stdout(None):
+        lg = bs.login()
     if lg.error_code != "0":
         print(f"  Baostock 登录失败: {lg.error_msg}")
         return pd.DataFrame()
@@ -279,7 +281,8 @@ def fetch_cn_data(code, start_str, end_str, ktype="week"):
                 "turnover": 0.0,
             })
     finally:
-        bs.logout()
+        with contextlib.redirect_stdout(None):
+            bs.logout()
 
     if not rows:
         return pd.DataFrame()
@@ -420,7 +423,8 @@ def fetch_all_stock_plates(symbols, quote_ctx):
 def fetch_cn_stock_industry(cn_symbols):
     """从 Baostock 获取 A 股行业分类"""
     rows = []
-    lg = bs.login()
+    with contextlib.redirect_stdout(None):
+        lg = bs.login()
     if lg.error_code != "0":
         print(f"  Baostock 登录失败: {lg.error_msg}")
         return pd.DataFrame()
@@ -439,7 +443,8 @@ def fetch_cn_stock_industry(cn_symbols):
                         "plate_type": "INDUSTRY",
                     })
     finally:
-        bs.logout()
+        with contextlib.redirect_stdout(None):
+            bs.logout()
 
     if not rows:
         return pd.DataFrame()
