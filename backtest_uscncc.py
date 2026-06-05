@@ -1359,14 +1359,14 @@ def generate_heatmap_dashboard(cache_data):
                     except Exception:
                         _lwc_figs = None
 
-                    # 从 scan_rows 提取 best_ma 的回测指标（倒数第二个窗口，避免未来数据）
+                    # 从 scan_rows 提取 best_ma 的回测指标（最后一个窗口，最优 MA 来自倒数第二个窗口的稳定性分析）
                     if _lwc_figs:
                         _metrics = {}
                         if scan_rows and best_ma is not None:
                             try:
                                 _bm = int(best_ma)
                                 _windows = sorted(set(r.get("窗口", "") for r in scan_rows if r.get("窗口")))
-                                _target_w = _windows[-2] if len(_windows) >= 2 else _windows[-1]
+                                _target_w = _windows[-1] if _windows else None
                                 _matched = [r for r in scan_rows
                                             if r.get("窗口") == _target_w and
                                             r.get("均线周期") is not None and
@@ -1607,13 +1607,11 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
     if not signal_maps:
         return pd.DataFrame()
 
-    # 取倒数第二个窗口做评分查询（避免最后一个窗口包含未来数据）
+    # 取最后一个窗口做评分查询（最优 MA 来自倒数第二个窗口的稳定性分析）
     last_df = None
     if all_df is not None and not all_df.empty and "窗口" in all_df.columns:
         _wins = sorted(all_df["窗口"].unique())
-        if len(_wins) >= 2:
-            last_df = all_df[all_df["窗口"] == _wins[-2]]
-        elif _wins:
+        if _wins:
             last_df = all_df[all_df["窗口"] == _wins[-1]]
 
     # 回测指标字段（2.py 参考清单）
@@ -1852,7 +1850,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
         logic_rows = [
             # ── Sheet 说明 ──
             {"类型": "Sheet说明", "名称": "信号扫描",
-             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（买入/卖出/持有/观察）及该参数在倒数第二个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按策略评分降序排列；均线趋势共振分析检测各周期方向一致性"},
+             "统计逻辑": "每只股票用参数稳定性最优的均线周期，显示当前信号（买入/卖出/持有/观察）及该参数在最后一个窗口的回测指标（收益率、最大回撤、夏普比率等），多头在前空头在后按策略评分降序排列；均线趋势共振分析检测各周期方向一致性"},
             {"类型": "Sheet说明", "名称": "回测汇总",
              "统计逻辑": "所有股票所有累积窗口所有MA的完整回测结果汇总（独立parquet文件）"},
             {"类型": "Sheet说明", "名称": "策略评分明细",
@@ -1933,7 +1931,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "与共振方向一致的均线周期列表"},
             # ── 回测指标 ──
             {"类型": "回测指标", "名称": "收益率",
-             "统计逻辑": "倒数第二个窗口的总收益率 = (最终资金 − 初始资金) / 初始资金 × 100%"},
+             "统计逻辑": "最后一个窗口的总收益率 = (最终资金 − 初始资金) / 初始资金 × 100%"},
             {"类型": "回测指标", "名称": "年化收益率",
              "统计逻辑": "CAGR = (最终资金/初始资金)^(1/年数) − 1，年数 = 窗口实际天数/365"},
             {"类型": "回测指标", "名称": "买入持有收益率",
