@@ -1607,11 +1607,13 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
     if not signal_maps:
         return pd.DataFrame()
 
-    # 取最后一个窗口做评分查询
+    # 取倒数第二个窗口做评分查询（避免最后一个窗口包含未来数据）
     last_df = None
     if all_df is not None and not all_df.empty and "窗口" in all_df.columns:
         _wins = sorted(all_df["窗口"].unique())
-        if _wins:
+        if len(_wins) >= 2:
+            last_df = all_df[all_df["窗口"] == _wins[-2]]
+        elif _wins:
             last_df = all_df[all_df["窗口"] == _wins[-1]]
 
     # 回测指标字段（2.py 参考清单）
