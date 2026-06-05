@@ -396,20 +396,22 @@ def get_last_signal_info(df):
     if len(buy_rows) > 0:
         last_buy = buy_rows.iloc[-1]
         buy_time = pd.to_datetime(last_buy["datetime"])
-        buy_days = (today - buy_time.normalize()).days
+        _buy_idx = df["datetime"].searchsorted(buy_time, side="left")
+        buy_kbars = len(df) - 1 - min(_buy_idx, len(df) - 1)
     else:
         buy_time = pd.NaT
-        buy_days = None
+        buy_kbars = None
 
     sell_rows = df[df["sell"]]
 
     if len(sell_rows) > 0:
         last_sell = sell_rows.iloc[-1]
         sell_time = pd.to_datetime(last_sell["datetime"])
-        sell_days = (today - sell_time.normalize()).days
+        _sell_idx = df["datetime"].searchsorted(sell_time, side="left")
+        sell_kbars = len(df) - 1 - min(_sell_idx, len(df) - 1)
     else:
         sell_time = pd.NaT
-        sell_days = None
+        sell_kbars = None
 
     last = df.iloc[-1]
     last_close = float(last["close"])
@@ -477,13 +479,11 @@ def get_last_signal_info(df):
         hist_change = None
         hist_daily = None
 
-    # 最新信号确认（仅周线需要判断，日线/60分钟默认已确认）
-    if BAR_INTERVAL == "1W":
-        if signal in ("BUY", "SELL") and (
-            (signal == "BUY" and buy_days is not None and buy_days < 5) or
-            (signal == "SELL" and sell_days is not None and sell_days < 5)
-        ):
-            confirm = "待确认，周K未正式收盘"
+    # 最新信号确认：信号出现在最新 K 线则待确认，下一根 K 线才确认
+    if signal in ("BUY", "SELL"):
+        _kbars = buy_kbars if signal == "BUY" else sell_kbars
+        if _kbars is not None and _kbars < 1:
+            confirm = "待确认（信号与最新K线同根）"
         else:
             confirm = "已确认"
     else:
@@ -1831,7 +1831,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "信号字段", "名称": "最新信号收盘价",
              "统计逻辑": "最新信号时间对应的原始收盘价"},
             {"类型": "信号字段", "名称": "最新信号确认",
-             "统计逻辑": "仅周线生效：BUY/SELL信号且距离最近一次信号<5根K线为「待确认，周K未正式收盘」，否则为「已确认」；日线和60分钟始终为「已确认」"},
+             "统计逻辑": "BUY/SELL 信号与最新 K 线同根为「待确认（信号与最新K线同根）」，否则为「已确认」"},
             {"类型": "信号字段", "名称": "历史信号",
              "统计逻辑": "倒数第二次出现的 BUY/SELL 信号方向"},
             {"类型": "信号字段", "名称": "历史信号时间",
