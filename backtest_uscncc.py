@@ -58,8 +58,8 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_KTYPE = "week"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name, sig_map), ...]}}
 
@@ -1319,6 +1319,7 @@ def generate_heatmap_dashboard(cache_data):
                 _kt_dir = {"1W": "1w", "1D": "1d", "60m": "60m"}.get(_bi, "")
                 _suffix = KLINE_MAP.get(_bi, {}).get("suffix", "")
                 _data_path = os.path.join(DATA_DIR, _kt_dir, _mkt_id, f"{code}{_suffix}.parquet")
+                _bt_close = _bt_buy = _bt_sell = None  # try 外计算 equity
                 if os.path.exists(_data_path) and best_ma is not None:
                     try:
                         _df_k = pd.read_parquet(_data_path).sort_values("datetime")
@@ -1327,6 +1328,10 @@ def generate_heatmap_dashboard(cache_data):
                         _ma_diff = _ma_k.diff().fillna(0)
                         _buy_k = (_ma_diff > 0) & (_ma_diff.shift(1) <= 0)
                         _sell_k = (_ma_diff < 0) & (_ma_diff.shift(1) >= 0)
+                        _bt_close = _df_k["close"].values.astype(np.float64)
+                        _bt_buy = _buy_k.values.astype(np.bool_)
+                        _bt_sell = _sell_k.values.astype(np.bool_)
+                        _bt_datetime = _df_k["datetime"].values
 
                         _candles = []
                         _ma_list = []
@@ -1359,6 +1364,44 @@ def generate_heatmap_dashboard(cache_data):
                         }
                     except Exception:
                         _lwc_figs = None
+
+                    # 资金曲线 + 交易明细
+                    if _lwc_figs and _bt_close is not None:
+                        try:
+                            _trades_arr, _equity_arr, _n_tr = _numba_backtest(
+                                _bt_close, _bt_buy, _bt_sell, INITIAL_CASH, FEE_RATE,
+                            )
+                            _eq_times = [_c["time"] for _c in _candles]
+                            _lwc_figs["equity"] = [
+                                {"time": _eq_times[_i], "value": round(float(_equity_arr[_i]), 2)}
+                                for _i in range(_n_tr)
+                                if _equity_arr[_i] > 0
+                            ]
+                            # 交易明细
+                            _tdf, _ = _build_trades_from_arrays(
+                                "", "", _bt_datetime, int(best_ma),
+                                _trades_arr, _equity_arr, _n_tr,
+                            )
+                            if not _tdf.empty:
+                                _trade_cols = ["开仓时间", "开仓价格", "买入股数",
+                                               "平仓时间", "平仓价格", "卖出股数",
+                                               "交易状态", "订单盈亏类型",
+                                               "收益金额", "收益率(%)",
+                                               "买入手续费", "卖出手续费",
+                                               "开仓前可用现金", "开仓后可用现金",
+                                               "平仓前可用现金", "平仓后可用现金",
+                                               "持仓K线数"]
+                                _trade_df = _tdf[[c for c in _trade_cols if c in _tdf.columns]].copy()
+                                for _tc in ["开仓时间", "平仓时间"]:
+                                    if _tc in _trade_df.columns:
+                                        _trade_df[_tc] = _trade_df[_tc].apply(
+                                            lambda x: str(pd.Timestamp(x).date()) if pd.notna(x) else "")
+                                _lwc_figs["trade_table"] = _trade_df.to_dict(orient="records")
+                                for _i, _r in enumerate(_lwc_figs["trade_table"]):
+                                    _r["订单ID"] = _i + 1
+                                _lwc_figs["trade_table"].reverse()
+                        except Exception:
+                            pass
 
                     # 从 scan_rows 提取 best_ma 的回测指标（最后一个窗口，最优 MA 来自倒数第二个窗口的稳定性分析）
                     if _lwc_figs:

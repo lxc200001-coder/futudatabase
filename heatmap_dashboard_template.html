@@ -24,15 +24,20 @@ body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif
 .stock-item .code { font-weight:600; font-size:13px; }
 .stock-item .name { font-size:11px; color:#999; }
 .stock-item.active .name { color:#cce5ff; }
-#main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+#main { flex:1; display:flex; flex-direction:column; overflow:auto; }
 #nav-chart, #nav-market, #nav-ktype { background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }
 .tab { padding:8px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }
 .tab:hover { color:#333; background:#f8f9fa; }
 .tab.active { color:#007bff; border-bottom-color:#007bff; font-weight:500; }
 .tab.no-data { color:#ccc; cursor:not-allowed; }
 #chart-area { flex:1; padding:16px; overflow:auto; display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; }
-#chart-container { width:100%; height:360px; position:relative; background:#fff; border-radius:4px 4px 0 0; }
-#metrics-panel { display:none; width:100%; padding:8px 16px; background:#fafafa; border:1px solid #e0e0e0; border-top:none; border-radius:0 0 4px 4px; position:relative; z-index:5; }
+#lwc-container { width:100%; background:#fff; border:1px solid #e0e0e0; border-radius:4px; }
+#chart-container { width:100%; height:500px; position:relative; }
+#plotly-container { width:100%; background:#fff; border:1px solid #e0e0e0; border-radius:4px; overflow:auto; }
+#chart-container { width:100%; height:530px; position:relative; }
+#metrics-panel { display:none; width:100%; padding:8px 16px; background:#fff; border:1px solid #e0e0e0; border-radius:4px; margin-bottom:8px; }
+#equity-container { width:100%; background:#fff; border:1px solid #e0e0e0; border-radius:4px; }
+#trade-table { width:100%; background:#fff; border:1px solid #e0e0e0; }
 #empty-state { color:#999; font-size:14px; }
 </style>
 </head>
@@ -49,8 +54,11 @@ body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif
   <div id="nav-ktype"></div>
   <div id="nav-chart"></div>
   <div id="chart-area">
-    <div id="chart-container" style="display:none;position:relative;"></div>
     <div id="metrics-panel"></div>
+    <div id="lwc-container" style="display:none;position:relative;"><div id="chart-container" style="height:500px;position:relative;"></div></div>
+    <div id="plotly-container" style="display:none;position:relative;"></div>
+    <div id="equity-container" style="display:none;margin-top:8px;border-radius:4px;"></div>
+    <div id="trade-table" style="display:none;margin-top:8px;border-radius:4px;overflow:auto;"></div>
     <div id="empty-state">请选择周期和市场</div>
   </div>
 </div>
@@ -129,11 +137,13 @@ function renderCombination() {
     document.getElementById("stock-count").textContent="";
     document.getElementById("empty-state").style.display="";
     document.getElementById("empty-state").textContent="请先进行回测";
-    document.getElementById("chart-container").style.display="none";
+    document.getElementById("lwc-container").style.display="none";
+    document.getElementById("plotly-container").style.display="none";
     return;
   }
   document.getElementById("empty-state").textContent="";
-  document.getElementById("chart-container").style.display="none";
+  document.getElementById("lwc-container").style.display="none";
+  document.getElementById("plotly-container").style.display="none";
   renderStockList(combo.stocks, combo.figures);
   if(currentStock&&!combo.figures[currentStock]) currentStock=null;
   if(!currentStock) {
@@ -198,9 +208,13 @@ function _fmt(key, v) {
   if(key === '交易次数') return n.toFixed(0);
   return n.toFixed(2);
 }
+var _eqChart = null;
 function renderChart() {
   document.getElementById('metrics-panel').style.display = 'none';
-  document.getElementById('chart-container').style.display = 'none';
+  document.getElementById('equity-container').style.display = 'none';
+  document.getElementById('trade-table').style.display = 'none';
+  document.getElementById('lwc-container').style.display = 'none';
+  document.getElementById('plotly-container').style.display = 'none';
   if(!currentStock||!currentKtype||!currentMarket) return;
   var combo=D[currentKtype][currentMarket];
   if(!combo||!combo.figures) return;
@@ -211,21 +225,21 @@ function renderChart() {
     return;
   }
   document.getElementById("empty-state").style.display="none";
-  document.getElementById("chart-container").style.display = 'block';
-  document.getElementById("chart-container").innerHTML = '';
 
   // 清理旧图表
   if(_lwcChart) { _lwcChart.remove(); _lwcChart = null; }
-  Plotly.purge("chart-container");
+  if(_eqChart) { _eqChart.remove(); _eqChart = null; }
+  Plotly.purge("plotly-container");
 
   if(figs[currentType]._lwc) {
+    document.getElementById('lwc-container').style.display = 'block';
     _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
       layout: { textColor: '#333', background: { type: 'solid', color: '#fff' } },
       grid: { vertLines: { color: '#e0e0e0' }, horzLines: { color: '#e0e0e0' } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       timeScale: { borderColor: '#ddd' },
       rightPriceScale: { borderColor: '#ddd' },
-      height: 360,
+      height: 500,
     });
     var d = figs[currentType];
     var cs = _lwcChart.addSeries(LightweightCharts.CandlestickSeries, {
@@ -274,11 +288,73 @@ function renderChart() {
       try { LightweightCharts.createSeriesMarkers(cs, d.signals); } catch(e) { console.error("[LWC] marker error:", e); }
     }
     _lwcChart.timeScale().fitContent();
+
+    // ── 资金曲线 ──
+    if(d.equity && d.equity.length) {
+      var _eqc = document.getElementById('equity-container');
+      _eqc.style.display = 'block';
+      _eqc.innerHTML = '<div style="padding:4px 10px;font-size:11px;color:#999;background:#fafafa;border-bottom:1px solid #e0e0e0;">资金曲线</div>';
+      _eqChart = LightweightCharts.createChart(_eqc, {
+        layout: { textColor: '#555', background: { type: 'solid', color: '#fff' }, fontSize: 10 },
+        grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
+        rightPriceScale: { borderColor: '#e0e0e0', scaleMargins: { top: 0.1, bottom: 0.2 } },
+        timeScale: { borderColor: '#e0e0e0', timeVisible: false },
+        height: 140,
+        handleScroll: false, handleScale: false,
+      });
+      var _eqSeries = _eqChart.addSeries(LightweightCharts.AreaSeries, {
+        lineColor: '#2196f3', topColor: 'rgba(33,150,243,0.15)', bottomColor: 'rgba(33,150,243,0.01)',
+        lineWidth: 2, priceLineVisible: false,
+      });
+      _eqSeries.setData(d.equity);
+      _eqChart.timeScale().fitContent();
+    }
+
+    // ── 交易明细表格 ──
+    var _tt = document.getElementById('trade-table');
+    _tt.style.display = 'none';
+    if(d.trade_table && d.trade_table.length) {
+      var _tbl = '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+      _tbl += '<thead><tr style="background:#f5f5f5;font-weight:bold;position:sticky;top:0;z-index:1;">';
+      ['订单ID','开仓时间','开仓价格','买入股数','平仓时间','平仓价格','卖出股数','交易状态','盈亏类型','收益金额','收益率','买入手续费','卖出手续费','开仓前现金','开仓后现金','平仓前现金','平仓后现金','持仓K线数'].forEach(function(h) { _tbl += '<th style="padding:4px 6px;text-align:right;border-bottom:1px solid #e0e0e0;font-size:10px;">' + h + '</th>'; });
+      _tbl += '</tr></thead><tbody>';
+      d.trade_table.forEach(function(r) {
+        var cls = r['订单盈亏类型'] === '盈利' ? '#eef7ee' : '#fdecec';
+        _tbl += '<tr style="background:' + cls + ';">';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;color:#999;">' + (r['订单ID']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['开仓时间']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['开仓价格']||0).toFixed(2) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['买入股数']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['平仓时间']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['平仓价格']||0).toFixed(2) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['卖出股数']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['交易状态']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['订单盈亏类型']||'') + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['收益金额']||0).toFixed(2) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['收益率(%)']||0).toFixed(2) + '%</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['买入手续费']||0).toFixed(4) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['卖出手续费']||0).toFixed(4) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['开仓前可用现金']||0)===0?'':(r['开仓前可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['开仓后可用现金']||0)===0?'':(r['开仓后可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['平仓前可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['平仓后可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['持仓K线数']||'') + '</td>';
+        _tbl += '</tr>';
+      });
+      _tbl += '</tbody></table>';
+      _tt.innerHTML = '<div style="padding:4px 10px;font-size:11px;color:#999;background:#fafafa;border-bottom:1px solid #e0e0e0;">交易明细</div>' + _tbl;
+      _tt.style.display = 'block';
+    }
     return;
   }
 
   // Plotly 渲染
-  Plotly.react("chart-container",figs[currentType].data,figs[currentType].layout,{displayModeBar:false,responsive:true});
+  var _pl = document.getElementById('plotly-container');
+  _pl.style.display = 'block';
+  _pl.innerHTML = '';
+  var _h = (figs[currentType].layout && figs[currentType].layout.height) || 500;
+  _pl.style.height = _h + 'px';
+  Plotly.react(_pl, figs[currentType].data, figs[currentType].layout, {displayModeBar:false, responsive:true});
 }
 
 init();
