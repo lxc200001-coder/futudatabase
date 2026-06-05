@@ -61,7 +61,7 @@ FEE_RATE = 0.001
 DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
-_HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
+_HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name, sig_map), ...]}}
 
 # 中文映射
 DIR_MAP = {1: "多头", -1: "空头"}
@@ -1288,7 +1288,7 @@ def generate_heatmap_dashboard(cache_data):
             figures_data = {}
             all_ws_list = []
             _kt_lbl = {"1W":"周K","1D":"日K","60m":"60分"}.get(_bi,_bi)
-            for code, scan_rows, ws_df, best_ma, stock_name in tqdm(entries, desc=f"  看板({_kt_lbl},{_mkt_id.upper()})", unit="stock"):
+            for code, scan_rows, ws_df, best_ma, stock_name, sig_map in tqdm(entries, desc=f"  看板({_kt_lbl},{_mkt_id.upper()})", unit="stock"):
                 stock_list.append({"code": code, "name": stock_name or ""})
                 figs = {}
                 for chart_label, metric_name, colorscale, center in METRIC_CONFIG:
@@ -1313,6 +1313,75 @@ def generate_heatmap_dashboard(cache_data):
                     if "layout" in d and "template" in d["layout"]:
                         del d["layout"]["template"]
                     figs[STABILITY_KEY] = d
+
+                # ── K线图（LightweightCharts）──
+                _kt_dir = {"1W": "1w", "1D": "1d", "60m": "60m"}.get(_bi, "")
+                _suffix = KLINE_MAP.get(_bi, {}).get("suffix", "")
+                _data_path = os.path.join(DATA_DIR, _kt_dir, _mkt_id, f"{code}{_suffix}.parquet")
+                if os.path.exists(_data_path) and best_ma is not None:
+                    try:
+                        _df_k = pd.read_parquet(_data_path).sort_values("datetime")
+                        _ha_close_k = (_df_k["open"] + _df_k["high"] + _df_k["low"] + _df_k["close"]) / 4
+                        _ma_k = _ha_close_k.rolling(best_ma, min_periods=best_ma).mean()
+                        _ma_diff = _ma_k.diff().fillna(0)
+                        _buy_k = (_ma_diff > 0) & (_ma_diff.shift(1) <= 0)
+                        _sell_k = (_ma_diff < 0) & (_ma_diff.shift(1) >= 0)
+
+                        _candles = []
+                        _ma_list = []
+                        _signals_lst = []
+                        _use_date = _bi != "60m"
+                        for _i in range(len(_df_k)):
+                            _dt = pd.to_datetime(_df_k["datetime"].iloc[_i])
+                            _t = _dt.strftime("%Y-%m-%d") if _use_date else str(int(_dt.timestamp()))
+                            _candles.append({"time": _t, "open": float(_df_k["open"].iloc[_i]),
+                                             "high": float(_df_k["high"].iloc[_i]),
+                                             "low": float(_df_k["low"].iloc[_i]),
+                                             "close": float(_df_k["close"].iloc[_i])})
+                            _mv = _ma_k.iloc[_i]
+                            if pd.notna(_mv):
+                                _ma_list.append({"time": _t, "value": round(float(_mv), 2)})
+                            if _buy_k.iloc[_i]:
+                                _signals_lst.append({"time": _t, "position": "atPriceMiddle",
+                                                     "price": float(_df_k["close"].iloc[_i]),
+                                                     "color": "#26a69a", "shape": "circle", "text": "买入"})
+                            if _sell_k.iloc[_i]:
+                                _signals_lst.append({"time": _t, "position": "atPriceMiddle",
+                                                     "price": float(_df_k["close"].iloc[_i]),
+                                                     "color": "#ef5350", "shape": "circle", "text": "卖出"})
+                        _lwc_figs = {
+                            "_lwc": True,
+                            "candles": _candles,
+                            "mas": _ma_list,
+                            "signals": _signals_lst,
+                            "best_ma": int(best_ma) if best_ma is not None else 0,
+                        }
+                    except Exception:
+                        _lwc_figs = None
+
+                    # 从 scan_rows 提取 best_ma 的回测指标（倒数第二个窗口，避免未来数据）
+                    if _lwc_figs:
+                        _metrics = {}
+                        if scan_rows and best_ma is not None:
+                            try:
+                                _bm = int(best_ma)
+                                _windows = sorted(set(r.get("窗口", "") for r in scan_rows if r.get("窗口")))
+                                _target_w = _windows[-2] if len(_windows) >= 2 else _windows[-1]
+                                _matched = [r for r in scan_rows
+                                            if r.get("窗口") == _target_w and
+                                            r.get("均线周期") is not None and
+                                            int(r["均线周期"]) == _bm]
+                                if _matched:
+                                    _row = _matched[0]
+                                    for _k in ["收益率", "年化收益率", "买入持有收益率", "超额收益率",
+                                               "最大回撤", "交易次数", "盈利交易率", "盈利因子", "盈亏比",
+                                               "夏普比率", "卡尔玛比率", "平均每笔收益率"]:
+                                        if _k in _row and _row[_k] is not None:
+                                            _metrics[_k] = round(float(_row[_k]), 4)
+                            except Exception:
+                                pass
+                        _lwc_figs["metrics"] = _metrics
+                        figs["K线图"] = _lwc_figs
                 figures_data[code] = figs
                 if ws_df is not None and not ws_df.empty:
                     all_ws_list.append(ws_df)
@@ -1334,6 +1403,11 @@ def generate_heatmap_dashboard(cache_data):
     os.makedirs(TRADE_DIR, exist_ok=True)
     with open(_p, "w", encoding="utf-8") as f:
         f.write(html)
+    # 复制 lwc.js 到看板同目录
+    import shutil
+    _lwc_src = os.path.join(os.path.dirname(__file__), "lwc.js")
+    if os.path.exists(_lwc_src):
+        shutil.copy2(_lwc_src, os.path.join(TRADE_DIR, "lwc.js"))
     print(f"统一热力图看板: {_p}")
 
 
@@ -2036,7 +2110,7 @@ def run_trade():
                     if s_ws is not None and not s_ws.empty:
                         market_window_stability.append(s_ws)
                     # 收集热力图数据（主进程统一生成，避免 worker 中 matplotlib 开销）
-                    _heatmap_cache.append((code, s_all, s_ws, best_ma, stock_name))
+                    _heatmap_cache.append((code, s_all, s_ws, best_ma, stock_name, sig_map))
         tqdm.write(f"  {mkt.upper()} 完成: {_success} 成功")
         if _failed:
             tqdm.write(f"  {mkt.upper()} 失败: {len(_failed)} 只 — {'; '.join(f'{c}({e})' for c, e in _failed)}")
@@ -2067,7 +2141,7 @@ def run_trade():
 
         # 收集热力图数据到全局缓存（统一看板在回测完成后生成）
         global _HEATMAP_CACHE
-        _mkt_entries = [(c, r, w, b, s) for c, r, w, b, s in _heatmap_cache
+        _mkt_entries = [(c, r, w, b, s, m) for c, r, w, b, s, m in _heatmap_cache
                         if _market_subdir(c) == mkt]
         if _mkt_entries:
             _HEATMAP_CACHE.setdefault(BAR_INTERVAL, {})[mkt] = _mkt_entries

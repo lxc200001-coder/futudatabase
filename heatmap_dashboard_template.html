@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>统一热力图看板 - __TIMESTAMP__</title>
+<script src="lwc.js"></script>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -29,8 +30,9 @@ body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif
 .tab:hover { color:#333; background:#f8f9fa; }
 .tab.active { color:#007bff; border-bottom-color:#007bff; font-weight:500; }
 .tab.no-data { color:#ccc; cursor:not-allowed; }
-#chart-area { flex:1; padding:16px; overflow:auto; display:flex; align-items:center; justify-content:center; }
-#chart-container { width:100%; height:100%; min-height:500px; }
+#chart-area { flex:1; padding:16px; overflow:auto; display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; }
+#chart-container { width:100%; height:360px; position:relative; background:#fff; border-radius:4px 4px 0 0; }
+#metrics-panel { display:none; width:100%; padding:8px 16px; background:#fafafa; border:1px solid #e0e0e0; border-top:none; border-radius:0 0 4px 4px; position:relative; z-index:5; }
 #empty-state { color:#999; font-size:14px; }
 </style>
 </head>
@@ -47,7 +49,8 @@ body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif
   <div id="nav-ktype"></div>
   <div id="nav-chart"></div>
   <div id="chart-area">
-    <div id="chart-container" style="display:none"></div>
+    <div id="chart-container" style="display:none;position:relative;"></div>
+    <div id="metrics-panel"></div>
     <div id="empty-state">请选择周期和市场</div>
   </div>
 </div>
@@ -59,7 +62,7 @@ var ALL_KTYPES = ["1W","1D","60m"];
 var ALL_MARKETS = ["us","cc","cn"];
 var KT_LABELS = {"1W":"周K","1D":"日K","60m":"60分钟K"};
 var MK_LABELS = {"us":"US","cc":"CC","cn":"CN"};
-var CHART_TYPES = ["参数稳定性评分","参数敏感性分析","策略评分","年化收益率","夏普比率","最大回撤"];
+var CHART_TYPES = ["K线图","参数稳定性评分","参数敏感性分析","策略评分","年化收益率","夏普比率","最大回撤"];
 var currentKtype = null, currentMarket = null, currentType = "策略评分";
 
 function init() {
@@ -185,7 +188,19 @@ function selectStock(code) {
   renderChart();
 }
 
+var _lwcChart = null;
+var _PCT_KEYS = {'收益率':1,'年化收益率':1,'买入持有收益率':1,'超额收益率':1,'最大回撤':1,'盈利交易率':1,'平均每笔收益率':1};
+function _fmt(key, v) {
+  if(v === null || v === undefined || v === '') return '-';
+  var n = Number(v);
+  if(isNaN(n)) return String(v);
+  if(_PCT_KEYS[key]) return n.toFixed(2) + '%';
+  if(key === '交易次数') return n.toFixed(0);
+  return n.toFixed(2);
+}
 function renderChart() {
+  document.getElementById('metrics-panel').style.display = 'none';
+  document.getElementById('chart-container').style.display = 'none';
   if(!currentStock||!currentKtype||!currentMarket) return;
   var combo=D[currentKtype][currentMarket];
   if(!combo||!combo.figures) return;
@@ -193,11 +208,76 @@ function renderChart() {
   if(!figs||!figs[currentType]) {
     document.getElementById("empty-state").style.display="";
     document.getElementById("empty-state").textContent="该股票暂无数据";
-    document.getElementById("chart-container").style.display="none";
     return;
   }
   document.getElementById("empty-state").style.display="none";
-  document.getElementById("chart-container").style.display="";
+  document.getElementById("chart-container").style.display = 'block';
+  document.getElementById("chart-container").innerHTML = '';
+
+  // 清理旧图表
+  if(_lwcChart) { _lwcChart.remove(); _lwcChart = null; }
+  Plotly.purge("chart-container");
+
+  if(figs[currentType]._lwc) {
+    _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
+      layout: { textColor: '#333', background: { type: 'solid', color: '#fff' } },
+      grid: { vertLines: { color: '#e0e0e0' }, horzLines: { color: '#e0e0e0' } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      timeScale: { borderColor: '#ddd' },
+      rightPriceScale: { borderColor: '#ddd' },
+      height: 360,
+    });
+    var d = figs[currentType];
+    var cs = _lwcChart.addSeries(LightweightCharts.CandlestickSeries, {
+      upColor: '#000000', downColor: '#b0b0b0',
+      borderUpColor: '#000000', borderDownColor: '#b0b0b0',
+      wickUpColor: '#000000', wickDownColor: '#b0b0b0',
+    });
+    cs.setData(d.candles);
+    if(d.mas && d.mas.length) {
+      var ml = _lwcChart.addSeries(LightweightCharts.LineSeries, {
+        color: '#f5c542', lineWidth: 1.5, priceLineVisible: false,
+      });
+      ml.setData(d.mas);
+    }
+    // 左上角 MA 标签
+    var _maLabel = document.createElement('div');
+    _maLabel.style.cssText = 'position:absolute;top:8px;left:8px;background:#333;color:#f5c542;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;z-index:10;pointer-events:none;';
+    _maLabel.textContent = 'MA' + d.best_ma;
+    document.getElementById('chart-container').appendChild(_maLabel);
+
+    // 回测指标面板
+    var _mp = document.getElementById('metrics-panel');
+    _mp.style.display = 'block';
+    if(d.metrics && Object.keys(d.metrics).length) {
+      var _html = '<div style="display:flex;flex-wrap:wrap;">';
+      var _items = [
+        '收益率','年化收益率','买入持有收益率','超额收益率',
+        '最大回撤','夏普比率','盈利因子','盈亏比',
+        '交易次数','盈利交易率','平均每笔收益率','卡尔玛比率'
+      ];
+      _items.forEach(function(k) {
+        var v = d.metrics[k];
+        if(v !== undefined) {
+          _html += '<div style="flex:1;min-width:120px;padding:6px 10px;text-align:center;">';
+          _html += '<div style="font-size:11px;color:#999;margin-bottom:2px;">' + k + '</div>';
+          _html += '<div style="font-size:18px;font-weight:bold;color:#333;">' + _fmt(k, v) + '</div>';
+          _html += '</div>';
+        }
+      });
+      _html += '</div>';
+      _mp.innerHTML = _html;
+    }
+
+    // 买卖信号（LWC v5 API: createSeriesMarkers）
+    if(d.signals && d.signals.length) {
+      try { LightweightCharts.createSeriesMarkers(cs, d.signals); } catch(e) { console.error("[LWC] marker error:", e); }
+    }
+    _lwcChart.timeScale().fitContent();
+    return;
+  }
+
+  // Plotly 渲染
   Plotly.react("chart-container",figs[currentType].data,figs[currentType].layout,{displayModeBar:false,responsive:true});
 }
 
