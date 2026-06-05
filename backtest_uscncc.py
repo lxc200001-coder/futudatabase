@@ -59,7 +59,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name), ...]}}
 
@@ -462,6 +462,10 @@ def get_last_signal_info(df):
 
     if hist_signal is not None:
         hist_days = (today - hist_time.normalize()).days
+        # K 线数 = 信号所在位置到末尾的 bar 数量
+        _hist_idx = df["datetime"].searchsorted(hist_time, side="left")
+        _hist_idx = min(_hist_idx, len(df) - 1)
+        hist_kbars = len(df) - 1 - _hist_idx
         hist_change = (last_close - hist_close) / hist_close * 100 if hist_close else None
         # 持仓日化收益率：空头趋势反转符号（做空视角下跌为盈、上涨为亏）
         _dir = int(last["dir"])
@@ -502,7 +506,7 @@ def get_last_signal_info(df):
         "历史信号": hist_signal,
         "历史信号时间": _opt_date(hist_time),
         "历史信号收盘价": hist_close,
-        "距离历史信号已过天数": hist_days,
+        "距离历史信号已过K线数": hist_kbars,
         "距离历史信号收盘价涨跌幅": hist_change,
         "持仓日化收益率": hist_daily,
     }
@@ -775,6 +779,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
             "最大连续亏损次数": 0,
 
             "平均持仓天数": 0,
+            "平均持仓K线数": 0,
 
             "初始资金": INITIAL_CASH,
             "最终资金": INITIAL_CASH,
@@ -812,6 +817,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
     max_win_streak, max_loss_streak = streaks(trades_df)
 
     avg_hold = trades_df["持仓天数"].mean()
+    avg_hold_bars = trades_df["持仓K线数"].mean()
 
     return {
         "股票代码": df["code"].iloc[0],
@@ -845,6 +851,7 @@ def build_summary(trades_df, ma_len, df, equity_arr=None):
         "最大连续亏损次数": max_loss_streak,
 
         "平均持仓天数": float(avg_hold),
+        "平均持仓K线数": float(avg_hold_bars),
 
         "初始资金": INITIAL_CASH,
         "最终资金": float(final),
@@ -1538,7 +1545,7 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
                "最大回撤", "夏普比率", "卡尔玛比率",
                "交易次数", "盈利交易率", "盈利因子", "盈亏比",
                "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
-               "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
+               "最大连续盈利次数", "最大连续亏损次数", "平均持仓K线数", "平均持仓天数",
                "初始资金", "最终资金", "窗口", "窗口内有效数据周期"]
 
     rows = []
@@ -1597,9 +1604,9 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
             row["共振均线数量"] = 0
             row["共振均线列表"] = ""
 
-        # 预计持仓进度 = 距离历史信号已过天数 / 平均持仓天数（仅多头有效）
-        _elapsed = row.get("距离历史信号已过天数")
-        _avg_hold = row.get("平均持仓天数")
+        # 预计持仓进度 = 距离历史信号已过K线数 / 平均持仓K线数（仅多头有效）
+        _elapsed = row.get("距离历史信号已过K线数")
+        _avg_hold = row.get("平均持仓K线数")
         if row.get("趋势方向") == 1 and _elapsed is not None and _avg_hold is not None and _avg_hold > 0:
             row["预计持仓进度"] = round(min(_elapsed / _avg_hold * 100, 100), 2)
         else:
@@ -1622,12 +1629,12 @@ def _build_signal_scan(all_df, signal_maps, stab_best, _unused=None):
 
     signal_df = pd.DataFrame(rows)
 
-    # 排序：多头在前（已过天数升序、策略评分降序），空头在后
+    # 排序：多头在前（已过K线数升序、策略评分降序），空头在后
     bull = signal_df[signal_df.get("趋势方向", pd.Series(-1, index=signal_df.index)) == 1].sort_values(
-        ["距离历史信号已过天数", "策略评分"], ascending=[True, False]
+        ["距离历史信号已过K线数", "策略评分"], ascending=[True, False]
     )
     bear = signal_df[signal_df.get("趋势方向", pd.Series(-1, index=signal_df.index)) != 1].sort_values(
-        ["距离历史信号已过天数", "策略评分"], ascending=[True, False]
+        ["距离历史信号已过K线数", "策略评分"], ascending=[True, False]
     )
     signal_df = pd.concat([bull, bear], ignore_index=True)
 
@@ -1656,7 +1663,7 @@ SIGNAL_COLS = [
     "策略评分", "策略表现",
     "时间", "收盘价", "HA收盘价", "HA均线值",
     "趋势方向", "最新信号", "最新信号时间", "最新信号收盘价", "最新信号确认",
-    "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过天数",
+    "历史信号", "历史信号时间", "历史信号收盘价", "距离历史信号已过K线数",
     "预计持仓进度",
     "距离历史信号收盘价涨跌幅", "预计涨幅进度",
     "持仓日化收益率",
@@ -1665,7 +1672,7 @@ SIGNAL_COLS = [
     "最大回撤", "夏普比率", "卡尔玛比率",
     "交易次数", "盈利交易率", "盈利因子", "盈亏比",
     "平均盈利", "平均盈利比", "平均亏损", "平均亏损比", "最大单笔盈利", "最大单笔亏损",
-    "最大连续盈利次数", "最大连续亏损次数", "平均持仓天数",
+    "最大连续盈利次数", "最大连续亏损次数", "平均持仓K线数", "平均持仓天数",
     "初始资金", "最终资金",
     "窗口", "窗口内有效数据周期", "窗口内有效数据K线数",
 ]
@@ -1831,10 +1838,10 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "倒数第二次信号出现的 K 线时间"},
             {"类型": "信号字段", "名称": "历史信号收盘价",
              "统计逻辑": "历史信号时间对应的原始收盘价"},
-            {"类型": "信号字段", "名称": "距离历史信号已过天数",
-             "统计逻辑": "当前最新K线日期 − 历史信号日期，单位自然日"},
+            {"类型": "信号字段", "名称": "距离历史信号已过K线数",
+             "统计逻辑": "历史信号位置到最新K线的 bar 数量"},
             {"类型": "信号字段", "名称": "预计持仓进度",
-             "统计逻辑": "仅多头计算 = min(已过天数 / 平均持仓天数 × 100%, 100%)，反映当前持仓占平均持仓周期的进度"},
+             "统计逻辑": "仅多头计算 = min(距离历史信号已过K线数 / 平均持仓K线数 × 100%, 100%)，反映当前持仓占平均持仓周期的进度"},
             {"类型": "信号字段", "名称": "预计涨幅进度",
              "统计逻辑": "仅多头且平均每笔收益率>0时计算 = min(涨跌幅 / 平均每笔收益率 × 100%, 100%)，反映当前涨幅已实现的平均收益进度"},
             {"类型": "信号字段", "名称": "距离历史信号收盘价涨跌幅",
@@ -1891,6 +1898,8 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
              "统计逻辑": "交易序列中连续亏损的最大次数，反映策略的回撤深度"},
             {"类型": "回测指标", "名称": "平均持仓天数",
              "统计逻辑": "所有交易持仓天数的平均值 = 总持仓天数 / 交易次数"},
+            {"类型": "回测指标", "名称": "平均持仓K线数",
+             "统计逻辑": "所有交易持仓K线数的平均值 = 总持仓K线数 / 交易次数"},
             {"类型": "回测指标", "名称": "初始资金",
              "统计逻辑": "回测起始资金，统一设定为 10,000"},
             {"类型": "回测指标", "名称": "最终资金",
@@ -2192,18 +2201,18 @@ def generate_unified_signal_excel(ktypes_run):
         # ── Sheet 1: 信号扫描（合并所有周期）──
         _all_sig = pd.concat(list(_sig_dfs.values()), ignore_index=True, sort=False)
         # 排序：按 1W 的趋势方向→天数→评分排股票，再按 K线周期 排个股
-        _w1 = _all_sig[_all_sig["K线周期"] == "1W"][["股票代码", "趋势方向", "距离历史信号已过天数", "策略评分"]].copy()
-        _w1 = _w1.rename(columns={"趋势方向": "_w1_dir", "距离历史信号已过天数": "_w1_days", "策略评分": "_w1_score"})
+        _w1 = _all_sig[_all_sig["K线周期"] == "1W"][["股票代码", "趋势方向", "距离历史信号已过K线数", "策略评分"]].copy()
+        _w1 = _w1.rename(columns={"趋势方向": "_w1_dir", "距离历史信号已过K线数": "_w1_kbars", "策略评分": "_w1_score"})
         _w1["_w1_dir"] = _w1["_w1_dir"].map({"多头": 0, "空头": 1}).fillna(1)
-        _w1["_w1_days"] = _w1["_w1_days"].fillna(9999)
+        _w1["_w1_kbars"] = _w1["_w1_kbars"].fillna(9999)
         _w1["_w1_score"] = -_w1["_w1_score"].fillna(0)
         _all_sig = _all_sig.merge(_w1, on="股票代码", how="left")
         _all_sig["_w1_dir"] = _all_sig["_w1_dir"].fillna(1)
-        _all_sig["_w1_days"] = _all_sig["_w1_days"].fillna(9999)
+        _all_sig["_w1_kbars"] = _all_sig["_w1_kbars"].fillna(9999)
         _all_sig["_w1_score"] = _all_sig["_w1_score"].fillna(0)
         _all_sig["_k"] = _all_sig["K线周期"].map(_kt_order).fillna(0)
-        _all_sig = _all_sig.sort_values(["_w1_dir", "_w1_days", "_w1_score", "_k"]).drop(
-            columns=["_w1_dir", "_w1_days", "_w1_score", "_k"], errors="ignore"
+        _all_sig = _all_sig.sort_values(["_w1_dir", "_w1_kbars", "_w1_score", "_k"]).drop(
+            columns=["_w1_dir", "_w1_kbars", "_w1_score", "_k"], errors="ignore"
         ).reset_index(drop=True)
         _all_sig.to_excel(_writer, sheet_name="信号扫描", index=False)
         _set_pct_format(_writer.sheets["信号扫描"], _all_sig, PCT_COLS)
