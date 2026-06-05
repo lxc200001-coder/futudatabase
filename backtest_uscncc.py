@@ -59,7 +59,7 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
 DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
-DEFAULT_MARKET = "CC"    # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name, sig_map), ...]}}
 
@@ -478,6 +478,7 @@ def get_last_signal_info(df):
     else:
         hist_change = None
         hist_daily = None
+        hist_kbars = None
 
     # 最新信号确认：信号出现在最新 K 线则待确认，下一根 K 线才确认
     if signal in ("BUY", "SELL"):
