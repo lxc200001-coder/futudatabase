@@ -2460,6 +2460,10 @@ if __name__ == "__main__":
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--ma-mode", choices=["continuous", "jump"], default=MA_MODE,
                         help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,60m step=4,周线强制连续)")
+    parser.add_argument("--save-cache", action="store_true",
+                        help="回测完成后保存缓存到文件，下次可用 --from-cache 跳过回测直接生成看板")
+    parser.add_argument("--from-cache", type=str, nargs="?", const="latest", default=None,
+                        help="从缓存文件加载数据，跳过回测直接生成看板。指定路径或 latest（自动取最新）")
     _CLI_ARGS = parser.parse_args()
     MA_MODE = _CLI_ARGS.ma_mode
 
@@ -2516,9 +2520,34 @@ if __name__ == "__main__":
         _elapsed = _t.time() - _t0
         print(f"  [{_kt}] 完成，耗时 {int(_elapsed//60)}分{int(_elapsed%60)}秒")
 
+    # --from-cache：跳过回测，直接从缓存文件生成看板
+    if _CLI_ARGS.from_cache:
+        import glob as _g, pickle as _pkl
+        if _CLI_ARGS.from_cache == "latest":
+            _cache_files = sorted(_g.glob(os.path.join(TRADE_DIR, "heatmap_cache_*.pkl")))
+            if not _cache_files:
+                print("错误: 未找到缓存文件")
+                sys.exit(1)
+            _cache_path = _cache_files[-1]
+        else:
+            _cache_path = _CLI_ARGS.from_cache
+        print(f"加载缓存文件: {_cache_path}")
+        with open(_cache_path, "rb") as _f:
+            _HEATMAP_CACHE = _pkl.load(_f)
+        if _HEATMAP_CACHE:
+            generate_heatmap_dashboard(_HEATMAP_CACHE)
+        sys.exit(0)
+
     # 统一信号汇总 Excel（合并所有已跑周期的信号 + 对比 + 最优参数）
     generate_unified_signal_excel(_ktypes)
 
     # 统一热力图看板（覆盖所有已跑的 ktype × market）
     if _HEATMAP_CACHE:
         generate_heatmap_dashboard(_HEATMAP_CACHE)
+        # --save-cache：持久化缓存到文件
+        if _CLI_ARGS.save_cache:
+            import pickle as _pkl
+            _cache_path = os.path.join(TRADE_DIR, f"heatmap_cache_{_t.strftime('%Y%m%d_%H%M%S')}.pkl")
+            with open(_cache_path, "wb") as _f:
+                _pkl.dump(_HEATMAP_CACHE, _f)
+            print(f"缓存已保存: {_cache_path}")
