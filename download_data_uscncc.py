@@ -9,6 +9,7 @@ import urllib3
 import pandas as pd
 import baostock as bs
 
+import threading
 import contextlib
 from collections import deque
 from datetime import datetime
@@ -25,8 +26,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_MARKET = "CN"   # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US"   # 默认市场: all / US / CN / CC / US,CC
 DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
+DEFAULT_API = "stooq-local"  # 美股数据源: futu/ibkr/yahoo/stooq-local(本地全量数据包)
 
 # ktype → 子目录名 / 文件后缀 映射
 KTYPE_DIR_MAP = {"week": "1w", "day": "1d", "60m": "60m"}
@@ -230,6 +232,336 @@ def fetch_binance_data(code, start_str, end_str, ktype="week"):
         return pd.DataFrame()
 
     return pd.DataFrame(all_rows)
+
+
+# =========================================================
+# Stooq 数据（US 股票，免费 HTTP API）
+# =========================================================
+def fetch_stooq_data(code, start_str, end_str, ktype="week"):
+    """从 Stooq 获取美股 K 线数据（免费，无需注册）"""
+    symbol = code.replace("US.", "").lower()
+    interval = {"week": "w", "day": "d", "60m": "d"}.get(ktype, "w")
+    url = f"https://stooq.com/q/d/l/?s={symbol}.us&i={interval}"
+
+    try:
+        df = pd.read_csv(url)
+    except Exception as e:
+        print(f"  Stooq {symbol}: {e}")
+        return pd.DataFrame()
+
+    if df.empty or "Date" not in df.columns:
+        return pd.DataFrame()
+
+    df = df.rename(columns={
+        "Date": "time_key", "Open": "open", "High": "high",
+        "Low": "low", "Close": "close", "Volume": "volume",
+    })
+    df["time_key"] = pd.to_datetime(df["time_key"])
+    df["code"] = code
+    df["turnover"] = 0
+    df = df.sort_values("time_key").reset_index(drop=True)
+    # 按 start 截断
+    df = df[df["time_key"] >= pd.Timestamp(start_str)]
+    return df
+
+
+# =========================================================
+# Stooq 本地数据（US 股票，从全量历史数据包读取）
+# =========================================================
+_STOOQ_LOCAL_DIR = os.path.join(DATA_DIR, "data", "daily", "us")
+_STOOQ_MARKETS = ["nasdaq stocks", "nasdaq etfs", "nyse stocks", "nyse etfs", "nysemkt stocks", "nysemkt etfs"]
+
+def fetch_stooq_local_data(code, start_str, end_str, ktype="week", _save_daily_path=None):
+    """从本地 Stooq 全量数据包读取 K 线数据"""
+    _search = code.replace("US.", "").lower().replace(".", "-")
+    _path = None
+    for _mkt in _STOOQ_MARKETS:
+        _mkt_dir = os.path.join(_STOOQ_LOCAL_DIR, _mkt)
+        if not os.path.isdir(_mkt_dir):
+            continue
+        # ETFs: 文件直接放在市场目录下
+        _candidate = os.path.join(_mkt_dir, f"{_search}.us.txt")
+        if os.path.exists(_candidate):
+            _path = _candidate
+            break
+        # Stocks: 文件放在数字子目录中
+        for _sub in sorted(os.listdir(_mkt_dir)):
+            _sub_dir = os.path.join(_mkt_dir, _sub)
+            if not os.path.isdir(_sub_dir):
+                continue
+            _candidate = os.path.join(_sub_dir, f"{_search}.us.txt")
+            if os.path.exists(_candidate):
+                _path = _candidate
+                break
+        if _path:
+            break
+    if _path is None:
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(_path)
+    except Exception as e:
+        print(f"  Stooq本地 {code}: 读取失败 {e}")
+        return pd.DataFrame()
+
+    df.columns = [c.strip("<>") for c in df.columns]  # 去掉 < >
+    df = df.rename(columns={
+        "DATE": "time_key", "OPEN": "open", "HIGH": "high",
+        "LOW": "low", "CLOSE": "close", "VOL": "volume",
+    })
+    df["time_key"] = pd.to_datetime(df["time_key"].astype(str), format="%Y%m%d")
+    df["code"] = code
+    df["turnover"] = 0
+    df = df[["code", "time_key", "open", "high", "low", "close", "volume", "turnover"]]
+    df = df.sort_values("time_key").reset_index(drop=True)
+
+    # 按起始日期截断（先截断再保存/聚合）
+    _start_ts = pd.Timestamp(start_str)
+    df = df[df["time_key"] >= _start_ts]
+
+    # 保存日线（周线聚合时使用，列名统一为 datetime）
+    if _save_daily_path and not df.empty:
+        os.makedirs(os.path.dirname(_save_daily_path), exist_ok=True)
+        df.rename(columns={"time_key": "datetime"}).to_parquet(_save_daily_path, index=False)
+
+    # 周线：日线 → 周线聚合
+    if ktype == "week":
+        df = df.set_index("time_key")
+        _agg = {
+            "code": "first", "open": "first",
+            "high": "max", "low": "min",
+            "close": "last", "volume": "sum", "turnover": "sum",
+        }
+        df = df.resample("W-FRI").agg(_agg).dropna(subset=["close"]).reset_index()
+        df["time_key"] = df["time_key"] - pd.Timedelta(days=4)
+
+    return df
+
+
+# =========================================================
+# Yahoo Finance 数据（US/CC 股票，免费）
+# =========================================================
+_YAHOO_CACHE = {}  # {ktype: {symbol: DataFrame}}
+
+def fetch_yahoo_data(code, start_str, end_str, ktype="week"):
+    """从 Yahoo Finance 获取 K 线数据（免费，前复权）"""
+    symbol = code.replace("US.", "").replace("CC.", "")
+    # 检查缓存
+    _ck = _YAHOO_CACHE.get(ktype, {})
+    if symbol in _ck:
+        df = _ck[symbol]
+    else:
+        return pd.DataFrame()  # 不在缓存中，由外层批量下载
+
+    df = df.reset_index()
+    # yfinance 多股票返回 MultiIndex 列，取该股票
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.xs(symbol, axis=1, level=1).reset_index()
+    df.columns = [c.lower() for c in df.columns]
+    # 列名统一
+    _date_col = "date" if "date" in df.columns else "datetime"
+    df = df.rename(columns={_date_col: "time_key"})
+    df["time_key"] = pd.to_datetime(df["time_key"])
+    df["code"] = code
+    df["turnover"] = 0
+    return df
+
+
+def _yahoo_batch_download(codes, start_str, end_str, ktype="week"):
+    """批量下载 Yahoo Finance 数据（大幅减少请求次数）"""
+    interval = {"week": "1wk", "day": "1d", "60m": "60m"}.get(ktype, "1wk")
+    symbols = [c.replace("US.", "").replace("CC.", "") for c in codes]
+    if not symbols:
+        return
+
+    for i in range(0, len(symbols), 5):  # 每批 5 只
+        batch = symbols[i:i + 5]
+        for retry in range(5):
+            try:
+                import yfinance as yf
+                df = yf.download(batch, start=start_str, end=end_str,
+                                 interval=interval, auto_adjust=True, group_by="ticker")
+                if df.empty:
+                    break
+                # 存入缓存
+                if ktype not in _YAHOO_CACHE:
+                    _YAHOO_CACHE[ktype] = {}
+                for s in batch:
+                    if isinstance(df.columns, pd.MultiIndex) and s in df.columns.levels[1]:
+                        _YAHOO_CACHE[ktype][s] = df.xs(s, axis=1, level=1)
+                break
+            except Exception as e:
+                if "Rate limited" in str(e):
+                    _wait = 30 * (retry + 1)
+                    tqdm.write(f"  Yahoo 限频，等待 {_wait} 秒（第 {retry+1} 次重试）...")
+                    time.sleep(_wait)
+                else:
+                    tqdm.write(f"  Yahoo batch 错误: {e}")
+                    break
+        time.sleep(60)  # 批次间间隔 60 秒
+
+
+# =========================================================
+# IBKR 数据（US 股票，替代 Futu）
+# =========================================================
+class _IBKRApp:
+    """IBKR API 事件驱动客户端包装器"""
+    def __init__(self):
+        from ibapi.client import EClient
+        from ibapi.wrapper import EWrapper
+        self.data = []
+        self._req_id = 1
+        self._connected = threading.Event()
+        self._done = threading.Event()
+        self._error = None
+
+        class _App(EWrapper, EClient):
+            def __init__(self, outer):
+                EWrapper.__init__(self)
+                EClient.__init__(self, self)
+                self.outer = outer
+
+            def nextValidId(self, orderId):
+                self.outer._connected.set()
+
+            def historicalData(self, reqId, bar):
+                self.outer.data.append(bar)
+
+            def historicalDataEnd(self, reqId, start, end):
+                self.outer._done.set()
+
+            def error(self, reqId, code, msg, *args):
+                if code not in (2104, 2106, 2158):  # 忽略连接状态信息
+                    self.outer._error = f"[{code}] {msg}"
+
+        self.app = _App(self)
+
+    def connect(self, host="127.0.0.1", port=4001, client_id=1):
+        self.app.connect(host, port, client_id)
+        import threading as _thr
+        _thr.Thread(target=self.app.run, daemon=True).start()
+        if not self._connected.wait(timeout=5):
+            self.app.disconnect()
+            raise ConnectionError("IBKR 连接超时")
+
+    def reset(self):
+        """请求之间复位，不清除连接"""
+        self._done.clear()
+        self.data.clear()
+        self._error = None
+
+    def req_historical_data(self, symbol, end_str, duration, bar_size):
+        from ibapi.contract import Contract
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "STK"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+        end_dt = ""  # 空=当前最新数据
+        self._done.clear()
+        self.data.clear()
+        # 周线不支持 ADJUSTED_LAST，日线/60分可用
+        _what = "ADJUSTED_LAST" if bar_size in ("1 day", "1 hour") else "TRADES"
+        self.app.reqHistoricalData(
+            self._req_id, contract, end_dt, duration, bar_size,
+            _what, 1, 1, False, [],
+        )
+        if not self._done.wait(timeout=30):
+            raise TimeoutError(f"IBKR {symbol} 历史数据请求超时")
+
+    def disconnect(self):
+        self.app.disconnect()
+
+
+def fetch_ibkr_data(code, start_str, end_str, ktype="week", _save_daily_path=None, ibkr_app=None):
+    """从 IBKR 获取美股 K 线数据（需启动 TWS 或 IB Gateway）
+
+    周线：下载日线再聚合成周线（绕开 IBKR 周线不支持 ADJUSTED_LAST 的限制）
+         并可选将原始日线保存到 _save_daily_path，避免重复下载
+    日线/60分：直接请求对应周期
+
+    传 ibkr_app 可复用连接（推荐），不传则每次新建。
+    """
+    symbol = code.replace("US.", "")
+    _is_week = (ktype == "week")
+    # 周线实际请求日线数据，再聚合
+    ibkr_bar = {"week": "1 day", "day": "1 day", "60m": "1 hour"}.get(ktype, "1 day")
+    # 根据 start_str 计算 duration（与 get_start_date_by_ktype 一致）
+    _start = pd.Timestamp(start_str)
+    _end = pd.Timestamp(end_str)
+    _total_days = (_end - _start).days
+    if _total_days >= 730:
+        ibkr_duration = f"{_total_days // 365 + 1} Y"
+    elif _total_days >= 60:
+        ibkr_duration = f"{_total_days // 30 + 1} M"
+    else:
+        ibkr_duration = f"{_total_days + 1} D"
+
+    _own_app = ibkr_app is None
+    app = ibkr_app or _IBKRApp()
+    if _own_app:
+        app.connect()
+        app.reset()
+    else:
+        app.reset()
+    try:
+        app.req_historical_data(symbol, end_str, ibkr_duration, ibkr_bar)
+    except (ConnectionError, TimeoutError) as e:
+        print(f"  IBKR {symbol}: {e}")
+        return pd.DataFrame()
+    finally:
+        if _own_app:
+            app.disconnect()
+
+    if not app.data:
+        return pd.DataFrame()
+
+    rows = []
+    for bar in app.data:
+        dt = pd.Timestamp(bar.date)
+        rows.append({
+            "code": code,
+            "time_key": dt,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+            "turnover": 0,
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # 周线：先聚合再截断
+    if _is_week:
+        _agg = {
+            "code": "first", "open": "first",
+            "high": "max", "low": "min",
+            "close": "last", "volume": "sum", "turnover": "sum",
+        }
+        df_weekly = df.set_index("time_key").resample("W-FRI").agg(_agg)
+        df_weekly = df_weekly.dropna(subset=["close"]).reset_index()
+        df_weekly["time_key"] = df_weekly["time_key"] - pd.Timedelta(days=4)
+
+        # 按各自起始日期截断
+        _day_start = pd.Timestamp(get_start_date_by_ktype("day"))
+        _week_start = pd.Timestamp(start_str)  # 2000-01-03
+        df = df[df["time_key"] >= _day_start]      # 日线截断
+        df_weekly = df_weekly[df_weekly["time_key"] >= _week_start]  # 周线截断
+
+        # 保存日线
+        if _save_daily_path:
+            os.makedirs(os.path.dirname(_save_daily_path), exist_ok=True)
+            df.to_parquet(_save_daily_path, index=False)
+
+        return df_weekly
+
+    # 非周线（日线/60分）：直接按 start_str 截断
+    _start_ts = pd.Timestamp(start_str)
+    df = df[df["time_key"] >= _start_ts]
+    return df
 
 
 # =========================================================
@@ -639,7 +971,7 @@ def fetch_top_turnover_stocks(limit=200):
         quote_ctx.close()
 
 
-def run_download(ktype="week", selected_markets=None):
+def run_download(ktype="week", selected_markets=None, api="futu"):
 
     if selected_markets is None:
         selected_markets = ["us", "cn", "cc"]
@@ -655,14 +987,28 @@ def run_download(ktype="week", selected_markets=None):
         return
 
     end_str = datetime.now().strftime("%Y-%m-%d")
+    start_str = get_start_date_by_ktype(ktype).strftime("%Y-%m-%d")
 
     us_codes = [c for c in symbols if get_market(c) == "us"]
-    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111) if us_codes else None
+    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111) if (us_codes and api == "futu") else None
 
     name_map = fetch_stock_names(symbols, quote_ctx)
 
+    # Yahoo 批量预下载
+    _yahoo_codes = [c for c in symbols if get_market(c) in ("us", "cc")] if api == "yahoo" else []
+    if _yahoo_codes:
+        print("  Yahoo 批量下载中...")
+        _yahoo_batch_download(_yahoo_codes, start_str, end_str, ktype)
+
+    # IBKR 连接（复用，跨所有股票）
+    _ibkr_app = _IBKRApp() if (api == "ibkr" and [c for c in symbols if get_market(c) == "us"]) else None
+    if _ibkr_app:
+        _ibkr_app.connect()
+        print("  IBKR 连接成功")
+
     all_dfs = []
     _ok = _fail = 0
+    _failed_codes = []
 
     for code in tqdm(symbols, desc=f"{ktype}下载", unit="stock"):
         name = name_map.get(code, "")
@@ -674,6 +1020,29 @@ def run_download(ktype="week", selected_markets=None):
             df = fetch_binance_data(code, start_str, end_str, ktype)
         elif market == "cn":
             df = fetch_cn_data(code, start_str, end_str, ktype)
+        elif api == "stooq-local":
+            start_str = "2000-01-03"  # Stooq 全量数据，日/周都从 2000 开始
+            if ktype == "day":
+                _prev = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet")
+                if os.path.exists(_prev):
+                    _ok += 1
+                    continue
+            _daily_path = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet") if ktype == "week" else None
+            df = fetch_stooq_local_data(code, start_str, end_str, ktype, _save_daily_path=_daily_path)
+        elif api == "yahoo":
+            df = fetch_yahoo_data(code, start_str, end_str, ktype)
+        elif api == "ibkr":
+            if ktype == "day":
+                _prev_path = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet")
+                if os.path.exists(_prev_path):
+                    _ok += 1
+                    continue
+                df = fetch_ibkr_data(code, start_str, end_str, ktype, ibkr_app=_ibkr_app)
+            elif ktype == "week":
+                _daily_path = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet")
+                df = fetch_ibkr_data(code, start_str, end_str, ktype, _save_daily_path=_daily_path, ibkr_app=_ibkr_app)
+            else:
+                df = fetch_ibkr_data(code, start_str, end_str, ktype, ibkr_app=_ibkr_app)
         else:
             df = fetch_futu_data(code, start_str, end_str, quote_ctx, ktype) if quote_ctx else pd.DataFrame()
 
@@ -683,10 +1052,16 @@ def run_download(ktype="week", selected_markets=None):
             _ok += 1
         else:
             _fail += 1
-    print(f"  {ktype} 下载完成: {_ok} 成功" + (f", {_fail} 失败" if _fail else ""))
+            _failed_codes.append(code)
+    if _fail:
+        print(f"  {ktype} 下载完成: {_ok} 成功, {_fail} 失败 — {'; '.join(_failed_codes)}")
+    else:
+        print(f"  {ktype} 下载完成: {_ok} 成功")
 
     if quote_ctx is not None:
         quote_ctx.close()
+    if _ibkr_app:
+        _ibkr_app.disconnect()
 
     # 合并总表（按市场分别保存）
     if all_dfs:
@@ -708,7 +1083,7 @@ def run_download(ktype="week", selected_markets=None):
 # =========================================================
 # 主入口
 # =========================================================
-def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False):
+def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False, api="futu"):
     """分阶段下载周线、日线、60分钟数据。"""
     ktypes = []
     if not skip_week:
@@ -719,7 +1094,7 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
         ktypes.append("60m")
 
     for ktype in ktypes:
-        run_download(ktype=ktype, selected_markets=selected_markets)
+        run_download(ktype=ktype, selected_markets=selected_markets, api=api)
 
 
 if __name__ == "__main__":
@@ -729,6 +1104,8 @@ if __name__ == "__main__":
                         help="K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接, 默认: all)")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
+    parser.add_argument("--api", choices=["futu", "ibkr", "yahoo", "stooq-local"], default=DEFAULT_API,
+                        help="美股数据源: futu(富途OpenD, 默认) / ibkr(IB TWS/Gateway)")
     parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=200,
                         help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200, 设为0跳过)")
     parser.add_argument("--skip-week", action="store_true", help="跳过周线下载（已弃用，用 --ktype 替代）")
@@ -768,7 +1145,7 @@ if __name__ == "__main__":
     _all_start = time.time()
     # 分阶段下载 K 线数据
     run_download_all(selected_markets=selected_markets,
-                     skip_week="week" not in _ktypes,
+                     skip_week="week" not in _ktypes, api=args.api,
                      skip_day="day" not in _ktypes,
                      skip_60m="60m" not in _ktypes)
 
