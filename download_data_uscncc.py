@@ -26,7 +26,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
-DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "week"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
 DEFAULT_API = "futu"  # 美股数据源: futu(富途) / stooq-local(本地全量数据包)
 
 # ktype → 子目录名 / 文件后缀 映射
@@ -239,7 +239,7 @@ def fetch_binance_data(code, start_str, end_str, ktype="week"):
 _STOOQ_LOCAL_DIR = os.path.join(DATA_DIR, "data", "daily", "us")
 _STOOQ_MARKETS = ["nasdaq stocks", "nasdaq etfs", "nyse stocks", "nyse etfs", "nysemkt stocks", "nysemkt etfs"]
 
-def fetch_stooq_local_data(code, start_str, end_str, ktype="week", _save_daily_path=None):
+def fetch_stooq_local_data(code, start_str, end_str, ktype="week"):
     """从本地 Stooq 全量数据包读取 K 线数据"""
     _search = code.replace("US.", "").lower().replace(".", "-")
     _path = None
@@ -286,11 +286,6 @@ def fetch_stooq_local_data(code, start_str, end_str, ktype="week", _save_daily_p
     # 按起始日期截断（先截断再保存/聚合）
     _start_ts = pd.Timestamp(start_str)
     df = df[df["time_key"] >= _start_ts]
-
-    # 保存日线（周线聚合时使用，列名统一为 datetime）
-    if _save_daily_path and not df.empty:
-        os.makedirs(os.path.dirname(_save_daily_path), exist_ok=True)
-        df.rename(columns={"time_key": "datetime"}).to_parquet(_save_daily_path, index=False)
 
     # 周线：日线 → 周线聚合
     if ktype == "week":
@@ -796,6 +791,88 @@ def fetch_cn_top_turnover(limit=30):
     return out_path
 
 
+def _sync_watchlist_db():
+    """合并 symbols.csv + top_stocks 去重后写入 watchlist 表"""
+    try:
+        import duckdb
+        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+        _con = duckdb.connect(_db_path)
+
+        # 1. symbols.csv → 手动添加
+        _manual = set()
+        _symbols = pd.read_csv(os.path.join(os.path.dirname(__file__), "symbols", "symbols.csv"))
+        for _, _row in _symbols.iterrows():
+            _manual.add(str(_row["code"]).strip())
+
+        # 2. top_stocks → 成交额排名
+        _ranked = set()
+        for _r in _con.execute("SELECT DISTINCT code FROM top_stocks").fetchall():
+            _ranked.add(str(_r[0]))
+
+        # 3. 合并并确定来源
+        _all = _manual | _ranked
+        _market_of = {}
+        for _c in _all:
+            if _c.startswith("CC."):
+                _market_of[_c] = "cc"
+            elif _c.startswith(("SH.", "SZ.")):
+                _market_of[_c] = "cn"
+            elif _c.startswith("US."):
+                _market_of[_c] = "us"
+
+        # 4. 按市场排序写入（us → cc → cn）
+        _mkt_order = {"us": 0, "cc": 1, "cn": 2}
+        _con.execute('DELETE FROM watchlist')
+        for _c in sorted(_all, key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
+            _m = _market_of.get(_c)
+            if not _m:
+                continue
+            _src = []
+            if _c in _manual:
+                _src.append("手动添加")
+            if _c in _ranked:
+                _src.append("成交额排名")
+            _con.execute(
+                'INSERT INTO watchlist(code, market, source, created_at) VALUES (?, ?, ?, ?)',
+                [_c, _m, ",".join(_src), datetime.now()],
+            )
+        _con.close()
+        print(f"  watchlist 已同步: {len(_all)} 只")
+    except Exception:
+        pass
+
+
+def _load_symbols_from_watchlist(api="futu"):
+    """从 DuckDB watchlist 表加载股票列表。
+
+    futu: US 股票只取来源含"手动添加"的（额度限制）
+    stooq-local: US 股票取全部
+    CN/CC: 始终取全部
+    """
+    _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+    if not os.path.exists(_db_path):
+        return None
+    try:
+        import duckdb
+        _con = duckdb.connect(_db_path, read_only=True)
+        _us_filter = "AND source LIKE '%手动添加%'" if api == "futu" else ""
+        _rows = _con.execute(f"""
+            SELECT DISTINCT code FROM watchlist
+            WHERE market = 'us' {_us_filter}
+            UNION ALL
+            SELECT DISTINCT code FROM watchlist WHERE market = 'cn'
+            UNION ALL
+            SELECT DISTINCT code FROM watchlist WHERE market = 'cc'
+        """).fetchall()
+        _con.close()
+        _codes = [str(r[0]) for r in _rows]
+        if _codes:
+            print(f"  watchlist 加载: {len(_codes)} 只 (api={api})")
+        return _codes
+    except Exception:
+        return None
+
+
 def run_download(ktype="week", selected_markets=None, api="futu"):
 
     if selected_markets is None:
@@ -803,10 +880,13 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
 
     init_symbols_file(SYMBOL_FILE)
 
-    symbols = load_symbols(SYMBOL_FILE)
+    # 从 watchlist 表加载股票（按 api 过滤 US 股票）
+    _symbols = _load_symbols_from_watchlist(api)
+    if _symbols is None:
+        # 兜底：从 symbols.csv 加载
+        _symbols = load_symbols(SYMBOL_FILE)
 
-    # 按市场过滤
-    symbols = [c for c in symbols if get_market(c) in selected_markets]
+    symbols = [c for c in _symbols if get_market(c) in selected_markets]
     if not symbols:
         print(f"无匹配的标的 (市场: {selected_markets})")
         return
@@ -834,18 +914,11 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
         elif market == "cn":
             df = fetch_cn_data(code, start_str, end_str, ktype)
         elif api == "stooq-local":
-            start_str = "2000-01-03"  # Stooq 全量数据，日/周都从 2000 开始
-            if ktype == "day":
-                _prev = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet")
-                if os.path.exists(_prev):
-                    _ok += 1
-                    continue
-            _daily_path = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet") if ktype == "week" else None
-            df = fetch_stooq_local_data(code, start_str, end_str, ktype, _save_daily_path=_daily_path)
+            start_str = "2000-01-03"
+            df = fetch_stooq_local_data(code, start_str, end_str, ktype)
         else:
             df = fetch_futu_data(code, start_str, end_str, quote_ctx, ktype) if quote_ctx else pd.DataFrame()
 
-        save_data(df, code, ktype, name_map)
         if not df.empty:
             all_dfs.append(df)
             _ok += 1
@@ -860,20 +933,31 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
     if quote_ctx is not None:
         quote_ctx.close()
 
-    # 合并总表（按市场分别保存）
+    # 合并写入 DuckDB
     if all_dfs:
         combined = pd.concat(all_dfs, ignore_index=True)
         combined = combined.rename(columns={"time_key": "datetime"})
         combined["datetime"] = pd.to_datetime(combined["datetime"])
         combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
+        combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
 
-        suffix = KTYPE_SUFFIX_MAP.get(ktype, f"1{ktype[0]}")
-        base_cols = ["code", "market", "datetime", "open", "high", "low", "close", "volume", "turnover"]
-        combined = combined[[c for c in base_cols if c in combined.columns]]
-        out_path = os.path.join(DATA_DIR, KTYPE_DIR_MAP.get(ktype, ""), f"all_{suffix}.parquet")
-        combined.to_parquet(out_path, index=False)
+        _kt_name = {"week": "1w", "day": "1d", "60m": "60m"}.get(ktype, ktype)
+        _tbl = f"klines_{_kt_name}"
+        try:
+            import duckdb
+            _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+            _con = duckdb.connect(_db_path)
+            _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM combined")
+            _con.execute(f"""
+                INSERT OR REPLACE INTO {_tbl} (code, datetime, open, high, low, close, volume, turnover, market)
+                SELECT code, datetime, open, high, low, close, volume, turnover, market FROM _tmp
+            """)
+            _con.close()
+            print(f"  {_tbl}: {len(combined)} 行写入")
+        except Exception as e:
+            print(f"  DuckDB 写入失败: {e}")
     else:
-        print("\n无数据，跳过总表保存")
+        print("\n无数据，跳过写入")
 
 
 
@@ -921,10 +1005,15 @@ if __name__ == "__main__":
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
 
     # 根据 market 自动获取成交额排名
+    _ranked = False
     if args.top_turnover and "us" in selected_markets:
         fetch_top_turnover_stocks(limit=args.top_turnover)
+        _ranked = True
     if args.top_turnover_cn and "cn" in selected_markets:
         fetch_cn_top_turnover(limit=args.top_turnover_cn)
+        _ranked = True
+    if _ranked:
+        _sync_watchlist_db()
 
     # --only-turnover：不下载K线数据
     if args.only_turnover:
@@ -956,10 +1045,8 @@ if __name__ == "__main__":
                      skip_day="day" not in _ktypes,
                      skip_60m="60m" not in _ktypes)
 
-    # 再同步板块/行业信息，并补写到各周期 K 线 parquet
+    # 同步板块/行业信息
     plates_map = run_plate_sync(selected_markets=selected_markets)
-    for _kt in KTYPE_DIR_MAP:
-        add_plates_to_parquets(_kt, plates_map)
     _elapsed = time.time() - _all_start
     _min = int(_elapsed // 60)
     _sec = int(_elapsed % 60)

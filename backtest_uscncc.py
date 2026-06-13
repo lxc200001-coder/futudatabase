@@ -82,8 +82,28 @@ def _market_subdir(code):
     raise ValueError(f"未知代码前缀: {code}")
 
 
+def _load_data(code):
+    """从 DuckDB 读取 K 线数据。返回 DataFrame 或 None。"""
+    _kt = {"1W": "1w", "1D": "1d", "60m": "60m"}.get(BAR_INTERVAL, "")
+    _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+    if not os.path.exists(_db_path):
+        return None
+    try:
+        import duckdb
+        _con = duckdb.connect(_db_path, read_only=True)
+        _df = _con.execute(
+            f'SELECT * FROM klines_{_kt} WHERE code = ? ORDER BY datetime', [code]
+        ).fetchdf()
+        _con.close()
+        if not _df.empty:
+            return _df
+    except Exception:
+        pass
+    return None
+
+
 def _find_data_file(code):
-    """在 data_uscncc/{ktype_dir}/{market}/ 中查找 parquet 文件，兼容旧目录。"""
+    """兼容旧版 parquet 路径查找（仅备查用）。"""
     if code.startswith("CC."):
         market = "cc"
     elif code.startswith(("SH.", "SZ.")):
@@ -92,7 +112,6 @@ def _find_data_file(code):
         market = "us"
     else:
         raise ValueError(f"未知代码前缀: {code}")
-
     _dir_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
     _ktype_dir = _dir_map.get(BAR_INTERVAL, "")
     path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
@@ -1319,13 +1338,20 @@ def generate_heatmap_dashboard(cache_data):
                     figs[STABILITY_KEY] = d
 
                 # ── K线图（LightweightCharts）──
-                _kt_dir = {"1W": "1w", "1D": "1d", "60m": "60m"}.get(_bi, "")
-                _suffix = KLINE_MAP.get(_bi, {}).get("suffix", "")
-                _data_path = os.path.join(DATA_DIR, _kt_dir, _mkt_id, f"{code}{_suffix}.parquet")
-                _bt_close = _bt_buy = _bt_sell = None  # try 外计算 equity
-                if os.path.exists(_data_path) and best_ma is not None:
+                _bt_close = _bt_buy = _bt_sell = None
+                if best_ma is not None:
+                    _db_tbl = "klines_" + {"1W": "1w", "1D": "1d", "60m": "60m"}.get(_bi, "")
                     try:
-                        _df_k = pd.read_parquet(_data_path).sort_values("datetime")
+                        import duckdb as _dk
+                        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+                        if os.path.exists(_db_path):
+                            _con = _dk.connect(_db_path, read_only=True)
+                            _df_k = _con.execute(
+                                f'SELECT * FROM {_db_tbl} WHERE code = ? ORDER BY datetime', [code]
+                            ).fetchdf()
+                            _con.close()
+                        else:
+                            _df_k = pd.DataFrame()
                         _ha_close_k = (_df_k["open"] + _df_k["high"] + _df_k["low"] + _df_k["close"]) / 4
                         _ma_k = _ha_close_k.rolling(best_ma, min_periods=best_ma).mean()
                         _ma_diff = _ma_k.diff().fillna(0)
@@ -1472,11 +1498,9 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
     if ktype:
         _setup_ktype(ktype, ma_mode)
-    path = _find_data_file(code)
-    if not path:
+    df = _load_data(code)
+    if df is None:
         return [], [], {}, None, None
-    df = pd.read_parquet(path)
-    df = df.sort_values("datetime")
     df["code"] = code
     out_file = os.path.join(TRADE_DIR, TRADE_SUBDIR, _market_subdir(code), f"{code}_trades.xlsx")
     stock_name = str(df["stock_name"].iloc[0]) if "stock_name" in df.columns else ""
@@ -2071,20 +2095,18 @@ def run_trade():
 
     symbols = load_symbols(SYMBOL_FILE)
 
-    # 过滤出有数据文件的股票，用于进度条总计数
-    available = [s for s in symbols if _find_data_file(s)]
-
     # 扫描全市场数据，取最早和最晚日期作为窗口范围
+    available = []
     global_start = pd.Timestamp("2099-12-31")
     global_end = pd.Timestamp("2000-01-01")
-    for s in available:
+    for s in symbols:
         try:
-            _path = _find_data_file(s)
-            if not _path:
+            _df = _load_data(s)
+            if _df is None or _df.empty:
                 continue
-            _tmp = pd.read_parquet(_path, columns=["datetime"])
-            _min = pd.to_datetime(_tmp["datetime"]).min()
-            _max = pd.to_datetime(_tmp["datetime"]).max()
+            available.append(s)
+            _min = pd.to_datetime(_df["datetime"]).min()
+            _max = pd.to_datetime(_df["datetime"]).max()
             if _min < global_start:
                 global_start = _min
             if _max > global_end:

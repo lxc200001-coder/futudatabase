@@ -20,6 +20,55 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 
 
+def update_watchlist(con):
+    """合并 symbols.csv + top_stocks 去重后写入 watchlist 表"""
+    import pandas as pd
+
+    # 1. 读取 symbols.csv → 手动添加
+    _manual = set()
+    _symbol_path = os.path.join(PROJECT_ROOT, "symbols", "symbols.csv")
+    if os.path.exists(_symbol_path):
+        for c in pd.read_csv(_symbol_path)["code"].dropna():
+            _manual.add(c.strip())
+
+    # 2. 读取 top_stocks → 成交额排名
+    _ranked = set()
+    try:
+        for row in con.execute("SELECT DISTINCT code FROM top_stocks").fetchall():
+            _ranked.add(str(row[0]))
+    except Exception:
+        pass
+
+    # 3. 合并所有代码并确定来源
+    _all_codes = _manual | _ranked
+    _market_of = {}
+    for code in _all_codes:
+        if code.startswith("CC."):
+            _market_of[code] = "cc"
+        elif code.startswith(("SH.", "SZ.")):
+            _market_of[code] = "cn"
+        elif code.startswith("US."):
+            _market_of[code] = "us"
+
+    # 4. 按市场排序写入（us → cc → cn，同市场内按代码升序）
+    _mkt_order = {"us": 0, "cc": 1, "cn": 2}
+    con.execute("DELETE FROM watchlist")
+    for code in sorted(_all_codes, key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
+        mkt = _market_of.get(code)
+        if not mkt:
+            continue
+        src = []
+        if code in _manual:
+            src.append("手动添加")
+        if code in _ranked:
+            src.append("成交额排名")
+        con.execute(
+            'INSERT INTO watchlist(code, market, source, created_at) VALUES (?, ?, ?, ?)',
+            [code, mkt, ",".join(src), datetime.now()],
+        )
+    print(f"  watchlist: {len(_all_codes)} 只")
+
+
 def create_tables(con):
     """建表（成交额排名需要实际表，其他用视图）"""
     con.execute("""
@@ -52,6 +101,47 @@ def create_tables(con):
         ("date", "数据日期"), ("created_at", "添加时间(精确到秒)"),
     ]:
         con.execute(f"COMMENT ON COLUMN top_stocks.{_col} IS '{_desc}'")
+
+    con.execute("DROP TABLE IF EXISTS watchlist")
+    con.execute("""
+        CREATE TABLE watchlist (
+            code        VARCHAR,
+            market      VARCHAR,
+            source      VARCHAR,
+            created_at  TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON COLUMN watchlist.code IS '股票代码'")
+    con.execute("COMMENT ON COLUMN watchlist.market IS '市场: us/cn/cc'")
+    con.execute("COMMENT ON COLUMN watchlist.source IS '来源: 手动添加/成交额排名/手动添加,成交额排名'")
+    con.execute("COMMENT ON COLUMN watchlist.created_at IS '添加时间(精确到秒)'")
+
+    # K 线数据表（按周期分表）
+    for _kt, _kt_desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
+        con.execute(f"""
+            CREATE TABLE IF NOT EXISTS klines_{_kt} (
+                code        VARCHAR,
+                datetime    TIMESTAMP,
+                open        DOUBLE,
+                high        DOUBLE,
+                low         DOUBLE,
+                close       DOUBLE,
+                volume      DOUBLE,
+                turnover    DOUBLE,
+                market      VARCHAR,
+                PRIMARY KEY (code, datetime)
+            )
+        """)
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.code IS '股票代码'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线时间'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.open IS '开盘价'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.high IS '最高价'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.low IS '最低价'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.close IS '收盘价'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.volume IS '成交量'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover IS '成交额'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: us/cn/cc'")
+
     con.execute("""
         CREATE OR REPLACE VIEW top_stocks_all AS
         SELECT * FROM top_stocks
@@ -146,7 +236,7 @@ def create_views(con):
 
 def list_all(con):
     """列出所有表和视图"""
-    names = ["top_stocks", "turnover_rankings", "klines", "trades",
+    names = ["watchlist", "top_stocks", "turnover_rankings", "klines", "trades",
              "v_backtest_1w", "v_backtest_1d", "v_scores_1w", "v_scores_1d",
              "v_stability_1w", "v_stability_1d"]
     for name in names:
@@ -181,7 +271,7 @@ if __name__ == "__main__":
     conn = duckdb.connect(DB_PATH)
 
     if args.reset:
-        for tbl in ["top_stocks", "turnover_rankings", "klines", "trades",
+        for tbl in ["watchlist", "top_stocks", "turnover_rankings", "klines", "trades",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
                      "v_backtest_1w", "v_backtest_1d",
                      "v_scores_1w", "v_scores_1d",
@@ -193,6 +283,7 @@ if __name__ == "__main__":
 
     create_tables(conn)
     import_turnover(conn)
+    update_watchlist(conn)
     create_views(conn)
     conn.commit()
 

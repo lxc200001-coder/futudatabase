@@ -15,7 +15,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "
 
 @st.cache_resource
 def get_conn():
-    return duckdb.connect(DB_PATH)
+    return duckdb.connect(DB_PATH, read_only=True)
 
 
 def load_tables(con):
