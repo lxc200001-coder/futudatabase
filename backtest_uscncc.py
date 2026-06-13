@@ -82,23 +82,41 @@ def _market_subdir(code):
     raise ValueError(f"未知代码前缀: {code}")
 
 
+_DB_CONN = None  # 进程级全局 DuckDB 连接
+
+def _get_db_conn():
+    """获取进程级 DuckDB 连接（复用）。"""
+    global _DB_CONN
+    if _DB_CONN is None:
+        import duckdb as _dk
+        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+        if os.path.exists(_db_path):
+            try:
+                _DB_CONN = _dk.connect(_db_path, read_only=True)
+            except Exception:
+                pass
+    return _DB_CONN
+
+
 def _load_data(code):
-    """从 DuckDB 读取 K 线数据。返回 DataFrame 或 None。"""
+    """从 DuckDB 读取 K 线数据（复用连接），失败时兜底 parquet。"""
     _kt = {"1W": "1w", "1D": "1d", "60m": "60m"}.get(BAR_INTERVAL, "")
-    _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
-    if not os.path.exists(_db_path):
-        return None
-    try:
-        import duckdb
-        _con = duckdb.connect(_db_path, read_only=True)
-        _df = _con.execute(
-            f'SELECT * FROM klines_{_kt} WHERE code = ? ORDER BY datetime', [code]
-        ).fetchdf()
-        _con.close()
-        if not _df.empty:
-            return _df
-    except Exception:
-        pass
+    _con = _get_db_conn()
+    if _con is not None:
+        for _tbl in [f"klines_{_kt}", f"v_klines_{_kt}"]:
+            try:
+                _df = _con.execute(
+                    f'SELECT * FROM {_tbl} WHERE code = ? ORDER BY datetime', [code]
+                ).fetchdf()
+                if not _df.empty:
+                    return _df
+            except Exception:
+                pass
+
+    # 兜底：从 parquet 读取
+    _path = _find_data_file(code)
+    if _path:
+        return pd.read_parquet(_path)
     return None
 
 
@@ -1341,17 +1359,16 @@ def generate_heatmap_dashboard(cache_data):
                 _bt_close = _bt_buy = _bt_sell = None
                 if best_ma is not None:
                     _db_tbl = "klines_" + {"1W": "1w", "1D": "1d", "60m": "60m"}.get(_bi, "")
-                    try:
-                        import duckdb as _dk
-                        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
-                        if os.path.exists(_db_path):
-                            _con = _dk.connect(_db_path, read_only=True)
+                    _df_k = pd.DataFrame()
+                    _con = _get_db_conn()
+                    if _con is not None:
+                        try:
                             _df_k = _con.execute(
                                 f'SELECT * FROM {_db_tbl} WHERE code = ? ORDER BY datetime', [code]
                             ).fetchdf()
-                            _con.close()
-                        else:
-                            _df_k = pd.DataFrame()
+                        except Exception:
+                            pass
+                    try:
                         _ha_close_k = (_df_k["open"] + _df_k["high"] + _df_k["low"] + _df_k["close"]) / 4
                         _ma_k = _ha_close_k.rolling(best_ma, min_periods=best_ma).mean()
                         _ma_diff = _ma_k.diff().fillna(0)
