@@ -25,9 +25,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # =========================================================
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
-DEFAULT_MARKET = "US"   # 默认市场: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
 DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
-DEFAULT_API = "stooq-local"  # 美股数据源: futu(富途) / stooq-local(本地全量数据包)
+DEFAULT_API = "futu"  # 美股数据源: futu(富途) / stooq-local(本地全量数据包)
 
 # ktype → 子目录名 / 文件后缀 映射
 KTYPE_DIR_MAP = {"week": "1w", "day": "1d", "60m": "60m"}
@@ -759,7 +759,7 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
                     continue
             _daily_path = os.path.join(DATA_DIR, "1d", market, f"{code}_1d.parquet") if ktype == "week" else None
             df = fetch_stooq_local_data(code, start_str, end_str, ktype, _save_daily_path=_daily_path)
-        elif api == "yahoo":
+        else:
             df = fetch_futu_data(code, start_str, end_str, quote_ctx, ktype) if quote_ctx else pd.DataFrame()
 
         save_data(df, code, ktype, name_map)
