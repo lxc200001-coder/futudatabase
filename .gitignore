@@ -19,5 +19,8 @@ __pycache__/
 *.pyc
 *.pyo
 
+# DuckDB 数据库文件
+database/market.duckdb
+
 # 旧脚本备份
 back5yearwindow_old.py

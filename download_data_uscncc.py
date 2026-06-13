@@ -708,9 +708,92 @@ def fetch_top_turnover_stocks(limit=200):
         out_path = os.path.join("symbols", f"top_turnover_{date_str}.csv")
         os.makedirs("symbols", exist_ok=True)
         df.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"  美股成交额排名已保存: {out_path} ({len(df)} 只)")
+
+        # 写入 DuckDB top_stocks 表（先清旧数据，再写入最新）
+        try:
+            import duckdb
+            _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+            _con = duckdb.connect(_db_path)
+            _con.execute("DELETE FROM top_stocks WHERE market = 'us'")
+            _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
+            _con.execute("""
+                INSERT INTO top_stocks (market, code, rank, name, price, turnover, date, created_at)
+                SELECT 'us', "代码", "排名", "名称", "最新价", "成交额(亿元)", ?, CURRENT_TIMESTAMP FROM _tmp
+            """, [pd.Timestamp(date_str).date()])
+            _con.close()
+        except Exception:
+            pass
         return out_path
     finally:
         quote_ctx.close()
+
+
+def fetch_cn_top_turnover(limit=30):
+    """通过 Futu OpenD 获取沪深主板当日成交额前 N 的股票"""
+    from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
+
+    def _is_excluded(code):
+        return code.startswith("SH.688") or code.startswith(("SZ.300", "SZ.301")) or code.startswith("BJ.")
+
+    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+    all_records = []
+    fetch_num = max(limit * 3, 60)
+    try:
+        for market_name, market in [("SH", Market.SH), ("SZ", Market.SZ)]:
+            af = AccumulateFilter()
+            af.stock_field = StockField.TURNOVER
+            af.is_no_filter = False
+            af.filter_min = 1
+            af.sort = SortDir.DESCEND
+            ret, result = quote_ctx.get_stock_filter(market, [af], begin=0, num=fetch_num)
+            if ret != RET_OK:
+                continue
+            if not (isinstance(result, tuple) and len(result) >= 3):
+                continue
+            codes = [s.stock_code for s in result[2]]
+            for i, code in enumerate(codes):
+                if _is_excluded(code):
+                    continue
+                if i > 0 and i % 10 == 0:
+                    time.sleep(0.5)
+                ret2, snap = quote_ctx.get_market_snapshot([code])
+                if ret2 == RET_OK and snap is not None and not snap.empty:
+                    row = snap.iloc[0]
+                    all_records.append({
+                        "排名": 0, "代码": code,
+                        "名称": str(row.get("code_name", row.get("name", ""))),
+                        "最新价": round(float(row.get("last_price", 0) or 0), 2),
+                        "成交额(亿元)": round(float(row.get("turnover", 0) or 0) / 1e8, 2),
+                    })
+    finally:
+        quote_ctx.close()
+    if not all_records:
+        return
+    df = pd.DataFrame(all_records).drop_duplicates(subset=["代码"])
+    df = df.sort_values("成交额(亿元)", ascending=False).head(limit)
+    df["排名"] = range(1, len(df) + 1)
+    date_str = datetime.now().strftime("%Y%m%d")
+    out_path = os.path.join("symbols", f"top_turnover_cn_{date_str}.csv")
+    os.makedirs("symbols", exist_ok=True)
+    df.to_csv(out_path, index=False, encoding="utf-8-sig")
+    print(f"  A股成交额排名已保存: {out_path} ({len(df)} 只)")
+
+    # 写入 DuckDB top_stocks 表（先清旧数据，再写入最新）
+    try:
+        import duckdb
+        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+        _con = duckdb.connect(_db_path)
+        _con.execute("DELETE FROM top_stocks WHERE market = 'cn'")
+        _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
+        _con.execute("""
+            INSERT INTO top_stocks (market, code, rank, name, price, turnover, date, created_at)
+            SELECT 'cn', "代码", "排名", "名称", "最新价", "成交额(亿元)", ?, CURRENT_TIMESTAMP FROM _tmp
+        """, [pd.Timestamp(date_str).date()])
+        _con.close()
+    except Exception:
+        pass
+    return out_path
 
 
 def run_download(ktype="week", selected_markets=None, api="futu"):
@@ -822,20 +905,30 @@ if __name__ == "__main__":
                         help="美股数据源: futu(富途OpenD, 默认) / ibkr(IB TWS/Gateway)")
     parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=200,
                         help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200, 设为0跳过)")
+    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=30, default=0,
+                        help="获取成交额前 N 的沪深主板股票并保存到 symbols/ (默认 N=30, 设为0跳过)")
+    parser.add_argument("--only-turnover", action="store_true",
+                        help="只获取成交额排名，不下载K线数据")
     parser.add_argument("--skip-week", action="store_true", help="跳过周线下载（已弃用，用 --ktype 替代）")
     parser.add_argument("--skip-day", action="store_true", help="跳过日线下载（已弃用，用 --ktype 替代）")
     parser.add_argument("--skip-60m", action="store_true", help="跳过60分钟下载（已弃用，用 --ktype 替代）")
     args = parser.parse_args()
-
-    # 获取成交额排名（默认运行，设为 --top-turnover 0 跳过）
-    if args.top_turnover:
-        fetch_top_turnover_stocks(limit=args.top_turnover)
 
     # 解析市场参数
     if args.market.lower() == "all":
         selected_markets = ["us", "cn", "cc"]
     else:
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
+
+    # 根据 market 自动获取成交额排名
+    if args.top_turnover and "us" in selected_markets:
+        fetch_top_turnover_stocks(limit=args.top_turnover)
+    if args.top_turnover_cn and "cn" in selected_markets:
+        fetch_cn_top_turnover(limit=args.top_turnover_cn)
+
+    # --only-turnover：不下载K线数据
+    if args.only_turnover:
+        sys.exit(0)
 
     # 解析 ktype（支持逗号拼接，兼容旧版 skip 参数）
     _ktypes = []
