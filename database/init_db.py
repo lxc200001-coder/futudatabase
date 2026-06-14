@@ -105,7 +105,7 @@ def create_tables(con):
         con.execute(f"""
             CREATE TABLE klines_{_kt} (
                 code        VARCHAR,
-                datetime    DATE,
+                datetime    TIMESTAMP,
                 open        DOUBLE,
                 high        DOUBLE,
                 low         DOUBLE,
@@ -125,7 +125,7 @@ def create_tables(con):
         con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS turnover_amount DOUBLE")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.code IS '股票代码'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.created_at IS '添加时间(精确到秒)'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线日期'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线时间'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.open IS '开盘价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.high IS '最高价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.low IS '最低价'")

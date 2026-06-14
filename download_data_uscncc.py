@@ -1048,11 +1048,11 @@ def run_download(ktype="week", selected_markets=None):
     else:
         print(f"  {ktype} 下载完成: {_ok} 成功")
 
-    # 合并写入 DuckDB
+    # 合并写入 DuckDB（覆盖 + 全局排序）
     if all_dfs:
         combined = pd.concat(all_dfs, ignore_index=True)
         combined = combined.rename(columns={"time_key": "datetime"})
-        combined["datetime"] = pd.to_datetime(combined["datetime"]).dt.normalize()
+        combined["datetime"] = pd.to_datetime(combined["datetime"])  # 不再 normalize / 转 DATE
         combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
         combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
         combined["source"] = combined["code"].map(_src_map)
@@ -1060,20 +1060,30 @@ def run_download(ktype="week", selected_markets=None):
 
         _kt_name = {"week": "1w", "day": "1d"}.get(ktype, ktype)
         _tbl = f"klines_{_kt_name}"
+        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
         try:
-            import duckdb
-            _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
             _con = duckdb.connect(_db_path)
+            # 清空旧数据（首次运行表可能不存在）
+            try: _con.execute(f"DELETE FROM {_tbl}")
+            except: pass
             _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
             _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS source VARCHAR")
             _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS turnover_amount DOUBLE")
             _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM combined")
             _con.execute(f"""
-                INSERT OR REPLACE INTO {_tbl} (code, datetime, open, high, low, close, volume, turnover, market, ktype, source, turnover_amount, created_at)
-                SELECT code, datetime::DATE, open, high, low, close, volume, turnover, market, '{_kt_name}', source, turnover_amount, CURRENT_TIMESTAMP FROM _tmp
+                INSERT INTO {_tbl} (code, datetime, open, high, low, close, volume, turnover, market, ktype, source, turnover_amount, created_at)
+                SELECT code, datetime, open, high, low, close, volume, turnover, market, '{_kt_name}', source, turnover_amount, CURRENT_TIMESTAMP FROM _tmp
             """)
+            # 全局排序（code ASC, datetime DESC）
+            _con.execute(f"""
+                CREATE TABLE {_tbl}_sorted_tmp AS
+                SELECT * FROM {_tbl}
+                ORDER BY code ASC, datetime DESC
+            """)
+            _con.execute(f"DROP TABLE {_tbl}")
+            _con.execute(f"ALTER TABLE {_tbl}_sorted_tmp RENAME TO {_tbl}")
             _con.close()
-            print(f"  {_tbl}: {len(combined)} 行写入")
+            print(f"  {_tbl}: {len(combined)} 行写入 + 排序")
         except Exception as e:
             print(f"  DuckDB 写入失败: {e}")
     else:
