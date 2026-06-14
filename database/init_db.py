@@ -100,7 +100,7 @@ def create_tables(con):
     con.execute("COMMENT ON COLUMN watchlist.created_at IS '添加时间(精确到秒)'")
 
     # K 线数据表（按周期分表）
-    for _kt, _kt_desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
+    for _kt, _kt_desc in [("1d", "日线"), ("1w", "周线")]:
         con.execute(f"DROP TABLE IF EXISTS klines_{_kt}")
         con.execute(f"""
             CREATE TABLE klines_{_kt} (
@@ -132,7 +132,7 @@ def create_tables(con):
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.close IS '收盘价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.volume IS '成交量'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: us/cn/cc'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.ktype IS 'K线周期: 1D/1W/60m'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.ktype IS 'K线周期: 1D/1W'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.source IS '数据来源: futu/stooq/baostock/binance'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover IS '成交额(数据源原生)'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover_amount IS '估算成交额(收盘价×成交量)'")
@@ -180,10 +180,10 @@ def create_tables(con):
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.turnover_amount IS '估算成交额(收盘价×成交量)'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_60d IS '60日均成交额'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_60d IS '60日涨跌幅'")
-    for _kt, _desc in [("1d", "日线K线数据"), ("1w", "周线K线数据"), ("60m", "60分钟K线数据")]:
+    for _kt, _desc in [("1d", "日线K线数据"), ("1w", "周线K线数据")]:
         con.execute(f"COMMENT ON TABLE klines_{_kt} IS '{_desc}'")
 
-    for _kt in ["1d", "1w", "60m"]:
+    for _kt in ["1d", "1w"]:
         con.execute(f"""
             CREATE OR REPLACE VIEW klines_{_kt}_sorted AS
             SELECT * FROM klines_{_kt} ORDER BY code, datetime
@@ -271,15 +271,15 @@ def create_views(con):
     # 视图中文描述
     con.execute("COMMENT ON VIEW v_stooq_all_sorted IS 'Stooq全量美股(按代码日期排序)'")
     con.execute("COMMENT ON VIEW top_gainers_200 IS '最新日期60日涨跌幅TOP200'")
-    for _kt, _desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
+    for _kt, _desc in [("1d", "日线"), ("1w", "周线")]:
         con.execute(f"COMMENT ON VIEW klines_{_kt}_sorted IS '{_desc}K线数据(按代码日期排序)'")
 
 
 def list_all(con):
     """列出所有表和视图"""
     names = ["watchlist",
-             "klines_1d", "klines_1w", "klines_60m",
-             "v_klines_1d", "v_klines_1w", "v_klines_60m"]
+             "klines_1d", "klines_1w",
+             "v_klines_1d", "v_klines_1w"]
     for name in names:
         _type = "T" if "rankings" in name else "V"
         try:
@@ -313,9 +313,9 @@ if __name__ == "__main__":
 
     if args.reset:
         for tbl in ["watchlist", "turnover_rankings", "stooq_local_all_us_stocks",
-                     "klines_1d", "klines_1w", "klines_60m",
-                     "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
-                     "v_klines_1d", "v_klines_1w", "v_klines_60m",
+                     "klines_1d", "klines_1w",
+                     "klines_1d_sorted", "klines_1w_sorted",
+                     "v_klines_1d", "v_klines_1w",
                      "v_backtest_1w", "v_backtest_1d",
                      "v_scores_1w", "v_scores_1d",
                      "v_stability_1w", "v_stability_1d",

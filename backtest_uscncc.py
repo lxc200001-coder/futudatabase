@@ -61,7 +61,7 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 
-DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(三者全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "week,day"     # 默认K线周期: week(周K) / day(日K) / all(两者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认市场: all / US / CN / CC / US,CC
 MA_MODE = "continuous"    # 默认MA序列类型: continuous=连续回测 / jump=跳跃回测
 _HEATMAP_CACHE = {}  # 热力图看板数据缓存: {BAR_INTERVAL: {market: [(code, rows, ws, best_ma, name, sig_map), ...]}}
@@ -100,7 +100,7 @@ def _get_db_conn():
 
 def _load_data(code):
     """从 DuckDB 读取 K 线数据（复用连接），失败时兜底 parquet。"""
-    _kt = {"1W": "1w", "1D": "1d", "60m": "60m"}.get(BAR_INTERVAL, "")
+    _kt = {"1W": "1w", "1D": "1d"}.get(BAR_INTERVAL, "")
     _con = _get_db_conn()
     if _con is not None:
         for _tbl in [f"klines_{_kt}", f"v_klines_{_kt}"]:
@@ -130,7 +130,7 @@ def _find_data_file(code):
         market = "us"
     else:
         raise ValueError(f"未知代码前缀: {code}")
-    _dir_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
+    _dir_map = {"1W": "1w", "1D": "1d"}
     _ktype_dir = _dir_map.get(BAR_INTERVAL, "")
     path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
     return path if os.path.exists(path) else None
@@ -148,7 +148,6 @@ def apply_cn_mapping(df):
 KLINE_MAP = {
     "1D": {"display": "日K", "suffix": "_1d", "period": 252, "ma_range": list(range(2, 181))},
     "1W": {"display": "周K", "suffix": "_1w", "period": 52, "ma_range": list(range(2, 61))},
-    "60m": {"display": "60分钟K", "suffix": "_60m", "period": 1638, "ma_range": list(range(2, 359))},
 }
 
 def generate_ma_list(bar_interval, ma_mode="continuous"):
@@ -156,26 +155,24 @@ def generate_ma_list(bar_interval, ma_mode="continuous"):
 
     周线: 强制 continuous (step=1)
     日线 continuous: 2..180 (step=1) / jump: 2,4,6..180 (step=2)
-    60m  continuous: 2..358 (step=1) / jump: 2,6,10..358 (step=4)
     """
     if bar_interval == "1W" or ma_mode == "continuous":
         return KLINE_MAP[bar_interval]["ma_range"]
-    _steps = {"1D": 2, "60m": 4}
-    step = _steps[bar_interval]
-    _max = {"1D": 181, "60m": 359}
-    return list(range(2, _max[bar_interval], step))
+    if bar_interval == "1D":
+        return list(range(2, 181, 2))
+    return KLINE_MAP[bar_interval]["ma_range"]
 
 BAR_INTERVAL = "1D" if DEFAULT_KTYPE == "day" else "1W"
 MA_LIST = generate_ma_list(BAR_INTERVAL, MA_MODE)
 FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
 TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
-KTYPE_DIR_MAP = {"1W": "1w", "1D": "1d", "60m": "60m"}
+KTYPE_DIR_MAP = {"1W": "1w", "1D": "1d"}
 TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
 for _m in ("us", "cn", "cc"):
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
     os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
 os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, "heatmaps"), exist_ok=True)
-STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
+STEP_MONTHS = {"1W": 12, "1D": 6}.get(BAR_INTERVAL, 12)
 WINDOW_START_DATE = "2000-01-03"
 
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
@@ -183,9 +180,7 @@ def _setup_ktype(ktype, ma_mode="continuous"):
     """设置回测周期的全局变量（供 worker 进程调用）。"""
     global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS, MA_MODE
     MA_MODE = ma_mode
-    if ktype == "60m":
-        BAR_INTERVAL = "60m"
-    elif ktype == "day":
+    if ktype == "day":
         BAR_INTERVAL = "1D"
     else:
         BAR_INTERVAL = "1W"
@@ -193,7 +188,7 @@ def _setup_ktype(ktype, ma_mode="continuous"):
     FILE_SUFFIX = KLINE_MAP[BAR_INTERVAL]["suffix"]
     TRADING_PERIOD = KLINE_MAP[BAR_INTERVAL]["period"]
     TRADE_SUBDIR = KTYPE_DIR_MAP.get(BAR_INTERVAL, "")
-    STEP_MONTHS = {"1W": 12, "1D": 6, "60m": 3}.get(BAR_INTERVAL, 12)
+    STEP_MONTHS = {"1W": 12, "1D": 6}.get(BAR_INTERVAL, 12)
     for _m in ("us", "cn", "cc"):
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m), exist_ok=True)
         os.makedirs(os.path.join(TRADE_DIR, TRADE_SUBDIR, _m, "heatmaps"), exist_ok=True)
@@ -1313,7 +1308,7 @@ def generate_heatmap_dashboard(cache_data):
     SENSITIVITY_KEY = "参数敏感性分析"
     STABILITY_KEY = "参数稳定性评分"
 
-    ALL_KTYPES = ["1W", "1D", "60m"]
+    ALL_KTYPES = ["1W", "1D"]
     ALL_MARKETS = ["us", "cc", "cn"]
 
     payload_data = {}  # {ktype: {market: {stocks: [...], figures: {code: {type: fig_json}}}}}
@@ -1328,7 +1323,7 @@ def generate_heatmap_dashboard(cache_data):
             stock_list = []
             figures_data = {}
             all_ws_list = []
-            _kt_lbl = {"1W":"周K","1D":"日K","60m":"60分"}.get(_bi,_bi)
+            _kt_lbl = {"1W":"周K","1D":"日K"}.get(_bi,_bi)
             for code, scan_rows, ws_df, best_ma, stock_name, sig_map in tqdm(entries, desc=f"  看板({_kt_lbl},{_mkt_id.upper()})", unit="stock"):
                 stock_list.append({"code": code, "name": stock_name or ""})
                 figs = {}
@@ -1358,7 +1353,7 @@ def generate_heatmap_dashboard(cache_data):
                 # ── K线图（LightweightCharts）──
                 _bt_close = _bt_buy = _bt_sell = None
                 if best_ma is not None:
-                    _db_tbl = "klines_" + {"1W": "1w", "1D": "1d", "60m": "60m"}.get(_bi, "")
+                    _db_tbl = "klines_" + {"1W": "1w", "1D": "1d"}.get(_bi, "")
                     _df_k = pd.DataFrame()
                     _con = _get_db_conn()
                     if _con is not None:
@@ -1382,7 +1377,7 @@ def generate_heatmap_dashboard(cache_data):
                         _candles = []
                         _ma_list = []
                         _signals_lst = []
-                        _use_date = _bi != "60m"
+                        _use_date = True
                         for _i in range(len(_df_k)):
                             _dt = pd.to_datetime(_df_k["datetime"].iloc[_i])
                             _t = _dt.strftime("%Y-%m-%d") if _use_date else str(int(_dt.timestamp()))
@@ -1969,7 +1964,7 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
             {"类型": "基本字段", "名称": "市场",
              "统计逻辑": "US=美股, CN=A股, CC=加密货币"},
             {"类型": "基本字段", "名称": "K线周期",
-             "统计逻辑": "1W=周K, 1D=日K, 60m=60分钟K"},
+             "统计逻辑": "1W=周K, 1D=日K"},
             {"类型": "基本字段", "名称": "均线周期",
              "统计逻辑": "参数稳定性分析中倒数第二个窗口（仅1个窗口时取唯一窗口）参数稳定性评分最高的均线周期，作为该股票的最优参数，跳过最后一个未完整窗口"},
             # ── 策略表现 ──
@@ -2168,7 +2163,7 @@ def run_trade():
         market_window_stability = []
 
         _results = {}
-        _kt = {"1W": "week", "1D": "day", "60m": "60m"}.get(BAR_INTERVAL, "week")
+        _kt = {"1W": "week", "1D": "day"}.get(BAR_INTERVAL, "week")
         _workers = os.cpu_count() - 1
         with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
             future_to_code = {executor.submit(_process_one_stock, code, windows, _kt, MA_MODE): code for code in group}
@@ -2313,10 +2308,10 @@ def generate_unified_signal_excel(ktypes_run):
     SheetN: 统计逻辑
     """
     import glob as _glob
-    _kt_dir = {"week": "1w", "day": "1d", "60m": "60m"}
-    _kt_label = {"1w": "1W", "1d": "1D", "60m": "60m"}
-    _kt_order = {"1W": 0, "1D": 1, "60m": 2}
-    _cmp_label = {"1w": "（周线）", "1d": "（日线）", "60m": "（60分钟）"}
+    _kt_dir = {"week": "1w", "day": "1d"}
+    _kt_label = {"1w": "1W", "1d": "1D"}
+    _kt_order = {"1W": 0, "1D": 1}
+    _cmp_label = {"1w": "（周线）", "1d": "（日线）"}
     _kt_dirs_used = [_kt_dir[k] for k in ktypes_run if k in _kt_dir]
 
     if not _kt_dirs_used:
@@ -2387,7 +2382,7 @@ def generate_unified_signal_excel(ktypes_run):
                         _cell.number_format = "YYYY-MM-DD"
 
         # 数据条（按各自周期范围）：预计持仓进度（蓝色）、预计涨幅进度（绿色）
-        _kt_kt_map = {"1W": "1w", "1D": "1d", "60m": "60m"}
+        _kt_kt_map = {"1W": "1w", "1D": "1d"}
         for _col_name in ["预计持仓进度", "预计涨幅进度"]:
             if _col_name in _all_sig.columns:
                 from openpyxl.formatting.rule import DataBarRule
@@ -2466,7 +2461,7 @@ def generate_unified_signal_excel(ktypes_run):
                 {"类型": "Sheet说明", "名称": "各周期信号对比",
                  "统计逻辑": "横向对比各周期信号：行=股票代码，列=均线周期/策略评分/策略表现/趋势方向/最新信号（加周期后缀）；末尾2列为多头/空头趋势方向多周期共振数量，统计该股票在所有已跑周期中方向一致的个数"},
                 {"类型": "基本字段", "名称": "K线周期",
-                 "统计逻辑": "1W=周K, 1D=日K, 60m=60分钟K；在信号扫描sheet中作为第一排序字段，顺序为周K→日K→60分钟"},
+                 "统计逻辑": "1W=周K, 1D=日K；在信号扫描sheet中作为第一排序字段，顺序为周K→日K"},
                 {"类型": "信号字段", "名称": "多头趋势方向多周期共振数量",
                  "统计逻辑": "该股票在所有已跑周期中趋势方向为「多头」的个数，反映多周期共振强度；仅在各周期信号对比sheet中出现"},
                 {"类型": "信号字段", "名称": "空头趋势方向多周期共振数量",
@@ -2494,11 +2489,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="多窗口参数扫描回测")
     parser.add_argument("--ktype", default=DEFAULT_KTYPE,
-                        help=f"K线周期: day/周K, week/周K, 60m/60分钟, 逗号拼接如week,day, all=三者全部 (默认: {DEFAULT_KTYPE})")
+                        help=f"K线周期: day/周K, week/周K, 逗号拼接如week,day, all=两者全部 (默认: {DEFAULT_KTYPE})")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--ma-mode", choices=["continuous", "jump"], default=MA_MODE,
-                        help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,60m step=4,周线强制连续)")
+                        help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,周线强制连续)")
     parser.add_argument("--save-cache", action="store_true",
                         help="回测完成后保存缓存到文件，下次可用 --from-cache 跳过回测直接生成看板")
     parser.add_argument("--from-cache", type=str, nargs="?", const="latest", default=None,
@@ -2507,19 +2502,19 @@ if __name__ == "__main__":
     MA_MODE = _CLI_ARGS.ma_mode
 
     # 解析 ktype 列表（支持逗号拼接）
-    _KT_MAP = {"day": "日K", "week": "周K", "60m": "60分钟K", "all": "全部"}
+    _KT_MAP = {"day": "日K", "week": "周K", "all": "全部"}
     _raw = _CLI_ARGS.ktype.lower().replace("，", ",").split(",")
     _ktypes = []
     for _k in _raw:
         _k = _k.strip()
         if _k == "all":
-            _ktypes = ["week", "day", "60m"]
+            _ktypes = ["week", "day"]
             break
         if _k in _KT_MAP:
             if _k not in _ktypes:
                 _ktypes.append(_k)
     if not _ktypes:
-        print(f"错误: 无效的 --ktype '{_CLI_ARGS.ktype}'，可选 week/day/60m/all 或逗号拼接")
+        print(f"错误: 无效的 --ktype '{_CLI_ARGS.ktype}'，可选 week/day/all 或逗号拼接")
         sys.exit(1)
 
     # 初始设置（用第一个 ktype 初始化全局变量）
