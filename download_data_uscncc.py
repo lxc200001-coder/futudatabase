@@ -710,6 +710,7 @@ MOOMOO_PORT = 11112
 def _get_quota_info(host="127.0.0.1", port=11111):
     """查询 OpenD 实例的历史 K 线额度使用明细"""
     from futu import OpenQuoteContext, RET_OK
+    wait_rate_limit()  # quota 查询也占用 API 限额
     ctx = OpenQuoteContext(host=host, port=port)
     try:
         ret, result = ctx.get_history_kl_quota(get_detail=True)
@@ -1012,8 +1013,7 @@ def run_download(ktype="week", selected_markets=None):
     _api_of = {}
     futu_ctx = None
     moomoo_ctx = None
-    futu_rl = deque()    # 独立限速队列
-    moomoo_rl = deque()
+    moomoo_rl = deque()  # Moomoo 独立限速队列（Futu 用全局队列）
     if us_codes:
         _, futu_remain, futu_detail = _get_quota_info("127.0.0.1", 11111)
         _, moomoo_remain, moomoo_detail = _get_quota_info(MOOMOO_HOST, MOOMOO_PORT)
@@ -1050,7 +1050,7 @@ def run_download(ktype="week", selected_markets=None):
             _use_api = _api_of.get(code, "stooq-local")
             if _use_api in ("futu", "moomoo"):
                 _ctx = futu_ctx if _use_api == "futu" else moomoo_ctx
-                _rl = futu_rl if _use_api == "futu" else moomoo_rl
+                _rl = request_times if _use_api == "futu" else moomoo_rl
                 df = fetch_futu_data(code, start_str, end_str, _ctx, ktype, rate_limit_queue=_rl) if _ctx else pd.DataFrame()
                 _src_map[code] = _use_api
             else:
