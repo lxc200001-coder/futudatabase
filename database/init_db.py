@@ -153,6 +153,157 @@ def create_tables(con):
     con.execute("COMMENT ON COLUMN plates.plates IS '所属板块(逗号分隔)'")
     con.execute("COMMENT ON COLUMN plates.created_at IS '入库时间'")
 
+    # ── 回测输出表 ──
+    # 1. backtest_trades：逐笔交易
+    con.execute("DROP TABLE IF EXISTS backtest_trades")
+    con.execute("""
+        CREATE TABLE backtest_trades (
+            "股票代码"      VARCHAR,
+            "股票名称"      VARCHAR,
+            "市场"          VARCHAR,
+            "K线周期"       VARCHAR,
+            "均线周期"      INTEGER,
+            "窗口"          VARCHAR,
+            "窗口序号"      INTEGER,
+            "交易序号"      INTEGER,
+            "开仓时间"      TIMESTAMP,
+            "开仓价格"      DOUBLE,
+            "买入股数"      DOUBLE,
+            "平仓时间"      TIMESTAMP,
+            "平仓价格"      DOUBLE,
+            "卖出股数"      DOUBLE,
+            "交易状态"      VARCHAR,
+            "订单盈亏类型"  VARCHAR,
+            "收益金额"      DOUBLE,
+            "收益率(%)"     DOUBLE,
+            "买入手续费"    DOUBLE,
+            "卖出手续费"    DOUBLE,
+            "总手续费"      DOUBLE,
+            "开仓前可用现金" DOUBLE,
+            "开仓后可用现金" DOUBLE,
+            "平仓前可用现金" DOUBLE,
+            "平仓后可用现金" DOUBLE,
+            "持仓K线数"     INTEGER,
+            "持仓天数"      INTEGER,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_trades IS '逐笔交易明细'")
+
+    # 2. backtest_summary：回测指标
+    con.execute("DROP TABLE IF EXISTS backtest_summary")
+    con.execute("""
+        CREATE TABLE backtest_summary (
+            "股票代码"      VARCHAR,
+            "股票名称"      VARCHAR,
+            "市场"          VARCHAR,
+            "K线周期"       VARCHAR,
+            "均线周期"      INTEGER,
+            "窗口"          VARCHAR,
+            "窗口内有效数据周期" VARCHAR,
+            "窗口内有效数据K线数" INTEGER,
+            "收益率"        DOUBLE,
+            "年化收益率"    DOUBLE,
+            "买入持有收益率" DOUBLE,
+            "超额收益率"    DOUBLE,
+            "平均每笔收益率" DOUBLE,
+            "最大回撤"      DOUBLE,
+            "夏普比率"      DOUBLE,
+            "卡尔玛比率"    DOUBLE,
+            "交易次数"      INTEGER,
+            "盈利交易率"    DOUBLE,
+            "盈利因子"      DOUBLE,
+            "盈亏比"        DOUBLE,
+            "平均盈利"      DOUBLE,
+            "平均盈利比"    DOUBLE,
+            "平均亏损"      DOUBLE,
+            "平均亏损比"    DOUBLE,
+            "最大单笔盈利"  DOUBLE,
+            "最大单笔亏损"  DOUBLE,
+            "最大连续盈利次数" INTEGER,
+            "最大连续亏损次数" INTEGER,
+            "平均持仓天数"  DOUBLE,
+            "平均持仓K线数" DOUBLE,
+            "初始资金"      DOUBLE,
+            "最终资金"      DOUBLE,
+            "策略评分"      DOUBLE,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_summary IS '回测指标汇总'")
+
+    # 3. backtest_scores：策略评分 + 排名
+    con.execute("DROP TABLE IF EXISTS backtest_scores")
+    con.execute("""
+        CREATE TABLE backtest_scores (
+            "股票代码"      VARCHAR,
+            "股票名称"      VARCHAR,
+            "市场"          VARCHAR,
+            "K线周期"       VARCHAR,
+            "均线周期"      INTEGER,
+            "窗口"          VARCHAR,
+            "策略评分"      DOUBLE,
+            "窗口内排名"    INTEGER,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_scores IS '策略评分与排名'")
+
+    # 4. backtest_stability：参数稳定性
+    con.execute("DROP TABLE IF EXISTS backtest_stability")
+    con.execute("""
+        CREATE TABLE backtest_stability (
+            "股票代码"      VARCHAR,
+            "股票名称"      VARCHAR,
+            "市场"          VARCHAR,
+            "K线周期"       VARCHAR,
+            "均线周期"      INTEGER,
+            "窗口"          VARCHAR,
+            "窗口数量"      INTEGER,
+            "盈利窗口数量"  INTEGER,
+            "盈利窗口占比"  DOUBLE,
+            "策略评分排名平均值"     DOUBLE,
+            "策略评分排名第一次数"   INTEGER,
+            "策略评分排名Top3占比"   DOUBLE,
+            "策略评分排名标准差"     DOUBLE,
+            "年化收益率平均值"       DOUBLE,
+            "年化收益率标准差"       DOUBLE,
+            "参数稳定性评分" DOUBLE,
+            "是否最优"      VARCHAR,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_stability IS '参数稳定性分析'")
+
+    # 5. backtest_signals：最新信号
+    con.execute("DROP TABLE IF EXISTS backtest_signals")
+    con.execute("""
+        CREATE TABLE backtest_signals (
+            "股票代码"      VARCHAR,
+            "股票名称"      VARCHAR,
+            "市场"          VARCHAR,
+            "K线周期"       VARCHAR,
+            "均线周期"      INTEGER,
+            "时间"          DATE,
+            "收盘价"        DOUBLE,
+            "HA收盘价"      DOUBLE,
+            "HA均线值"      DOUBLE,
+            "趋势方向"      INTEGER,
+            "最新信号"      VARCHAR,
+            "最新信号时间"  TIMESTAMP,
+            "最新信号收盘价" DOUBLE,
+            "最新信号确认"  VARCHAR,
+            "历史信号"      VARCHAR,
+            "历史信号时间"  TIMESTAMP,
+            "历史信号收盘价" DOUBLE,
+            "距离历史信号已过K线数" INTEGER,
+            "距离历史信号收盘价涨跌幅" DOUBLE,
+            "持仓日化收益率" DOUBLE,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_signals IS '最新信号'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -295,7 +446,9 @@ def list_all(con):
     """列出所有表和视图"""
     names = ["watchlist",
              "klines_1d", "klines_1w",
-             "v_klines_1d", "v_klines_1w"]
+             "v_klines_1d", "v_klines_1w",
+             "backtest_trades", "backtest_summary", "backtest_scores",
+             "backtest_stability", "backtest_signals"]
     for name in names:
         _type = "T" if "rankings" in name else "V"
         try:
@@ -329,6 +482,8 @@ if __name__ == "__main__":
 
     if args.reset:
         for tbl in ["watchlist", "plates", "turnover_rankings", "stooq_local_all_us_stocks",
+                     "backtest_trades", "backtest_summary", "backtest_scores",
+                     "backtest_stability", "backtest_signals",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
