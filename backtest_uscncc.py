@@ -1,5 +1,4 @@
 import os
-import glob
 import json
 import warnings
 from datetime import datetime
@@ -24,17 +23,22 @@ warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenati
 
 
 def _load_top_turnover_map():
-    """读取最新 top_turnover 文件（美股 + A 股），返回 {代码: 排名} 映射表。"""
+    """从 DuckDB top_turnover_stock_rank 表读取最新排名，返回 {代码: 排名} 映射表。"""
     result = {}
-    for pattern in ["top_turnover_*.csv", "top_turnover_cn_*.csv"]:
-        files = sorted(glob.glob(os.path.join("symbols", pattern)))
-        if not files:
-            continue
-        try:
-            df = pd.read_csv(files[-1])
-            result.update(dict(zip(df["代码"].dropna().astype(str), df["排名"].dropna().astype(int))))
-        except Exception:
-            pass
+    try:
+        import duckdb
+        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+        if not os.path.exists(_db_path):
+            return result
+        _con = duckdb.connect(_db_path, read_only=True)
+        for _r in _con.execute("""
+            SELECT code, rank FROM top_turnover_stock_rank
+            WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_stock_rank)
+        """).fetchall():
+            result[str(_r[0])] = int(_r[1])
+        _con.close()
+    except Exception:
+        pass
     return result
 
 
@@ -99,7 +103,7 @@ def _get_db_conn():
 
 
 def _load_data(code):
-    """从 DuckDB 读取 K 线数据（复用连接），失败时兜底 parquet。"""
+    """从 DuckDB 读取 K 线数据（复用连接）。"""
     _kt = {"1W": "1w", "1D": "1d"}.get(BAR_INTERVAL, "")
     _con = _get_db_conn()
     if _con is not None:
@@ -112,28 +116,7 @@ def _load_data(code):
                     return _df
             except Exception:
                 pass
-
-    # 兜底：从 parquet 读取
-    _path = _find_data_file(code)
-    if _path:
-        return pd.read_parquet(_path)
     return None
-
-
-def _find_data_file(code):
-    """兼容旧版 parquet 路径查找（仅备查用）。"""
-    if code.startswith("CC."):
-        market = "cc"
-    elif code.startswith(("SH.", "SZ.")):
-        market = "cn"
-    elif code.startswith("US."):
-        market = "us"
-    else:
-        raise ValueError(f"未知代码前缀: {code}")
-    _dir_map = {"1W": "1w", "1D": "1d"}
-    _ktype_dir = _dir_map.get(BAR_INTERVAL, "")
-    path = os.path.join(DATA_DIR, _ktype_dir, market, f"{code}{FILE_SUFFIX}.parquet")
-    return path if os.path.exists(path) else None
 
 def apply_cn_mapping(df):
     """统一应用趋势方向和信号的中文映射"""
