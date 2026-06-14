@@ -581,7 +581,7 @@ def import_stooq_all_to_db():
                 INSERT OR REPLACE INTO stooq_local_all_us_stocks (code, market, ktype, datetime, open, high, low, close, volume, turnover, turnover_amount, type, source, created_at)
                 SELECT
                     'US.' || replace(replace("<TICKER>", '.US', ''), '-', '.') AS code,
-                    'us' AS market,
+                    '美股' AS market,
                     '1D' AS ktype,
                     strptime("<DATE>"::VARCHAR, '%Y%m%d')::TIMESTAMP AS datetime,
                     "<OPEN>"::DOUBLE AS open,
@@ -590,7 +590,7 @@ def import_stooq_all_to_db():
                     "<CLOSE>"::DOUBLE AS close,
                     "<VOL>"::DOUBLE AS volume,
                     0.0 AS turnover,
-                    "<CLOSE>"::DOUBLE * "<VOL>"::DOUBLE AS turnover_amount,
+                    CASE WHEN 0.0 > 0 THEN 0.0 ELSE "<CLOSE>"::DOUBLE * "<VOL>"::DOUBLE END AS turnover_amount,
                     '{_type}' AS type,
                     'stooq' AS source,
                     CURRENT_TIMESTAMP AS created_at
@@ -1072,7 +1072,11 @@ def run_download(ktype="week", selected_markets=None):
         combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
         combined["stock_name"] = combined["code"].map(name_map).fillna("")
         combined["source"] = combined["code"].map(_src_map)
-        combined["turnover_amount"] = (combined["close"] * combined["volume"]).round(2)
+        combined["turnover_amount"] = combined.apply(
+            lambda r: round(r["turnover"], 2) if pd.notna(r["turnover"]) and r["turnover"] > 0
+                      else round(r["close"] * r["volume"], 2),
+            axis=1
+        )
         _kt_name = {"week": "1w", "day": "1d"}.get(ktype, ktype)
         combined["ktype"] = _kt_name
         # 按新 schema 排序

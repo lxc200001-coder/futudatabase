@@ -122,7 +122,7 @@ def create_tables(con):
         """)
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.code IS '股票代码'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.stock_name IS '股票名称'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: us/cn/cc'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: 美股/A股/加密货币'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.ktype IS 'K线周期: 1D/1W'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线时间(原始格式)'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.open IS '开盘价'")
