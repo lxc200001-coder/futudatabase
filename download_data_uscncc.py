@@ -1131,6 +1131,26 @@ def run_download(ktype="week", selected_markets=None):
                 _con2.close()
             except Exception:
                 pass
+
+        # 校验：klines 与 watchlist 的 code 一致性
+        try:
+            _con3 = duckdb.connect(_db_path)
+            _kt_codes = set(str(r[0]) for r in _con3.execute(f"SELECT DISTINCT code FROM {_tbl}").fetchall())
+            _wl_mkts = [MARKET_LABEL.get(m, m) for m in (selected_markets or ["us", "cn", "cc"])]
+            _wl_codes = set(str(r[0]) for r in _con3.execute(
+                f"SELECT DISTINCT code FROM watchlist WHERE market IN ({','.join([repr(m) for m in _wl_mkts])})"
+            ).fetchall())
+            _con3.close()
+            _missing = _wl_codes - _kt_codes
+            _extra = _kt_codes - _wl_codes
+            if _missing:
+                print(f"  校验: watchlist 有但 {_tbl} 缺少 {len(_missing)} 只: {', '.join(sorted(_missing)[:10])}{'...' if len(_missing) > 10 else ''}")
+            if _extra:
+                print(f"  校验: {_tbl} 有但 watchlist 无 {len(_extra)} 只: {', '.join(sorted(_extra)[:10])}{'...' if len(_extra) > 10 else ''}")
+            if not _missing and not _extra:
+                print(f"  校验: {_tbl} 与 watchlist 一致 ({len(_kt_codes)} 只)")
+        except Exception:
+            pass
     else:
         print("\n无数据，跳过写入")
 
