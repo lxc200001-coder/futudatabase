@@ -361,48 +361,6 @@ def fetch_cn_data(code, start_str, end_str, ktype="week"):
 # =========================================================
 # 保存数据
 # =========================================================
-def save_data(df, code, ktype="week", name_map=None):
-
-    if df.empty:
-        return
-
-    market = get_market(code)
-    suffix = KTYPE_SUFFIX_MAP.get(ktype, f"1{ktype[0]}")
-    sub_dir = os.path.join(DATA_DIR, KTYPE_DIR_MAP.get(ktype, ""), market)
-    os.makedirs(sub_dir, exist_ok=True)
-    file_path = os.path.join(sub_dir, f"{code}_{suffix}.parquet")
-
-    df = df[[
-        "code",
-        "time_key",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "turnover"
-    ]].rename(columns={"time_key": "datetime"})
-
-    df["datetime"] = pd.to_datetime(df["datetime"])
-
-    # 补充股票名称和市场
-    stock_name = (name_map or {}).get(code, "")
-    if stock_name:
-        df["stock_name"] = stock_name
-    df["market"] = MARKET_LABEL.get(market, market)
-
-    df = (
-        df
-        .drop_duplicates(["code", "datetime"])
-        .sort_values("datetime")
-        .reset_index(drop=True)
-    )
-
-    df.to_parquet(file_path, index=False)
-
-    pass  # 保存成功，日志由上层汇总
-
-
 # =========================================================
 # 股票名称映射（批量按市场获取）
 # =========================================================
@@ -561,42 +519,6 @@ def run_plate_sync(selected_markets=None):
                     plates_map[row["code"]] = val
 
     return plates_map
-
-
-def add_plates_to_parquets(ktype, plates_map):
-    """为已下载的 K 线 parquet 补充 plates 字段（无板块则留空）"""
-    suffix = KTYPE_SUFFIX_MAP.get(ktype, f"1{ktype[0]}")
-    ktype_dir = KTYPE_DIR_MAP.get(ktype, "")
-    files = []
-    for market in ["us", "cn", "cc"]:
-        dir_path = os.path.join(DATA_DIR, ktype_dir, market)
-        if not os.path.exists(dir_path):
-            continue
-        for fname in os.listdir(dir_path):
-            if not fname.endswith(f"_{suffix}.parquet"):
-                continue
-            files.append(os.path.join(dir_path, fname))
-
-    _ok = _skip = 0
-    for path in tqdm(files, desc=f"  补充板块({ktype})", unit="file"):
-        df = pd.read_parquet(path)
-        if "plates" in df.columns:
-            _skip += 1
-            continue
-        code = df["code"].iloc[0]
-        df["plates"] = plates_map.get(code, "")
-        df.to_parquet(path, index=False)
-        if df["plates"].iloc[0]:
-            _ok += 1
-        else:
-            _skip += 1
-    # 总表也补上
-    all_path = os.path.join(DATA_DIR, ktype_dir, f"all_{suffix}.parquet")
-    if os.path.exists(all_path):
-        df = pd.read_parquet(all_path)
-        if "plates" not in df.columns:
-            df["plates"] = df["code"].map(plates_map).fillna("")
-            df.to_parquet(all_path, index=False)
 
 
 def import_stooq_all_to_db():
