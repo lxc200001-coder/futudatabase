@@ -55,11 +55,8 @@ def _apply_sheet_format(ws):
 # =========================================================
 # 配置
 # =========================================================
-DATA_DIR = "data_uscncc"
 TRADE_DIR = "results_uscncc"
-SYMBOL_FILE = "symbols/symbols.csv"
 
-os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(TRADE_DIR, exist_ok=True)
 
 INITIAL_CASH = 10000
@@ -187,16 +184,6 @@ PCT_COLS = [
     "收益率", "年化收益率", "买入持有收益率", "超额收益率",
     "最大回撤", "盈利交易率",
 ]
-
-# =========================================================
-# 股票列表
-# =========================================================
-def init_symbols_file(path):
-    if not os.path.exists(path):
-        pd.DataFrame({"code": ["US.TSLA", "US.AAPL", "US.NVDA", "US.MSFT"]}).to_csv(path, index=False)
-
-def load_symbols(path):
-    return pd.read_csv(path)["code"].dropna().tolist()
 
 # =========================================================
 # HA计算
@@ -2087,22 +2074,30 @@ def _write_summary_excel(out_path, signal_df, all_df, score_matrix, rank_matrix,
 
 
 def run_trade():
-    """全流程回测入口。股票代码优先从 watchlist 表加载，无则回退 symbols.csv。"""
-    try:
-        import duckdb
-        _dbp = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
-        if os.path.exists(_dbp):
-            _con = duckdb.connect(_dbp, read_only=True)
-            _wl = [str(r[0]) for r in _con.execute("SELECT DISTINCT code FROM watchlist").fetchall()]
-            _con.close()
-            if _wl:
-                symbols = sorted(set(_wl))
-            else:
-                symbols = load_symbols(SYMBOL_FILE)
-        else:
-            symbols = load_symbols(SYMBOL_FILE)
-    except Exception:
-        symbols = load_symbols(SYMBOL_FILE)
+    """全流程回测入口。从 watchlist 表加载股票代码（按 --market 过滤）。"""
+    import duckdb
+    _dbp = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+    if not os.path.exists(_dbp):
+        print("  market.duckdb 不存在，请先运行 download_data_uscncc.py")
+        return
+    _con = duckdb.connect(_dbp, read_only=True)
+    _wl = [str(r[0]) for r in _con.execute("SELECT DISTINCT code FROM watchlist").fetchall()]
+    _con.close()
+    if not _wl:
+        print("  watchlist 为空，请先运行 download_data_uscncc.py")
+        return
+
+    # 按 --market 过滤
+    _mkt_prefixes = []
+    for _m in (getattr(_CLI_ARGS, 'market', 'ALL') or 'ALL').upper().split(","):
+        _m = _m.strip()
+        if _m in ("ALL", "US"):
+            _mkt_prefixes.append("US.")
+        if _m in ("ALL", "CN"):
+            _mkt_prefixes.extend(("SH.", "SZ."))
+        if _m in ("ALL", "CC"):
+            _mkt_prefixes.append("CC.")
+    symbols = sorted(set(c for c in _wl if any(c.startswith(p) for p in _mkt_prefixes)))
 
     # 扫描全市场数据，取最早和最晚日期作为窗口范围
     available = []
@@ -2516,29 +2511,6 @@ if __name__ == "__main__":
 
     # 初始设置（用第一个 ktype 初始化全局变量）
     _setup_ktype(_ktypes[0], MA_MODE)
-
-    def _filter_symbols(symbols):
-        markets = _CLI_ARGS.market.upper().split(",")
-        if "ALL" in markets:
-            return symbols
-        prefixes = []
-        for m in markets:
-            m = m.strip()
-            if m == "US":
-                prefixes.append("US.")
-            elif m == "CN":
-                prefixes.extend(("SH.", "SZ."))
-            elif m == "CC":
-                prefixes.append("CC.")
-        def _match(s):
-            return any(s.startswith(p) for p in prefixes)
-        return [s for s in symbols if _match(s)]
-
-    import __main__ as _mod
-    _orig_load = _mod.load_symbols
-    _mod.load_symbols = lambda path: _filter_symbols(_orig_load(path))
-
-    init_symbols_file(SYMBOL_FILE)
 
     import time as _t
     for i, _kt in enumerate(_ktypes):
