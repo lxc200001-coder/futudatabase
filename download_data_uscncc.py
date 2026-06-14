@@ -80,11 +80,6 @@ def init_symbols_file(path):
         }).to_csv(path, index=False)
 
 
-def load_symbols(path):
-    df = pd.read_csv(path)
-    return df["code"].dropna().tolist()
-
-
 def get_market(code):
     """根据 code 前缀返回市场分类: us / cn / cc"""
     if code.startswith("CC."):
@@ -102,9 +97,6 @@ MARKET_LABEL = {"us": "美股", "cn": "A股", "cc": "加密货币"}
 # =========================================================
 # 统一请求开始日期（各数据源自会按上市日期截断）
 # =========================================================
-def get_start_date(code):
-    return datetime(2000, 1, 3)
-
 def get_start_date_by_ktype(ktype):
     """根据周期返回起始日期：周线、日线均为最近19年。"""
     return datetime(datetime.now().year - 19, 1, 3)
