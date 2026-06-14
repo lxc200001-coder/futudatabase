@@ -576,7 +576,7 @@ def import_stooq_all_to_db():
             _con.execute(f"""
                 INSERT OR REPLACE INTO stooq_local_all_us_stocks (code, datetime, open, high, low, close, volume, ktype, type, market, turnover_amount)
                 SELECT
-                    'US.' || replace("<TICKER>", '.US', '') AS code,
+                    'US.' || replace(replace("<TICKER>", '.US', ''), '-', '.') AS code,
                     strptime("<DATE>"::VARCHAR, '%Y%m%d')::DATE AS datetime,
                     "<OPEN>"::DOUBLE AS open,
                     "<HIGH>"::DOUBLE AS high,
