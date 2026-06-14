@@ -486,7 +486,9 @@ def run_plate_sync(selected_markets=None):
     if selected_markets is None:
         selected_markets = ["us", "cn", "cc"]
 
-    symbols = load_symbols(SYMBOL_FILE)
+    symbols = _load_symbols_from_watchlist(api="all")
+    if symbols is None:
+        symbols = load_symbols(SYMBOL_FILE)
     symbols = [c for c in symbols if get_market(c) in selected_markets]
     if not symbols:
         print("无可同步板块信息的标的，跳过")
