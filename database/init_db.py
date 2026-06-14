@@ -105,6 +105,9 @@ def create_tables(con):
         con.execute(f"""
             CREATE TABLE klines_{_kt} (
                 code        VARCHAR,
+                stock_name  VARCHAR,
+                market      VARCHAR,
+                ktype       VARCHAR,
                 datetime    TIMESTAMP,
                 open        DOUBLE,
                 high        DOUBLE,
@@ -112,30 +115,25 @@ def create_tables(con):
                 close       DOUBLE,
                 volume      DOUBLE,
                 turnover    DOUBLE,
-                market      VARCHAR,
-                ktype       VARCHAR,
-                source      VARCHAR,
                 turnover_amount DOUBLE,
-                created_at  TIMESTAMP,
-                PRIMARY KEY (code, datetime)
+                source      VARCHAR,
+                created_at  TIMESTAMP
             )
         """)
-        con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
-        con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS source VARCHAR")
-        con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS turnover_amount DOUBLE")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.code IS '股票代码'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.created_at IS '添加时间(精确到秒)'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线时间'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.stock_name IS '股票名称'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: us/cn/cc'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.ktype IS 'K线周期: 1D/1W'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线时间(原始格式)'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.open IS '开盘价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.high IS '最高价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.low IS '最低价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.close IS '收盘价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.volume IS '成交量'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: us/cn/cc'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.ktype IS 'K线周期: 1D/1W'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.source IS '数据来源: futu/stooq/baostock/binance'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover IS '成交额(数据源原生)'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover_amount IS '估算成交额(收盘价×成交量)'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.source IS '数据来源: futu/moomoo/stooq/binance/baostock'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.created_at IS '入库时间'")
 
     con.execute("""
         CREATE TABLE IF NOT EXISTS plates (
@@ -156,30 +154,42 @@ def create_tables(con):
     con.execute("""
         CREATE TABLE IF NOT EXISTS stooq_local_all_us_stocks (
             code        VARCHAR,
+            market      VARCHAR,
+            ktype       VARCHAR,
             datetime    TIMESTAMP,
             open        DOUBLE,
             high        DOUBLE,
             low         DOUBLE,
             close       DOUBLE,
             volume      DOUBLE,
-            ktype       VARCHAR,
-            type        VARCHAR,
-            market      VARCHAR,
+            turnover    DOUBLE,
             turnover_amount DOUBLE,
+            type        VARCHAR,
             avg_turnover_60d DOUBLE,
             pct_chg_60d DOUBLE,
-            PRIMARY KEY (code, datetime)
+            source      VARCHAR,
+            created_at  TIMESTAMP
         )
     """)
     con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS type VARCHAR")
     con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS market VARCHAR")
     con.execute("COMMENT ON TABLE stooq_local_all_us_stocks IS 'Stooq全量美股日线数据'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.ktype IS 'K线周期: 1D'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.type IS '股票类型: stock/etf'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.code IS '股票代码'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.market IS '市场: us'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.ktype IS 'K线周期: 1D'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.datetime IS '日期'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.open IS '开盘价'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.high IS '最高价'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.low IS '最低价'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.close IS '收盘价'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.volume IS '成交量'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.turnover IS '成交额(数据源原生)'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.turnover_amount IS '估算成交额(收盘价×成交量)'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.type IS '股票类型: stock/etf'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_60d IS '60日均成交额'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_60d IS '60日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.source IS '数据来源'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.created_at IS '入库时间'")
     for _kt, _desc in [("1d", "日线K线数据"), ("1w", "周线K线数据")]:
         con.execute(f"COMMENT ON TABLE klines_{_kt} IS '{_desc}'")
 

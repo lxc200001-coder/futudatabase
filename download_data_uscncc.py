@@ -546,19 +546,21 @@ def import_stooq_all_to_db():
     _con.execute("""
         CREATE TABLE stooq_local_all_us_stocks (
             code        VARCHAR,
-            datetime    DATE,
+            market      VARCHAR,
+            ktype       VARCHAR,
+            datetime    TIMESTAMP,
             open        DOUBLE,
             high        DOUBLE,
             low         DOUBLE,
             close       DOUBLE,
             volume      DOUBLE,
-            ktype       VARCHAR,
-            type        VARCHAR,
-            market      VARCHAR,
+            turnover    DOUBLE,
             turnover_amount DOUBLE,
+            type        VARCHAR,
             avg_turnover_60d DOUBLE,
             pct_chg_60d DOUBLE,
-            PRIMARY KEY (code, datetime)
+            source      VARCHAR,
+            created_at  TIMESTAMP
         )
     """)
     _total_rows = 0
@@ -576,19 +578,22 @@ def import_stooq_all_to_db():
         print(f"    [{_mkt_name}] {len(_files)} 个文件...", end=" ", flush=True)
         try:
             _con.execute(f"""
-                INSERT OR REPLACE INTO stooq_local_all_us_stocks (code, datetime, open, high, low, close, volume, ktype, type, market, turnover_amount)
+                INSERT OR REPLACE INTO stooq_local_all_us_stocks (code, market, ktype, datetime, open, high, low, close, volume, turnover, turnover_amount, type, source, created_at)
                 SELECT
                     'US.' || replace(replace("<TICKER>", '.US', ''), '-', '.') AS code,
+                    'us' AS market,
+                    '1D' AS ktype,
                     strptime("<DATE>"::VARCHAR, '%Y%m%d')::TIMESTAMP AS datetime,
                     "<OPEN>"::DOUBLE AS open,
                     "<HIGH>"::DOUBLE AS high,
                     "<LOW>"::DOUBLE AS low,
                     "<CLOSE>"::DOUBLE AS close,
                     "<VOL>"::DOUBLE AS volume,
-                    '1D' AS ktype,
+                    0.0 AS turnover,
+                    "<CLOSE>"::DOUBLE * "<VOL>"::DOUBLE AS turnover_amount,
                     '{_type}' AS type,
-                    'us' AS market,
-                    "<CLOSE>"::DOUBLE * "<VOL>"::DOUBLE AS turnover_amount
+                    'stooq' AS source,
+                    CURRENT_TIMESTAMP AS created_at
                 FROM read_csv_auto('{_pattern}', header=true, union_by_name=true)
                 ORDER BY code, datetime
             """)
@@ -1062,27 +1067,29 @@ def run_download(ktype="week", selected_markets=None):
     if all_dfs:
         combined = pd.concat(all_dfs, ignore_index=True)
         combined = combined.rename(columns={"time_key": "datetime"})
-        combined["datetime"] = pd.to_datetime(combined["datetime"])  # 不再 normalize / 转 DATE
+        combined["datetime"] = pd.to_datetime(combined["datetime"])
         combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
         combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
+        combined["stock_name"] = combined["code"].map(name_map).fillna("")
         combined["source"] = combined["code"].map(_src_map)
         combined["turnover_amount"] = (combined["close"] * combined["volume"]).round(2)
-
         _kt_name = {"week": "1w", "day": "1d"}.get(ktype, ktype)
+        combined["ktype"] = _kt_name
+        # 按新 schema 排序
+        combined = combined[["code", "stock_name", "market", "ktype", "datetime", "open", "high", "low", "close", "volume", "turnover", "turnover_amount", "source"]]
+
         _tbl = f"klines_{_kt_name}"
         _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
         try:
             _con = duckdb.connect(_db_path)
-            # 清空旧数据（首次运行表可能不存在）
+            # 清空旧数据
             try: _con.execute(f"DELETE FROM {_tbl}")
             except: pass
-            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
-            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS source VARCHAR")
-            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS turnover_amount DOUBLE")
+            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS stock_name VARCHAR")
             _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM combined")
             _con.execute(f"""
-                INSERT INTO {_tbl} (code, datetime, open, high, low, close, volume, turnover, market, ktype, source, turnover_amount, created_at)
-                SELECT code, datetime, open, high, low, close, volume, turnover, market, '{_kt_name}', source, turnover_amount, CURRENT_TIMESTAMP FROM _tmp
+                INSERT INTO {_tbl} (code, stock_name, market, ktype, datetime, open, high, low, close, volume, turnover, turnover_amount, source, created_at)
+                SELECT code, stock_name, market, '{_kt_name}', datetime, open, high, low, close, volume, turnover, turnover_amount, source, CURRENT_TIMESTAMP FROM _tmp
             """)
             # 全局排序（code ASC, datetime DESC）
             _con.execute(f"""
