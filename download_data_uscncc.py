@@ -134,7 +134,7 @@ def fetch_futu_data(code, start_str, end_str, quote_ctx, ktype="week", rate_limi
 
         if ret != RET_OK:
             retry += 1
-            tqdm.write(f"{code} 请求失败，重试 {retry}/3")
+            tqdm.write(f"{code} 请求失败 ({data})，重试 {retry}/3")
             if retry >= 3:
                 tqdm.write(f"{code} 下载失败")
                 break
