@@ -313,9 +313,11 @@ if __name__ == "__main__":
 
     if args.reset:
         for tbl in ["watchlist", "turnover_rankings", "stooq_local_all_us_stocks",
-                     "klines_1d", "klines_1w",
-                     "klines_1d_sorted", "klines_1w_sorted",
-                     "v_klines_1d", "v_klines_1w",
+                     "klines_1d", "klines_1w", "klines_60m",
+                     "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
+                     "v_klines_1d", "v_klines_1w", "v_klines_60m",
+                     "top_stocks", "top_stocks_all",
+                     "top_turnover_200", "top_turnover_etf_50", "top_turnover_stock_200",
                      "v_backtest_1w", "v_backtest_1d",
                      "v_scores_1w", "v_scores_1d",
                      "v_stability_1w", "v_stability_1d",
