@@ -103,11 +103,8 @@ def get_start_date(code):
     return datetime(2000, 1, 3)
 
 def get_start_date_by_ktype(ktype):
-    """根据周期返回起始日期：周线全量，日线20年。"""
-    today = datetime.now()
-    if ktype == "day":
-        return datetime(today.year - 20, 1, 3)
-    return datetime(2000, 1, 3)
+    """根据周期返回起始日期：周线、日线均为最近19年。"""
+    return datetime(datetime.now().year - 19, 1, 3)
 
 
 # =========================================================
