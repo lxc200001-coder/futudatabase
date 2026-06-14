@@ -156,7 +156,7 @@ def create_tables(con):
     con.execute("""
         CREATE TABLE IF NOT EXISTS stooq_local_all_us_stocks (
             code        VARCHAR,
-            datetime    DATE,
+            datetime    TIMESTAMP,
             open        DOUBLE,
             high        DOUBLE,
             low         DOUBLE,
