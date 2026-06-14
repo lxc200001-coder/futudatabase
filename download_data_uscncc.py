@@ -694,16 +694,25 @@ def _get_quota_info(host="127.0.0.1", port=11111):
     from futu import OpenQuoteContext, RET_OK
     ctx = OpenQuoteContext(host=host, port=port)
     try:
-        ret, data = ctx.get_history_kl_quota()
+        ret, data = ctx.get_history_kl_quota(get_detail=True)
         if ret != RET_OK:
             return 0, 0, set()
-        used = int(data.get("used_quota", 0))
-        remain = int(data.get("remain_quota", 0))
-        detail = set()
-        for item in data.get("detail_list", []):
-            _code = str(item.get("stock_code", ""))
-            if _code:
-                detail.add(_code)
+        # data 可能是 dict 或 DataFrame
+        if hasattr(data, "iloc"):
+            used = int(data["used_quota"].iloc[0]) if "used_quota" in data else 0
+            remain = int(data["remain_quota"].iloc[0]) if "remain_quota" in data else 0
+            detail = set()
+            if "stock_code" in data.columns:
+                for _c in data["stock_code"].dropna():
+                    detail.add(str(_c))
+        else:
+            used = int(data.get("used_quota", 0))
+            remain = int(data.get("remain_quota", 0))
+            detail = set()
+            for item in data.get("detail_list", []):
+                _code = str(item.get("stock_code", ""))
+                if _code:
+                    detail.add(_code)
         return used, remain, detail
     except Exception:
         return 0, 0, set()
