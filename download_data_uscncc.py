@@ -278,7 +278,8 @@ def fetch_stooq_local_data(code, start_str, end_str, ktype="week"):
     df["time_key"] = pd.to_datetime(df["time_key"].astype(str), format="%Y%m%d")
     df["code"] = code
     df["turnover"] = 0
-    df = df[["code", "time_key", "open", "high", "low", "close", "volume", "turnover"]]
+    df["turnover_amount"] = df["close"] * df["volume"]  # Stooq 无 turnover，直接用 close×volume
+    df = df[["code", "time_key", "open", "high", "low", "close", "volume", "turnover", "turnover_amount"]]
     df = df.sort_values("time_key").reset_index(drop=True)
 
     # 按起始日期截断（先截断再保存/聚合）
@@ -291,7 +292,7 @@ def fetch_stooq_local_data(code, start_str, end_str, ktype="week"):
         _agg = {
             "code": "first", "open": "first",
             "high": "max", "low": "min",
-            "close": "last", "volume": "sum", "turnover": "sum",
+            "close": "last", "volume": "sum", "turnover": "sum", "turnover_amount": "sum",
         }
         df = df.resample("W-FRI").agg(_agg).dropna(subset=["close"]).reset_index()
         df["time_key"] = df["time_key"] - pd.Timedelta(days=4)
@@ -1072,7 +1073,11 @@ def run_download(ktype="week", selected_markets=None):
         combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
         combined["stock_name"] = combined["code"].map(name_map).fillna("")
         combined["source"] = combined["code"].map(_src_map)
-        combined["turnover_amount"] = combined.apply(
+        # turnover_amount：已存在的（如 Stooq 周线聚合值）保留，否则计算
+        if "turnover_amount" not in combined.columns:
+            combined["turnover_amount"] = 0.0
+        _miss = combined["turnover_amount"].isna() | (combined["turnover_amount"] == 0)
+        combined.loc[_miss, "turnover_amount"] = combined.loc[_miss].apply(
             lambda r: round(r["turnover"], 2) if pd.notna(r["turnover"]) and r["turnover"] > 0
                       else round(r["close"] * r["volume"], 2),
             axis=1
