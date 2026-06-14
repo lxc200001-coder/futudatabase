@@ -12,6 +12,7 @@ import baostock as bs
 import contextlib
 from collections import deque
 from datetime import datetime
+import duckdb
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
 
 # 关闭杂项日志
@@ -855,7 +856,6 @@ def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None):
         cn_realtime_codes: fetch_cn_top_turnover() 返回的 CN 代码列表
     """
     try:
-        import duckdb
         _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
         _con = duckdb.connect(_db_path)
 
@@ -937,7 +937,6 @@ def _load_symbols_from_watchlist(api="all"):
     if not os.path.exists(_db_path):
         return None
     try:
-        import duckdb
         _con = duckdb.connect(_db_path, read_only=True)
         _us_filter = ""
         if api == "futu":
