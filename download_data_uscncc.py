@@ -574,7 +574,7 @@ def import_stooq_all_to_db():
         print(f"    [{_mkt_name}] {len(_files)} 个文件...", end=" ", flush=True)
         try:
             _con.execute(f"""
-                INSERT INTO stooq_local_all_us_stocks (code, datetime, open, high, low, close, volume, ktype, type, market, turnover_amount)
+                INSERT OR REPLACE INTO stooq_local_all_us_stocks (code, datetime, open, high, low, close, volume, ktype, type, market, turnover_amount)
                 SELECT
                     'US.' || replace("<TICKER>", '.US', '') AS code,
                     strptime("<DATE>"::VARCHAR, '%Y%m%d')::DATE AS datetime,
