@@ -937,7 +937,10 @@ def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None, selected_
             elif _c.startswith("US."):
                 _market_of[_c] = "美股"; _mkt_order[_c] = 0
 
-        # 3. 按市场排序写入（美股 → 加密货币 → A股）
+        # 3. 兼容旧表结构
+        _con.execute("ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS stock_name VARCHAR")
+
+        # 4. 按市场排序写入（美股 → 加密货币 → A股）
         _con.execute('DELETE FROM watchlist')
         for _c in sorted(_sources.keys(), key=lambda c: _mkt_order.get(c, 9)):
             _m = _market_of.get(_c)
