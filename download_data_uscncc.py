@@ -631,17 +631,8 @@ def import_stooq_all_to_db():
             type        VARCHAR,
             market      VARCHAR,
             turnover_amount DOUBLE,
-            avg_turnover_5d DOUBLE,
-            avg_turnover_10d DOUBLE,
-            avg_turnover_20d DOUBLE,
             avg_turnover_60d DOUBLE,
-            pct_chg_5d DOUBLE,
-            pct_chg_10d DOUBLE,
-            pct_chg_20d DOUBLE,
             pct_chg_60d DOUBLE,
-            pct_chg_120d DOUBLE,
-            pct_chg_250d DOUBLE,
-            pct_chg_ytd DOUBLE,
             PRIMARY KEY (code, datetime)
         )
     """)
@@ -685,64 +676,146 @@ def import_stooq_all_to_db():
             _errors += 1
             print(f"失败: {e}")
 
-    # 全局排序
+    # 全局排序（code 升序, datetime 降序）
     print("    全局排序...", end=" ", flush=True)
     _con.execute("""
         CREATE TABLE stooq_tmp AS
         SELECT * FROM stooq_local_all_us_stocks
-        ORDER BY code, datetime
+        ORDER BY code ASC, datetime DESC
     """)
     _con.execute("DROP TABLE stooq_local_all_us_stocks")
     _con.execute("ALTER TABLE stooq_tmp RENAME TO stooq_local_all_us_stocks")
     print("完成")
 
-    # 计算技术指标
+    # 计算技术指标（仅 avg_turnover_60d、pct_chg_60d）
     print("    计算技术指标...", end=" ", flush=True)
     _con.execute("""
         UPDATE stooq_local_all_us_stocks t
         SET
-            avg_turnover_5d  = w.a5,
-            avg_turnover_10d = w.a10,
-            avg_turnover_20d = w.a20,
             avg_turnover_60d = w.a60,
-            pct_chg_5d   = w.c5,
-            pct_chg_10d  = w.c10,
-            pct_chg_20d  = w.c20,
-            pct_chg_60d  = w.c60,
-            pct_chg_120d = w.c120,
-            pct_chg_250d = w.c250,
-            pct_chg_ytd  = w.ytd
+            pct_chg_60d      = w.c60
         FROM (
             SELECT code, datetime,
-                CASE WHEN COUNT(turnover_amount) OVER w5  >= 5  THEN AVG(turnover_amount) OVER w5  END AS a5,
-                CASE WHEN COUNT(turnover_amount) OVER w10 >= 10 THEN AVG(turnover_amount) OVER w10 END AS a10,
-                CASE WHEN COUNT(turnover_amount) OVER w20 >= 20 THEN AVG(turnover_amount) OVER w20 END AS a20,
                 CASE WHEN COUNT(turnover_amount) OVER w60 >= 60 THEN AVG(turnover_amount) OVER w60 END AS a60,
-                (close - LAG(close, 5)  OVER w) / NULLIF(LAG(close, 5)  OVER w, 0) AS c5,
-                (close - LAG(close, 10) OVER w) / NULLIF(LAG(close, 10) OVER w, 0) AS c10,
-                (close - LAG(close, 20) OVER w) / NULLIF(LAG(close, 20) OVER w, 0) AS c20,
-                (close - LAG(close, 60) OVER w) / NULLIF(LAG(close, 60) OVER w, 0) AS c60,
-                (close - LAG(close, 120) OVER w) / NULLIF(LAG(close, 120) OVER w, 0) AS c120,
-                (close - LAG(close, 250) OVER w) / NULLIF(LAG(close, 250) OVER w, 0) AS c250,
-                (close - FIRST_VALUE(close) OVER (PARTITION BY code, YEAR(datetime) ORDER BY datetime))
-                    / NULLIF(FIRST_VALUE(close) OVER (PARTITION BY code, YEAR(datetime) ORDER BY datetime), 0) AS ytd
+                (close - LAG(close, 60) OVER w) / NULLIF(LAG(close, 60) OVER w, 0) AS c60
             FROM stooq_local_all_us_stocks
             WINDOW w   AS (PARTITION BY code ORDER BY datetime),
-                   w5  AS (PARTITION BY code ORDER BY datetime ROWS BETWEEN 4  PRECEDING AND CURRENT ROW),
-                   w10 AS (PARTITION BY code ORDER BY datetime ROWS BETWEEN 9  PRECEDING AND CURRENT ROW),
-                   w20 AS (PARTITION BY code ORDER BY datetime ROWS BETWEEN 19 PRECEDING AND CURRENT ROW),
                    w60 AS (PARTITION BY code ORDER BY datetime ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
         ) w
         WHERE t.code = w.code AND t.datetime = w.datetime
+    """)
+
+    # 覆盖写入排名表
+    print("    生成排名变动表...", end=" ", flush=True)
+    _con.execute("DROP TABLE IF EXISTS top_turnover_stock_rank")
+    _con.execute("""
+        CREATE TABLE top_turnover_stock_rank AS
+        SELECT rank,
+               prev_rank - rank AS rank_change,
+               CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) AS rank_change_pct,
+               CONCAT(ROUND(CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) * 100, 2), '%') AS rank_change_pct_display,
+               code, datetime, open, high, low, close, volume, ktype, type, market,
+               turnover_amount, avg_turnover_60d, pct_chg_60d,
+               CONCAT(ROUND(pct_chg_60d * 100, 2), '%') AS pct_chg_60d_display
+        FROM (
+            SELECT rank,
+                   LAG(rank) OVER (PARTITION BY code ORDER BY datetime) AS prev_rank,
+                   code, datetime, open, high, low, close, volume, ktype, type, market,
+                   turnover_amount, avg_turnover_60d, pct_chg_60d
+            FROM (
+                SELECT ROW_NUMBER() OVER (PARTITION BY datetime ORDER BY avg_turnover_60d DESC) AS rank,
+                       code, datetime, open, high, low, close, volume, ktype, type, market,
+                       turnover_amount, avg_turnover_60d, pct_chg_60d
+                FROM stooq_local_all_us_stocks
+                WHERE (type IS NULL OR type = 'stock')
+                  AND avg_turnover_60d IS NOT NULL
+            ) r
+        ) t
+        ORDER BY datetime DESC, avg_turnover_60d DESC
+    """)
+    _con.execute("DROP TABLE IF EXISTS top_turnover_etf_rank")
+    _con.execute("""
+        CREATE TABLE top_turnover_etf_rank AS
+        SELECT rank,
+               prev_rank - rank AS rank_change,
+               CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) AS rank_change_pct,
+               CONCAT(ROUND(CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) * 100, 2), '%') AS rank_change_pct_display,
+               code, datetime, open, high, low, close, volume, ktype, type, market,
+               turnover_amount, avg_turnover_60d, pct_chg_60d,
+               CONCAT(ROUND(pct_chg_60d * 100, 2), '%') AS pct_chg_60d_display
+        FROM (
+            SELECT rank,
+                   LAG(rank) OVER (PARTITION BY code ORDER BY datetime) AS prev_rank,
+                   code, datetime, open, high, low, close, volume, ktype, type, market,
+                   turnover_amount, avg_turnover_60d, pct_chg_60d
+            FROM (
+                SELECT ROW_NUMBER() OVER (PARTITION BY datetime ORDER BY avg_turnover_60d DESC) AS rank,
+                       code, datetime, open, high, low, close, volume, ktype, type, market,
+                       turnover_amount, avg_turnover_60d, pct_chg_60d
+                FROM stooq_local_all_us_stocks
+                WHERE type = 'etf'
+                  AND avg_turnover_60d IS NOT NULL
+            ) r
+        ) t
+        ORDER BY datetime DESC, avg_turnover_60d DESC
     """)
     print("完成")
     _con.close()
     print(f"  Stooq 导入完成: {_total_rows:,} 行, {_errors} 错误")
 
 
-# =========================================================
-# 下载主流程
-# =========================================================
+# Moomoo OpenD 配置（默认端口 11112）
+MOOMOO_HOST = "127.0.0.1"
+MOOMOO_PORT = 11112
+
+
+def _get_quota_info(host="127.0.0.1", port=11111):
+    """查询 OpenD 实例的历史 K 线额度使用明细"""
+    from futu import OpenQuoteContext, RET_OK
+    ctx = OpenQuoteContext(host=host, port=port)
+    try:
+        ret, data = ctx.get_history_kl_quota()
+        if ret != RET_OK:
+            return 0, 0, set()
+        used = int(data.get("used_quota", 0))
+        remain = int(data.get("remain_quota", 0))
+        detail = set()
+        for item in data.get("detail_list", []):
+            _code = str(item.get("stock_code", ""))
+            if _code:
+                detail.add(_code)
+        return used, remain, detail
+    except Exception:
+        return 0, 0, set()
+    finally:
+        ctx.close()
+
+
+def _assign_api_for_stocks(symbols, futu_detail, futu_remain, moomoo_detail, moomoo_remain):
+    """根据 quota 明细分配每只股票走哪个 API
+
+    Returns:
+        dict: {code: "futu"|"moomoo"|"stooq-local"}
+    """
+    _api_of = {}
+    _futu_used = 0
+    _moomoo_used = 0
+    for _c in symbols:
+        if get_market(_c) != "us":
+            _api_of[_c] = None  # 非 US 股票走各自数据源
+        elif _c in futu_detail:
+            _api_of[_c] = "futu"  # 已有记录，不扣额度
+        elif _c in moomoo_detail:
+            _api_of[_c] = "moomoo"
+        elif _futu_used < futu_remain:
+            _api_of[_c] = "futu"
+            _futu_used += 1
+        elif _moomoo_used < moomoo_remain:
+            _api_of[_c] = "moomoo"
+            _moomoo_used += 1
+        else:
+            _api_of[_c] = "stooq-local"
+    return _api_of
 def fetch_stock_names(symbols, quote_ctx):
     """预取所有标的的名称，返回 {code: name}"""
     name_map = {}
@@ -785,13 +858,12 @@ def fetch_stock_names(symbols, quote_ctx):
     return name_map
 
 
-def fetch_top_turnover_stocks(limit=200):
-    """通过 Futu OpenD 获取当日成交额前 N 的美股，保存到 symbols/top_turnover_{YYYYMMDD}.csv"""
+def fetch_top_turnover_stocks(limit=100):
+    """通过 Futu OpenD 获取当日成交额前 N 的美股，返回代码列表"""
     from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
     try:
-        # 按成交额降序排列
         af = AccumulateFilter()
         af.stock_field = StockField.TURNOVER
         af.is_no_filter = False
@@ -801,77 +873,29 @@ def fetch_top_turnover_stocks(limit=200):
         ret, data = quote_ctx.get_stock_filter(Market.US, [af], begin=0, num=limit)
         if ret != RET_OK:
             print(f"get_stock_filter 失败: {data}")
-            return
+            return []
 
         _, _, stock_list = data
         codes = [str(getattr(item, "stock_code", "")) for item in stock_list if getattr(item, "stock_code", "")]
         if not codes:
             print("get_stock_filter 返回空列表")
-            return
+            return []
 
-        # 用市场快照补全价格和成交额数据
-        ret2, snapshots = quote_ctx.get_market_snapshot(codes)
-        snap_map = {}
-        if ret2 == RET_OK and snapshots is not None and not snapshots.empty:
-            for _, row in snapshots.iterrows():
-                snap_map[str(row.get("code", ""))] = row
-
-        records = []
-        for code in tqdm(codes, desc="  成交额排名", unit="stock"):
-            name = ""
-            price = 0.0
-            turnover = 0.0
-            snap = snap_map.get(code)
-            if snap is not None:
-                name = str(snap.get("name", "") or "")
-                price = float(snap.get("last_price", 0) or 0)
-                turnover = float(snap.get("turnover", 0) or 0)
-            turnover_val = round(turnover / 1e8, 2)
-            records.append({
-                "排名": 0,
-                "代码": code,
-                "名称": name,
-                "最新价": price,
-                "成交额(亿元)": turnover_val,
-            })
-
-        df = pd.DataFrame(records)
-        df = df.sort_values("成交额(亿元)", ascending=False).reset_index(drop=True)
-        df["排名"] = range(1, len(df) + 1)
-        date_str = datetime.now().strftime("%Y%m%d")
-        out_path = os.path.join("symbols", f"top_turnover_{date_str}.csv")
-        os.makedirs("symbols", exist_ok=True)
-        df.to_csv(out_path, index=False, encoding="utf-8-sig")
-        print(f"  美股成交额排名已保存: {out_path} ({len(df)} 只)")
-
-        # 写入 DuckDB top_stocks 表（先清旧数据，再写入最新）
-        try:
-            import duckdb
-            _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
-            _con = duckdb.connect(_db_path)
-            _con.execute("DELETE FROM top_stocks WHERE market = 'us'")
-            _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-            _con.execute("""
-                INSERT INTO top_stocks (market, code, rank, name, price, turnover, date, created_at)
-                SELECT 'us', "代码", "排名", "名称", "最新价", "成交额(亿元)", ?, CURRENT_TIMESTAMP FROM _tmp
-            """, [pd.Timestamp(date_str).date()])
-            _con.close()
-        except Exception:
-            pass
-        return out_path
+        print(f"  美股成交额排名: {len(codes)} 只")
+        return codes
     finally:
         quote_ctx.close()
 
 
-def fetch_cn_top_turnover(limit=30):
-    """通过 Futu OpenD 获取沪深主板当日成交额前 N 的股票"""
+def fetch_cn_top_turnover(limit=100):
+    """通过 Futu OpenD 获取沪深主板当日成交额前 N 的股票，返回代码列表"""
     from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
     def _is_excluded(code):
         return code.startswith("SH.688") or code.startswith(("SZ.300", "SZ.301")) or code.startswith("BJ.")
 
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
-    all_records = []
+    all_codes = []
     fetch_num = max(limit * 3, 60)
     try:
         for market_name, market in [("SH", Market.SH), ("SZ", Market.SZ)]:
@@ -885,73 +909,81 @@ def fetch_cn_top_turnover(limit=30):
                 continue
             if not (isinstance(result, tuple) and len(result) >= 3):
                 continue
-            codes = [s.stock_code for s in result[2]]
-            for i, code in enumerate(codes):
-                if _is_excluded(code):
-                    continue
-                if i > 0 and i % 10 == 0:
-                    time.sleep(0.5)
-                ret2, snap = quote_ctx.get_market_snapshot([code])
-                if ret2 == RET_OK and snap is not None and not snap.empty:
-                    row = snap.iloc[0]
-                    all_records.append({
-                        "排名": 0, "代码": code,
-                        "名称": str(row.get("code_name", row.get("name", ""))),
-                        "最新价": round(float(row.get("last_price", 0) or 0), 2),
-                        "成交额(亿元)": round(float(row.get("turnover", 0) or 0) / 1e8, 2),
-                    })
+            for s in result[2]:
+                code = str(getattr(s, "stock_code", ""))
+                if code and not _is_excluded(code):
+                    all_codes.append(code)
     finally:
         quote_ctx.close()
-    if not all_records:
-        return
-    df = pd.DataFrame(all_records).drop_duplicates(subset=["代码"])
-    df = df.sort_values("成交额(亿元)", ascending=False).head(limit)
-    df["排名"] = range(1, len(df) + 1)
-    date_str = datetime.now().strftime("%Y%m%d")
-    out_path = os.path.join("symbols", f"top_turnover_cn_{date_str}.csv")
-    os.makedirs("symbols", exist_ok=True)
-    df.to_csv(out_path, index=False, encoding="utf-8-sig")
-    print(f"  A股成交额排名已保存: {out_path} ({len(df)} 只)")
-
-    # 写入 DuckDB top_stocks 表（先清旧数据，再写入最新）
-    try:
-        import duckdb
-        _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
-        _con = duckdb.connect(_db_path)
-        _con.execute("DELETE FROM top_stocks WHERE market = 'cn'")
-        _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-        _con.execute("""
-            INSERT INTO top_stocks (market, code, rank, name, price, turnover, date, created_at)
-            SELECT 'cn', "代码", "排名", "名称", "最新价", "成交额(亿元)", ?, CURRENT_TIMESTAMP FROM _tmp
-        """, [pd.Timestamp(date_str).date()])
-        _con.close()
-    except Exception:
-        pass
-    return out_path
+    # 去重 + 取前 limit
+    seen = set()
+    codes = []
+    for c in all_codes:
+        if c not in seen:
+            seen.add(c)
+            codes.append(c)
+        if len(codes) >= limit:
+            break
+    print(f"  A股成交额排名: {len(codes)} 只")
+    return codes
 
 
-def _sync_watchlist_db():
-    """合并 symbols.csv + top_stocks 去重后写入 watchlist 表"""
+def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None):
+    """从排名表 + 实时排名结果 + symbols.csv 合并写入 watchlist 表
+
+    Args:
+        us_realtime_codes: fetch_top_turnover_stocks() 返回的 US 代码列表
+        cn_realtime_codes: fetch_cn_top_turnover() 返回的 CN 代码列表
+    """
     try:
         import duckdb
         _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
         _con = duckdb.connect(_db_path)
 
-        # 1. symbols.csv → 手动添加
-        _manual = set()
-        _symbols = pd.read_csv(os.path.join(os.path.dirname(__file__), "symbols", "symbols.csv"))
-        for _, _row in _symbols.iterrows():
-            _manual.add(str(_row["code"]).strip())
+        # 1. 各来源收集代码
+        _sources = {}  # code → set of source strings
 
-        # 2. top_stocks → 成交额排名
-        _ranked = set()
-        for _r in _con.execute("SELECT DISTINCT code FROM top_stocks").fetchall():
-            _ranked.add(str(_r[0]))
+        # a. symbols.csv → 手动添加
+        _csv_path = os.path.join(os.path.dirname(__file__), "symbols", "symbols.csv")
+        if os.path.exists(_csv_path):
+            _symbols = pd.read_csv(_csv_path)
+            for _, _row in _symbols.iterrows():
+                _c = str(_row["code"]).strip()
+                _sources.setdefault(_c, set()).add("手动添加")
 
-        # 3. 合并并确定来源
-        _all = _manual | _ranked
+        # b. top_turnover_stock_rank 最新日期 rank ≤ 200
+        try:
+            for _r in _con.execute("""
+                SELECT DISTINCT code FROM top_turnover_stock_rank
+                WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_stock_rank)
+                  AND rank <= 200
+            """).fetchall():
+                _sources.setdefault(str(_r[0]), set()).add("60日成交额排名")
+        except Exception:
+            pass
+
+        # c. top_turnover_etf_rank 最新日期 rank ≤ 10
+        try:
+            for _r in _con.execute("""
+                SELECT DISTINCT code FROM top_turnover_etf_rank
+                WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_etf_rank)
+                  AND rank <= 10
+            """).fetchall():
+                _sources.setdefault(str(_r[0]), set()).add("ETF成交额排名")
+        except Exception:
+            pass
+
+        # d. 实时成交额排名
+        if us_realtime_codes:
+            for _c in us_realtime_codes:
+                _sources.setdefault(_c, set()).add("实时成交额排名")
+        if cn_realtime_codes:
+            for _c in cn_realtime_codes:
+                _sources.setdefault(_c, set()).add("实时成交额排名")
+
+        # 2. 确定市场
         _market_of = {}
-        for _c in _all:
+        for _c in _sources:
             if _c.startswith("CC."):
                 _market_of[_c] = "cc"
             elif _c.startswith(("SH.", "SZ.")):
@@ -959,34 +991,28 @@ def _sync_watchlist_db():
             elif _c.startswith("US."):
                 _market_of[_c] = "us"
 
-        # 4. 按市场排序写入（us → cc → cn）
+        # 3. 按市场排序写入（us → cc → cn）
         _mkt_order = {"us": 0, "cc": 1, "cn": 2}
         _con.execute('DELETE FROM watchlist')
-        for _c in sorted(_all, key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
+        for _c in sorted(_sources.keys(), key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
             _m = _market_of.get(_c)
             if not _m:
                 continue
-            _src = []
-            if _c in _manual:
-                _src.append("手动添加")
-            if _c in _ranked:
-                _src.append("成交额排名")
             _con.execute(
                 'INSERT INTO watchlist(code, market, source, created_at) VALUES (?, ?, ?, ?)',
-                [_c, _m, ",".join(_src), datetime.now()],
+                [_c, _m, ",".join(sorted(_sources[_c])), datetime.now()],
             )
         _con.close()
-        print(f"  watchlist 已同步: {len(_all)} 只")
-    except Exception:
-        pass
+        print(f"  watchlist 已同步: {len(_sources)} 只")
+    except Exception as e:
+        print(f"  watchlist 同步失败: {e}")
 
 
-def _load_symbols_from_watchlist(api="futu"):
+def _load_symbols_from_watchlist(api="all"):
     """从 DuckDB watchlist 表加载股票列表。
 
-    futu: US 股票只取来源含"手动添加"的（额度限制）
-    stooq-local: US 股票取全部
-    CN/CC: 始终取全部
+    api="all": US 股票取全部
+    api="futu": US 股票只取来源含"手动添加"的（遗留兼容）
     """
     _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
     if not os.path.exists(_db_path):
@@ -994,7 +1020,9 @@ def _load_symbols_from_watchlist(api="futu"):
     try:
         import duckdb
         _con = duckdb.connect(_db_path, read_only=True)
-        _us_filter = "AND source LIKE '%手动添加%'" if api == "futu" else ""
+        _us_filter = ""
+        if api == "futu":
+            _us_filter = "AND source LIKE '%手动添加%'"
         _rows = _con.execute(f"""
             SELECT DISTINCT code FROM watchlist
             WHERE market = 'us' {_us_filter}
@@ -1006,23 +1034,22 @@ def _load_symbols_from_watchlist(api="futu"):
         _con.close()
         _codes = [str(r[0]) for r in _rows]
         if _codes:
-            print(f"  watchlist 加载: {len(_codes)} 只 (api={api})")
+            print(f"  watchlist 加载: {len(_codes)} 只")
         return _codes
     except Exception:
         return None
 
 
-def run_download(ktype="week", selected_markets=None, api="futu"):
+def run_download(ktype="week", selected_markets=None):
 
     if selected_markets is None:
         selected_markets = ["us", "cn", "cc"]
 
     init_symbols_file(SYMBOL_FILE)
 
-    # 从 watchlist 表加载股票（按 api 过滤 US 股票）
-    _symbols = _load_symbols_from_watchlist(api)
+    # 从 watchlist 表加载股票（不再按 api 过滤）
+    _symbols = _load_symbols_from_watchlist(api="all")
     if _symbols is None:
-        # 兜底：从 symbols.csv 加载
         _symbols = load_symbols(SYMBOL_FILE)
 
     symbols = [c for c in _symbols if get_market(c) in selected_markets]
@@ -1031,32 +1058,56 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
         return
 
     end_str = datetime.now().strftime("%Y-%m-%d")
-    start_str = get_start_date_by_ktype(ktype).strftime("%Y-%m-%d")
-
     us_codes = [c for c in symbols if get_market(c) == "us"]
-    quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111) if (us_codes and api == "futu") else None
 
-    name_map = fetch_stock_names(symbols, quote_ctx)
+    # ---- 根据 quota 分配 US 股票走哪个 API ----
+    _api_of = {}
+    futu_ctx = None
+    moomoo_ctx = None
+    if us_codes:
+        _, futu_remain, futu_detail = _get_quota_info("127.0.0.1", 11111)
+        _, moomoo_remain, moomoo_detail = _get_quota_info(MOOMOO_HOST, MOOMOO_PORT)
+        _api_of = _assign_api_for_stocks(us_codes, futu_detail, futu_remain, moomoo_detail, moomoo_remain)
+        _futu_list = [c for c, a in _api_of.items() if a == "futu"]
+        _moomoo_list = [c for c, a in _api_of.items() if a == "moomoo"]
+        if _futu_list:
+            futu_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+        if _moomoo_list:
+            moomoo_ctx = OpenQuoteContext(host=MOOMOO_HOST, port=MOOMOO_PORT)
+        print(f"  API 分配: futu={len(_futu_list)}, moomoo={len(_moomoo_list)}, stooq={sum(1 for a in _api_of.values() if a=='stooq-local')}")
+
+    # 预取股票名称
+    name_ctx = futu_ctx or moomoo_ctx
+    name_map = fetch_stock_names(symbols, name_ctx)
 
     all_dfs = []
     _ok = _fail = 0
     _failed_codes = []
+    _src_map = {}
 
     for code in tqdm(symbols, desc=f"{ktype}下载", unit="stock"):
-        name = name_map.get(code, "")
         start = get_start_date_by_ktype(ktype)
         start_str = start.strftime("%Y-%m-%d")
         market = get_market(code)
 
         if market == "cc":
             df = fetch_binance_data(code, start_str, end_str, ktype)
+            _src_map[code] = "binance"
         elif market == "cn":
             df = fetch_cn_data(code, start_str, end_str, ktype)
-        elif api == "stooq-local":
-            start_str = "2000-01-03"
-            df = fetch_stooq_local_data(code, start_str, end_str, ktype)
+            _src_map[code] = "baostock"
+        elif market == "us":
+            _use_api = _api_of.get(code, "stooq-local")
+            if _use_api in ("futu", "moomoo"):
+                _ctx = futu_ctx if _use_api == "futu" else moomoo_ctx
+                df = fetch_futu_data(code, start_str, end_str, _ctx, ktype) if _ctx else pd.DataFrame()
+                _src_map[code] = _use_api
+            else:
+                start_str = "2000-01-03"
+                df = fetch_stooq_local_data(code, start_str, end_str, ktype)
+                _src_map[code] = "stooq"
         else:
-            df = fetch_futu_data(code, start_str, end_str, quote_ctx, ktype) if quote_ctx else pd.DataFrame()
+            df = pd.DataFrame()
 
         if not df.empty:
             all_dfs.append(df)
@@ -1064,13 +1115,16 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
         else:
             _fail += 1
             _failed_codes.append(code)
+
+    if futu_ctx:
+        futu_ctx.close()
+    if moomoo_ctx:
+        moomoo_ctx.close()
+
     if _fail:
         print(f"  {ktype} 下载完成: {_ok} 成功, {_fail} 失败 — {'; '.join(_failed_codes)}")
     else:
         print(f"  {ktype} 下载完成: {_ok} 成功")
-
-    if quote_ctx is not None:
-        quote_ctx.close()
 
     # 合并写入 DuckDB
     if all_dfs:
@@ -1079,11 +1133,7 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
         combined["datetime"] = pd.to_datetime(combined["datetime"]).dt.normalize()
         combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
         combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
-        _src_api = {"futu": "futu", "stooq-local": "stooq"}.get(api, api)
-        combined["source"] = combined["code"].apply(
-            lambda c: _src_api if get_market(c) == "us" else
-                      "baostock" if get_market(c) == "cn" else "binance"
-        )
+        combined["source"] = combined["code"].map(_src_map)
         combined["turnover_amount"] = (combined["close"] * combined["volume"]).round(2)
 
         _kt_name = {"week": "1w", "day": "1d", "60m": "60m"}.get(ktype, ktype)
@@ -1112,7 +1162,7 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
 # =========================================================
 # 主入口
 # =========================================================
-def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False, api="futu"):
+def run_download_all(selected_markets=None, skip_week=False, skip_day=False, skip_60m=False):
     """分阶段下载周线、日线、60分钟数据。"""
     ktypes = []
     if not skip_week:
@@ -1123,7 +1173,7 @@ def run_download_all(selected_markets=None, skip_week=False, skip_day=False, ski
         ktypes.append("60m")
 
     for ktype in ktypes:
-        run_download(ktype=ktype, selected_markets=selected_markets, api=api)
+        run_download(ktype=ktype, selected_markets=selected_markets)
 
 
 if __name__ == "__main__":
@@ -1133,16 +1183,14 @@ if __name__ == "__main__":
                         help="K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接, 默认: all)")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--api", choices=["futu", "stooq-local"], default=DEFAULT_API,
-                        help="美股数据源: futu(富途OpenD, 默认) / ibkr(IB TWS/Gateway)")
-    parser.add_argument("--top-turnover", type=int, nargs="?", const=200, default=200,
-                        help="获取成交额前 N 的美股列表并保存到 symbols/ (默认 N=200, 设为0跳过)")
-    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=30, default=0,
-                        help="获取成交额前 N 的沪深主板股票并保存到 symbols/ (默认 N=30, 设为0跳过)")
+    parser.add_argument("--top-turnover", type=int, nargs="?", const=100, default=0,
+                        help="获取成交额前 N 的美股列表 (默认 N=100, 设为0跳过)")
+    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=100, default=0,
+                        help="获取成交额前 N 的沪深主板股票列表 (默认 N=100, 设为0跳过)")
     parser.add_argument("--only-turnover", action="store_true",
-                        help="只获取成交额排名，不下载K线数据")
+                        help="只获取成交额排名和 Stooq 导入，不下载K线数据")
     parser.add_argument("--import-stooq", action="store_true",
-                        help="导入 Stooq 全量美股到 DuckDB（含技术指标计算）")
+                        help="导入 Stooq 全量美股到 DuckDB（含排名变动表生成）")
     parser.add_argument("--skip-week", action="store_true", help="跳过周线下载（已弃用，用 --ktype 替代）")
     parser.add_argument("--skip-day", action="store_true", help="跳过日线下载（已弃用，用 --ktype 替代）")
     parser.add_argument("--skip-60m", action="store_true", help="跳过60分钟下载（已弃用，用 --ktype 替代）")
@@ -1154,26 +1202,25 @@ if __name__ == "__main__":
     else:
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
 
-    # 根据 market 自动获取成交额排名
-    _ranked = False
-    if args.top_turnover and "us" in selected_markets:
-        fetch_top_turnover_stocks(limit=args.top_turnover)
-        _ranked = True
-    if args.top_turnover_cn and "cn" in selected_markets:
-        fetch_cn_top_turnover(limit=args.top_turnover_cn)
-        _ranked = True
-    if _ranked:
-        _sync_watchlist_db()
+    # ── 1. Stooq 导入（仅 US 市场）────────────────────────────
+    if args.import_stooq and "us" in selected_markets:
+        import_stooq_all_to_db()
 
-    # --only-turnover：不下载K线数据
+    # ── 2. 成交额排名 + watchlist 同步 ─────────────────────────
+    _us_realtime = []
+    _cn_realtime = []
+    if args.top_turnover and "us" in selected_markets:
+        _us_realtime = fetch_top_turnover_stocks(limit=args.top_turnover) or []
+    if args.top_turnover_cn and "cn" in selected_markets:
+        _cn_realtime = fetch_cn_top_turnover(limit=args.top_turnover_cn) or []
+    _sync_watchlist_db(us_realtime_codes=_us_realtime, cn_realtime_codes=_cn_realtime)
+
+    # --only-turnover：不下载K线数据和板块
     if args.only_turnover:
         sys.exit(0)
 
-    # --import-stooq：导入全量 Stooq 数据
-    if args.import_stooq:
-        import_stooq_all_to_db()
-
-    # 解析 ktype（支持逗号拼接，兼容旧版 skip 参数）
+    # ── 3. 下载 K 线 ────────────────────────────────────────────
+    # 解析 ktype
     _ktypes = []
     for _k in args.ktype.lower().replace("，", ",").split(","):
         _k = _k.strip()
@@ -1184,7 +1231,6 @@ if __name__ == "__main__":
             _ktypes.append(_k)
     if not _ktypes:
         _ktypes = ["week", "day", "60m"]
-    # 旧版 skip 参数覆盖
     if args.skip_week and "week" in _ktypes:
         _ktypes.remove("week")
     if args.skip_day and "day" in _ktypes:
@@ -1193,13 +1239,12 @@ if __name__ == "__main__":
         _ktypes.remove("60m")
 
     _all_start = time.time()
-    # 分阶段下载 K 线数据
     run_download_all(selected_markets=selected_markets,
-                     skip_week="week" not in _ktypes, api=args.api,
+                     skip_week="week" not in _ktypes,
                      skip_day="day" not in _ktypes,
                      skip_60m="60m" not in _ktypes)
 
-    # 同步板块/行业信息
+    # ── 4. 板块信息同步 ──────────────────────────────────────────
     plates_map = run_plate_sync(selected_markets=selected_markets)
     if plates_map:
         try:

@@ -12,10 +12,9 @@ DuckDB 数据库初始化
 说明:
     新增表/列/注释 → 直接运行 init_db.py，无需 reset
     修改列类型/删除表 → 需要 --reset（会清空数据）
-    --reset 会自动重建所有 klines、watchlist、top_stocks 等表
+    --reset 会自动重建所有 klines、watchlist 等表
 """
 import os
-import glob
 import argparse
 from datetime import datetime
 
@@ -27,28 +26,42 @@ DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 
 
 def update_watchlist(con):
-    """合并 symbols.csv + top_stocks 去重后写入 watchlist 表"""
+    """合并 symbols.csv + 排名变动表去重后写入 watchlist 表"""
     import pandas as pd
 
-    # 1. 读取 symbols.csv → 手动添加
-    _manual = set()
+    _sources = {}  # code → set of source
+
+    # 1. symbols.csv → 手动添加
     _symbol_path = os.path.join(PROJECT_ROOT, "symbols", "symbols.csv")
     if os.path.exists(_symbol_path):
         for c in pd.read_csv(_symbol_path)["code"].dropna():
-            _manual.add(c.strip())
+            _sources.setdefault(c.strip(), set()).add("手动添加")
 
-    # 2. 读取 top_stocks → 成交额排名
-    _ranked = set()
+    # 2. top_turnover_stock_rank 最新日期 rank ≤ 200
     try:
-        for row in con.execute("SELECT DISTINCT code FROM top_stocks").fetchall():
-            _ranked.add(str(row[0]))
+        for row in con.execute("""
+            SELECT DISTINCT code FROM top_turnover_stock_rank
+            WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_stock_rank)
+              AND rank <= 200
+        """).fetchall():
+            _sources.setdefault(str(row[0]), set()).add("60日成交额排名")
     except Exception:
         pass
 
-    # 3. 合并所有代码并确定来源
-    _all_codes = _manual | _ranked
+    # 3. top_turnover_etf_rank 最新日期 rank ≤ 10
+    try:
+        for row in con.execute("""
+            SELECT DISTINCT code FROM top_turnover_etf_rank
+            WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_etf_rank)
+              AND rank <= 10
+        """).fetchall():
+            _sources.setdefault(str(row[0]), set()).add("ETF成交额排名")
+    except Exception:
+        pass
+
+    # 4. 确定市场
     _market_of = {}
-    for code in _all_codes:
+    for code in _sources:
         if code.startswith("CC."):
             _market_of[code] = "cc"
         elif code.startswith(("SH.", "SZ.")):
@@ -56,47 +69,22 @@ def update_watchlist(con):
         elif code.startswith("US."):
             _market_of[code] = "us"
 
-    # 4. 按市场排序写入（us → cc → cn，同市场内按代码升序）
+    # 5. 按市场排序写入（us → cc → cn）
     _mkt_order = {"us": 0, "cc": 1, "cn": 2}
     con.execute("DELETE FROM watchlist")
-    for code in sorted(_all_codes, key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
+    for code in sorted(_sources.keys(), key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
         mkt = _market_of.get(code)
         if not mkt:
             continue
-        src = []
-        if code in _manual:
-            src.append("手动添加")
-        if code in _ranked:
-            src.append("成交额排名")
         con.execute(
             'INSERT INTO watchlist(code, market, source, created_at) VALUES (?, ?, ?, ?)',
-            [code, mkt, ",".join(src), datetime.now()],
+            [code, mkt, ",".join(sorted(_sources[code])), datetime.now()],
         )
-    print(f"  watchlist: {len(_all_codes)} 只")
+    print(f"  watchlist: {len(_sources)} 只")
 
 
 def create_tables(con):
     """建表"""
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS top_stocks (
-            market      VARCHAR,
-            code        VARCHAR,
-            rank        INTEGER,
-            name        VARCHAR,
-            price       DOUBLE,
-            turnover    DOUBLE,
-            date        DATE,
-            created_at  TIMESTAMP,
-            PRIMARY KEY (market, code, date)
-        )
-    """)
-    for _col, _desc in [
-        ("market", "市场: us/cn"), ("code", "股票代码"), ("rank", "成交额排名"),
-        ("name", "股票名称"), ("price", "最新价"), ("turnover", "成交额(亿元)"),
-        ("date", "数据日期"), ("created_at", "添加时间(精确到秒)"),
-    ]:
-        con.execute(f"COMMENT ON COLUMN top_stocks.{_col} IS '{_desc}'")
-
     con.execute("DROP TABLE IF EXISTS watchlist")
     con.execute("""
         CREATE TABLE watchlist (
@@ -108,7 +96,7 @@ def create_tables(con):
     """)
     con.execute("COMMENT ON COLUMN watchlist.code IS '股票代码'")
     con.execute("COMMENT ON COLUMN watchlist.market IS '市场: us/cn/cc'")
-    con.execute("COMMENT ON COLUMN watchlist.source IS '来源: 手动添加/成交额排名/手动添加,成交额排名'")
+    con.execute("COMMENT ON COLUMN watchlist.source IS '来源: 手动添加/60日成交额排名/ETF成交额排名/实时成交额排名(逗号拼接)'")
     con.execute("COMMENT ON COLUMN watchlist.created_at IS '添加时间(精确到秒)'")
 
     # K 线数据表（按周期分表）
@@ -163,8 +151,7 @@ def create_tables(con):
     con.execute("COMMENT ON COLUMN plates.plates IS '所属板块(逗号分隔)'")
 
     # 表描述
-    con.execute("COMMENT ON TABLE top_stocks IS '成交额排名标的库'")
-    con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并symbols.csv+top_stocks)'")
+    con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
     con.execute("""
         CREATE TABLE IF NOT EXISTS stooq_local_all_us_stocks (
@@ -179,38 +166,20 @@ def create_tables(con):
             type        VARCHAR,
             market      VARCHAR,
             turnover_amount DOUBLE,
-            avg_turnover_5d DOUBLE,
-            avg_turnover_10d DOUBLE,
-            avg_turnover_20d DOUBLE,
             avg_turnover_60d DOUBLE,
-            pct_chg_5d DOUBLE,
-            pct_chg_10d DOUBLE,
-            pct_chg_20d DOUBLE,
             pct_chg_60d DOUBLE,
-            pct_chg_120d DOUBLE,
-            pct_chg_250d DOUBLE,
-            pct_chg_ytd DOUBLE,
             PRIMARY KEY (code, datetime)
         )
     """)
     con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS type VARCHAR")
     con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS market VARCHAR")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.ktype IS 'K线周期: 1D'")
     con.execute("COMMENT ON TABLE stooq_local_all_us_stocks IS 'Stooq全量美股日线数据'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.turnover_amount IS '估算成交额(收盘价×成交量)'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.ktype IS 'K线周期: 1D'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.type IS '股票类型: stock/etf'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.market IS '市场: us'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_5d IS '5日均成交额'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_10d IS '10日均成交额'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_20d IS '20日均成交额'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.turnover_amount IS '估算成交额(收盘价×成交量)'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_60d IS '60日均成交额'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_5d IS '5日涨跌幅'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_10d IS '10日涨跌幅'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_20d IS '20日涨跌幅'")
     con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_60d IS '60日涨跌幅'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_120d IS '120日涨跌幅'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_250d IS '250日涨跌幅'")
-    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_ytd IS '年初至今涨跌幅'")
     for _kt, _desc in [("1d", "日线K线数据"), ("1w", "周线K线数据"), ("60m", "60分钟K线数据")]:
         con.execute(f"COMMENT ON TABLE klines_{_kt} IS '{_desc}'")
 
@@ -220,35 +189,6 @@ def create_tables(con):
             SELECT * FROM klines_{_kt} ORDER BY code, datetime
         """)
 
-    con.execute("""
-        CREATE OR REPLACE VIEW top_stocks_all AS
-        SELECT * FROM top_stocks
-        ORDER BY market ASC, rank ASC, date DESC
-        LIMIT 1000000
-    """)
-
-
-def import_turnover(con):
-    """导入成交额排名到表中"""
-    csv_dir = os.path.join(PROJECT_ROOT, "symbols")
-    for mkt_suffix in ["", "_cn"]:
-        files = sorted(glob.glob(os.path.join(csv_dir, f"top_turnover{mkt_suffix}_*.csv")))
-        for f in files:
-            date_str = os.path.basename(f).split("_")[-1].replace(".csv", "")
-            mkt = "cn" if mkt_suffix else "us"
-            try:
-                dt = datetime.strptime(date_str, "%Y%m%d").date()
-            except ValueError:
-                continue
-            df = pd.read_csv(f)
-            df["date"] = dt
-            df["market"] = mkt
-            con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-            con.execute(f"DELETE FROM top_stocks WHERE market = '{mkt}'")
-            con.execute('''
-                INSERT INTO top_stocks (market, code, rank, name, price, turnover, date, created_at)
-                SELECT market, "代码", "排名", "名称", "最新价", "成交额(亿元)", date, CURRENT_TIMESTAMP FROM _tmp
-            ''')
 
 
 def create_views(con):
@@ -331,14 +271,13 @@ def create_views(con):
     # 视图中文描述
     con.execute("COMMENT ON VIEW v_stooq_all_sorted IS 'Stooq全量美股(按代码日期排序)'")
     con.execute("COMMENT ON VIEW top_gainers_200 IS '最新日期60日涨跌幅TOP200'")
-    con.execute("COMMENT ON VIEW top_stocks_all IS '成交额排名(按市场排名日期排序)'")
     for _kt, _desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
         con.execute(f"COMMENT ON VIEW klines_{_kt}_sorted IS '{_desc}K线数据(按代码日期排序)'")
 
 
 def list_all(con):
     """列出所有表和视图"""
-    names = ["watchlist", "top_stocks",
+    names = ["watchlist",
              "klines_1d", "klines_1w", "klines_60m",
              "v_klines_1d", "v_klines_1w", "v_klines_60m"]
     for name in names:
@@ -373,7 +312,7 @@ if __name__ == "__main__":
     conn = duckdb.connect(DB_PATH)
 
     if args.reset:
-        for tbl in ["watchlist", "top_stocks", "turnover_rankings", "stooq_local_all_us_stocks",
+        for tbl in ["watchlist", "turnover_rankings", "stooq_local_all_us_stocks",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
@@ -387,7 +326,6 @@ if __name__ == "__main__":
             except: pass
 
     create_tables(conn)
-    import_turnover(conn)
     update_watchlist(conn)
     create_views(conn)
     conn.commit()
