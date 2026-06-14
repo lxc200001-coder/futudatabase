@@ -538,8 +538,11 @@ def import_stooq_all_to_db():
     print(f"  Stooq 全量导入: {len(_all_files)} 个文件...")
     _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
     _con = duckdb.connect(_db_path)
+    for _drop in ["DROP VIEW IF EXISTS stooq_local_all_us_stocks", "DROP TABLE IF EXISTS stooq_local_all_us_stocks"]:
+        try: _con.execute(_drop)
+        except: pass
     _con.execute("""
-        CREATE TABLE IF NOT EXISTS stooq_local_all_us_stocks (
+        CREATE TABLE stooq_local_all_us_stocks (
             code        VARCHAR,
             datetime    DATE,
             open        DOUBLE,
@@ -556,8 +559,6 @@ def import_stooq_all_to_db():
             PRIMARY KEY (code, datetime)
         )
     """)
-    _con.execute("DELETE FROM stooq_local_all_us_stocks")
-
     _total_rows = 0
     _errors = 0
     for _mkt_dir in sorted(_glob.glob(os.path.join(_stooq_dir, "*"))):
@@ -573,7 +574,7 @@ def import_stooq_all_to_db():
         print(f"    [{_mkt_name}] {len(_files)} 个文件...", end=" ", flush=True)
         try:
             _con.execute(f"""
-                INSERT OR REPLACE INTO stooq_local_all_us_stocks (code, datetime, open, high, low, close, volume, ktype, type, market, turnover_amount)
+                INSERT INTO stooq_local_all_us_stocks (code, datetime, open, high, low, close, volume, ktype, type, market, turnover_amount)
                 SELECT
                     'US.' || replace("<TICKER>", '.US', '') AS code,
                     strptime("<DATE>"::VARCHAR, '%Y%m%d')::DATE AS datetime,
