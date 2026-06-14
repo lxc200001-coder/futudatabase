@@ -1120,6 +1120,17 @@ def run_download(ktype="week", selected_markets=None):
             print(f"  {_tbl}: {len(combined)} 行写入 + 排序")
         except Exception as e:
             print(f"  DuckDB 写入失败: {e}")
+
+        # 反写股票名称到 watchlist
+        if name_map:
+            try:
+                _con2 = duckdb.connect(_db_path)
+                for _c, _n in name_map.items():
+                    if _n:
+                        _con2.execute("UPDATE watchlist SET stock_name = ? WHERE code = ?", [_n, _c])
+                _con2.close()
+            except Exception:
+                pass
     else:
         print("\n无数据，跳过写入")
 
