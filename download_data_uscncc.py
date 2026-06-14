@@ -483,7 +483,7 @@ def fetch_cn_stock_industry(cn_symbols):
 # 板块同步主流程（直接返回 {code: plates_str}）
 # =========================================================
 def run_plate_sync(selected_markets=None):
-    """同步板块/行业信息，返回 {code: plates_str}"""
+    """同步板块/行业信息，返回 {code: {plates, stock_name, market}}"""
     if selected_markets is None:
         selected_markets = ["us", "cn", "cc"]
 
@@ -495,7 +495,7 @@ def run_plate_sync(selected_markets=None):
         print("无可同步板块信息的标的，跳过")
         return {}
 
-    plates_map = {}
+    plate_data = {}  # {code: {plates, stock_name, market}}
 
     # US: 富途板块数据
     us_symbols = [c for c in symbols if get_market(c) == "us"]
@@ -505,9 +505,13 @@ def run_plate_sync(selected_markets=None):
             df_us = fetch_all_stock_plates(us_symbols, quote_ctx)
             if not df_us.empty:
                 for _, row in df_us.iterrows():
-                    val = row.get("plates", "")
-                    if val:
-                        plates_map[row["code"]] = val
+                    code = row.get("code", "")
+                    if code:
+                        plate_data[code] = {
+                            "plates": row.get("plates", "") or "",
+                            "stock_name": row.get("stock_name", "") or "",
+                            "market": "美股",
+                        }
         finally:
             quote_ctx.close()
 
@@ -517,11 +521,15 @@ def run_plate_sync(selected_markets=None):
         df_cn = fetch_cn_stock_industry(cn_symbols)
         if not df_cn.empty:
             for _, row in df_cn.iterrows():
-                val = row.get("plate_name", "")
-                if val:
-                    plates_map[row["code"]] = val
+                code = row.get("code", "")
+                if code:
+                    plate_data[code] = {
+                        "plates": row.get("plate_name", "") or "",
+                        "stock_name": "",
+                        "market": "A股",
+                    }
 
-    return plates_map
+    return plate_data
 
 
 def import_stooq_all_to_db():
@@ -1195,20 +1203,21 @@ if __name__ == "__main__":
                      skip_day="day" not in _ktypes)
 
     # ── 4. 板块信息同步 ──────────────────────────────────────────
-    plates_map = run_plate_sync(selected_markets=selected_markets)
-    if plates_map:
+    plates_data = run_plate_sync(selected_markets=selected_markets)
+    if plates_data:
         try:
             import duckdb
             _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
             _con = duckdb.connect(_db_path)
             _con.execute("DELETE FROM plates")
-            for _c, _p in plates_map.items():
+            for _c, _info in plates_data.items():
                 _con.execute(
-                    'INSERT INTO plates(code, plates) VALUES (?, ?) ON CONFLICT (code) DO UPDATE SET plates = ?',
-                    [_c, _p, _p],
+                    'INSERT INTO plates(code, stock_name, market, plates) VALUES (?, ?, ?, ?) ON CONFLICT (code) DO UPDATE SET stock_name = ?, market = ?, plates = ?',
+                    [_c, _info.get("stock_name", ""), _info.get("market", ""), _info.get("plates", ""),
+                     _info.get("stock_name", ""), _info.get("market", ""), _info.get("plates", "")],
                 )
             _con.close()
-            print(f"  plates: {len(plates_map)} 只写入")
+            print(f"  plates: {len(plates_data)} 只写入")
         except Exception as e:
             print(f"  plates 写入失败: {e}")
     _elapsed = time.time() - _all_start
