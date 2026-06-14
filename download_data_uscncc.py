@@ -26,7 +26,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
-DEFAULT_KTYPE = "week"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
+DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / 60m(60分钟K) / all(全部) / week,day(逗号拼接)
 DEFAULT_API = "futu"  # 美股数据源: futu(富途) / stooq-local(本地全量数据包)
 
 # ktype → 子目录名 / 文件后缀 映射
@@ -937,9 +937,15 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
     if all_dfs:
         combined = pd.concat(all_dfs, ignore_index=True)
         combined = combined.rename(columns={"time_key": "datetime"})
-        combined["datetime"] = pd.to_datetime(combined["datetime"])
+        combined["datetime"] = pd.to_datetime(combined["datetime"]).dt.normalize()
         combined = combined.drop_duplicates(["code", "datetime"]).sort_values(["code", "datetime"]).reset_index(drop=True)
         combined["market"] = combined["code"].apply(lambda c: MARKET_LABEL.get(get_market(c), get_market(c)))
+        _src_api = {"futu": "futu", "stooq-local": "stooq"}.get(api, api)
+        combined["source"] = combined["code"].apply(
+            lambda c: _src_api if get_market(c) == "us" else
+                      "baostock" if get_market(c) == "cn" else "binance"
+        )
+        combined["turnover_amount"] = (combined["close"] * combined["volume"]).round(2)
 
         _kt_name = {"week": "1w", "day": "1d", "60m": "60m"}.get(ktype, ktype)
         _tbl = f"klines_{_kt_name}"
@@ -947,10 +953,13 @@ def run_download(ktype="week", selected_markets=None, api="futu"):
             import duckdb
             _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
             _con = duckdb.connect(_db_path)
+            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
+            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS source VARCHAR")
+            _con.execute(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS turnover_amount DOUBLE")
             _con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM combined")
             _con.execute(f"""
-                INSERT OR REPLACE INTO {_tbl} (code, datetime, open, high, low, close, volume, turnover, market)
-                SELECT code, datetime, open, high, low, close, volume, turnover, market FROM _tmp
+                INSERT OR REPLACE INTO {_tbl} (code, datetime, open, high, low, close, volume, turnover, market, ktype, source, turnover_amount, created_at)
+                SELECT code, datetime::DATE, open, high, low, close, volume, turnover, market, '{_kt_name}', source, turnover_amount, CURRENT_TIMESTAMP FROM _tmp
             """)
             _con.close()
             print(f"  {_tbl}: {len(combined)} 行写入")
@@ -1047,6 +1056,21 @@ if __name__ == "__main__":
 
     # 同步板块/行业信息
     plates_map = run_plate_sync(selected_markets=selected_markets)
+    if plates_map:
+        try:
+            import duckdb
+            _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
+            _con = duckdb.connect(_db_path)
+            _con.execute("DELETE FROM plates")
+            for _c, _p in plates_map.items():
+                _con.execute(
+                    'INSERT INTO plates(code, plates) VALUES (?, ?) ON CONFLICT (code) DO UPDATE SET plates = ?',
+                    [_c, _p, _p],
+                )
+            _con.close()
+            print(f"  plates: {len(plates_map)} 只写入")
+        except Exception as e:
+            print(f"  plates 写入失败: {e}")
     _elapsed = time.time() - _all_start
     _min = int(_elapsed // 60)
     _sec = int(_elapsed % 60)

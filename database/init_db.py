@@ -1,12 +1,18 @@
 """
 DuckDB 数据库初始化
 ====================
-通过视图直接查询 parquet 文件，无需导入。
+创建/更新表结构、导入排名数据。
 
 用法:
-    python database/init_db.py                          # 创建视图
-    python database/init_db.py --query "SELECT count(*) FROM klines"
-    python database/init_db.py --list                   # 列出所有视图
+    python database/init_db.py                              # 创建表 + 导入数据
+    python database/init_db.py --reset                       # 清空重建（改列类型/删表时用）
+    python database/init_db.py --query "SELECT * FROM top_stocks"
+    python database/init_db.py --list                        # 列出所有表
+
+说明:
+    新增表/列/注释 → 直接运行 init_db.py，无需 reset
+    修改列类型/删除表 → 需要 --reset（会清空数据）
+    --reset 会自动重建所有 klines、watchlist、top_stocks 等表
 """
 import os
 import glob
@@ -70,18 +76,7 @@ def update_watchlist(con):
 
 
 def create_tables(con):
-    """建表（成交额排名需要实际表，其他用视图）"""
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS turnover_rankings (
-            date            DATE NOT NULL,
-            code            VARCHAR NOT NULL,
-            rank            INTEGER,
-            name            VARCHAR,
-            last_price      DOUBLE,
-            turnover_amt    DOUBLE,
-            market          VARCHAR
-        )
-    """)
+    """建表"""
     con.execute("""
         CREATE TABLE IF NOT EXISTS top_stocks (
             market      VARCHAR,
@@ -118,10 +113,11 @@ def create_tables(con):
 
     # K 线数据表（按周期分表）
     for _kt, _kt_desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
+        con.execute(f"DROP TABLE IF EXISTS klines_{_kt}")
         con.execute(f"""
-            CREATE TABLE IF NOT EXISTS klines_{_kt} (
+            CREATE TABLE klines_{_kt} (
                 code        VARCHAR,
-                datetime    TIMESTAMP,
+                datetime    DATE,
                 open        DOUBLE,
                 high        DOUBLE,
                 low         DOUBLE,
@@ -129,18 +125,100 @@ def create_tables(con):
                 volume      DOUBLE,
                 turnover    DOUBLE,
                 market      VARCHAR,
+                ktype       VARCHAR,
+                source      VARCHAR,
+                turnover_amount DOUBLE,
+                created_at  TIMESTAMP,
                 PRIMARY KEY (code, datetime)
             )
         """)
+        con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
+        con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS source VARCHAR")
+        con.execute(f"ALTER TABLE klines_{_kt} ADD COLUMN IF NOT EXISTS turnover_amount DOUBLE")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.code IS '股票代码'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线时间'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.created_at IS '添加时间(精确到秒)'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.datetime IS 'K线日期'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.open IS '开盘价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.high IS '最高价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.low IS '最低价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.close IS '收盘价'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.volume IS '成交量'")
-        con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover IS '成交额'")
         con.execute(f"COMMENT ON COLUMN klines_{_kt}.market IS '市场: us/cn/cc'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.ktype IS 'K线周期: 1D/1W/60m'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.source IS '数据来源: futu/stooq/baostock/binance'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover IS '成交额(数据源原生)'")
+        con.execute(f"COMMENT ON COLUMN klines_{_kt}.turnover_amount IS '估算成交额(收盘价×成交量)'")
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS plates (
+            code        VARCHAR PRIMARY KEY,
+            stock_name  VARCHAR,
+            market      VARCHAR,
+            plates      VARCHAR
+        )
+    """)
+    con.execute("COMMENT ON COLUMN plates.code IS '股票代码'")
+    con.execute("COMMENT ON COLUMN plates.stock_name IS '股票名称'")
+    con.execute("COMMENT ON COLUMN plates.market IS '市场: us/cn/cc'")
+    con.execute("COMMENT ON COLUMN plates.plates IS '所属板块(逗号分隔)'")
+
+    # 表描述
+    con.execute("COMMENT ON TABLE top_stocks IS '成交额排名标的库'")
+    con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并symbols.csv+top_stocks)'")
+    con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS stooq_local_all_us_stocks (
+            code        VARCHAR,
+            datetime    DATE,
+            open        DOUBLE,
+            high        DOUBLE,
+            low         DOUBLE,
+            close       DOUBLE,
+            volume      DOUBLE,
+            ktype       VARCHAR,
+            type        VARCHAR,
+            market      VARCHAR,
+            turnover_amount DOUBLE,
+            avg_turnover_5d DOUBLE,
+            avg_turnover_10d DOUBLE,
+            avg_turnover_20d DOUBLE,
+            avg_turnover_60d DOUBLE,
+            pct_chg_5d DOUBLE,
+            pct_chg_10d DOUBLE,
+            pct_chg_20d DOUBLE,
+            pct_chg_60d DOUBLE,
+            pct_chg_120d DOUBLE,
+            pct_chg_250d DOUBLE,
+            pct_chg_ytd DOUBLE,
+            PRIMARY KEY (code, datetime)
+        )
+    """)
+    con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS type VARCHAR")
+    con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS market VARCHAR")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.ktype IS 'K线周期: 1D'")
+    con.execute("COMMENT ON TABLE stooq_local_all_us_stocks IS 'Stooq全量美股日线数据'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.turnover_amount IS '估算成交额(收盘价×成交量)'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.type IS '股票类型: stock/etf'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.market IS '市场: us'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_5d IS '5日均成交额'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_10d IS '10日均成交额'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_20d IS '20日均成交额'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.avg_turnover_60d IS '60日均成交额'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_5d IS '5日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_10d IS '10日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_20d IS '20日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_60d IS '60日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_120d IS '120日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_250d IS '250日涨跌幅'")
+    con.execute("COMMENT ON COLUMN stooq_local_all_us_stocks.pct_chg_ytd IS '年初至今涨跌幅'")
+    for _kt, _desc in [("1d", "日线K线数据"), ("1w", "周线K线数据"), ("60m", "60分钟K线数据")]:
+        con.execute(f"COMMENT ON TABLE klines_{_kt} IS '{_desc}'")
+
+    for _kt in ["1d", "1w", "60m"]:
+        con.execute(f"""
+            CREATE OR REPLACE VIEW klines_{_kt}_sorted AS
+            SELECT * FROM klines_{_kt} ORDER BY code, datetime
+        """)
 
     con.execute("""
         CREATE OR REPLACE VIEW top_stocks_all AS
@@ -166,10 +244,6 @@ def import_turnover(con):
             df["date"] = dt
             df["market"] = mkt
             con.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-            con.execute('''
-                INSERT INTO turnover_rankings
-                SELECT date, "代码", "排名", "名称", "最新价", "成交额(亿元)", market FROM _tmp
-            ''')
             con.execute(f"DELETE FROM top_stocks WHERE market = '{mkt}'")
             con.execute('''
                 INSERT INTO top_stocks (market, code, rank, name, price, turnover, date, created_at)
@@ -178,67 +252,48 @@ def import_turnover(con):
 
 
 def create_views(con):
-    """基于 parquet 文件创建视图"""
-
-    # 1. K 线数据
-    _kline_parts = []
-    for ktype_dir, ktype_tag in [("1d", "1D"), ("1w", "1W"), ("60m", "60m")]:
-        pattern = os.path.join(PROJECT_ROOT, "data_uscncc", ktype_dir, "**", "*.parquet")
-        if glob.glob(pattern, recursive=True):
-            view_name = f"v_klines_{ktype_tag.lower()}"
-            con.execute(f"""
-                CREATE OR REPLACE VIEW {view_name} AS
-                SELECT *, '{ktype_tag}' AS ktype
-                FROM read_parquet('{pattern}', union_by_name=true)
-            """)
-            _kline_parts.append(view_name)
-    if _kline_parts:
-        _union = " UNION ALL BY NAME ".join(f"SELECT * FROM {v}" for v in _kline_parts)
-        con.execute(f"CREATE OR REPLACE VIEW klines AS {_union}")
-        print(f"  klines ← {len(_kline_parts)} 个目录")
-
-    # 2. 回测汇总
-    for ktype_dir, ktype_tag in [("1w", "1W"), ("1d", "1D")]:
-        files = sorted(glob.glob(os.path.join(PROJECT_ROOT, "results_uscncc", ktype_dir, "*_回测汇总.parquet")))
-        if files:
-            con.execute(f"""
-                CREATE OR REPLACE VIEW v_backtest_{ktype_tag.lower()} AS
-                SELECT *, '{ktype_tag}' AS ktype FROM read_parquet('{files[-1]}')
-            """)
-
-    # 3. 策略评分矩阵
-    for ktype_dir, ktype_tag in [("1w", "1W"), ("1d", "1D")]:
-        files = sorted(glob.glob(os.path.join(PROJECT_ROOT, "results_uscncc", ktype_dir, "*_策略评分明细.parquet")))
-        if files:
-            con.execute(f"""
-                CREATE OR REPLACE VIEW v_scores_{ktype_tag.lower()} AS
-                SELECT *, '{ktype_tag}' AS ktype FROM read_parquet('{files[-1]}')
-            """)
-
-    # 4. 参数稳定性
-    for ktype_dir, ktype_tag in [("1w", "1W"), ("1d", "1D")]:
-        files = sorted(glob.glob(os.path.join(PROJECT_ROOT, "results_uscncc", ktype_dir, "*_全窗口参数稳定性分析.parquet")))
-        if files:
-            con.execute(f"""
-                CREATE OR REPLACE VIEW v_stability_{ktype_tag.lower()} AS
-                SELECT *, '{ktype_tag}' AS ktype FROM read_parquet('{files[-1]}')
-            """)
-
-    # 5. 交易明细
-    trades_pat = os.path.join(PROJECT_ROOT, "results_uscncc", "**", "*_trades.parquet")
-    if glob.glob(trades_pat, recursive=True):
-        con.execute(f"""
-            CREATE OR REPLACE VIEW trades AS
-            SELECT * FROM read_parquet('{trades_pat}', union_by_name=true)
-        """)
-        print("  trades ← parquet 文件")
+    """基于 stooq_local_all_us_stocks 创建分析视图"""
+    con.execute("""
+        CREATE OR REPLACE VIEW v_stooq_all_sorted AS
+        SELECT * FROM stooq_local_all_us_stocks
+        ORDER BY code, datetime
+    """)
+    con.execute("""
+        CREATE OR REPLACE VIEW top_turnover_200 AS
+        SELECT code, datetime, open, high, low, close, volume, ktype, type, market,
+               turnover_amount, avg_turnover_60d, pct_chg_60d,
+               CONCAT(ROUND(pct_chg_60d * 100, 2), '%') AS pct_chg_60d_display
+        FROM stooq_local_all_us_stocks
+        WHERE datetime = (SELECT MAX(datetime) FROM stooq_local_all_us_stocks)
+          AND avg_turnover_60d IS NOT NULL
+        ORDER BY avg_turnover_60d DESC
+        LIMIT 200
+    """)
+    con.execute("""
+        CREATE OR REPLACE VIEW top_gainers_200 AS
+        SELECT code, datetime, open, high, low, close, volume, ktype, type, market,
+               turnover_amount, avg_turnover_60d, pct_chg_60d,
+               CONCAT(ROUND(pct_chg_60d * 100, 2), '%') AS pct_chg_60d_display
+        FROM stooq_local_all_us_stocks
+        WHERE datetime = (SELECT MAX(datetime) FROM stooq_local_all_us_stocks)
+          AND pct_chg_60d IS NOT NULL
+        ORDER BY pct_chg_60d DESC
+        LIMIT 200
+    """)
+    # 视图中文描述
+    con.execute("COMMENT ON VIEW v_stooq_all_sorted IS 'Stooq全量美股(按代码日期排序)'")
+    con.execute("COMMENT ON VIEW top_turnover_200 IS '最新日期60日均成交额TOP200'")
+    con.execute("COMMENT ON VIEW top_gainers_200 IS '最新日期60日涨跌幅TOP200'")
+    con.execute("COMMENT ON VIEW top_stocks_all IS '成交额排名(按市场排名日期排序)'")
+    for _kt, _desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
+        con.execute(f"COMMENT ON VIEW klines_{_kt}_sorted IS '{_desc}K线数据(按代码日期排序)'")
 
 
 def list_all(con):
     """列出所有表和视图"""
-    names = ["watchlist", "top_stocks", "turnover_rankings", "klines", "trades",
-             "v_backtest_1w", "v_backtest_1d", "v_scores_1w", "v_scores_1d",
-             "v_stability_1w", "v_stability_1d"]
+    names = ["watchlist", "top_stocks",
+             "klines_1d", "klines_1w", "klines_60m",
+             "v_klines_1d", "v_klines_1w", "v_klines_60m"]
     for name in names:
         _type = "T" if "rankings" in name else "V"
         try:
@@ -271,11 +326,14 @@ if __name__ == "__main__":
     conn = duckdb.connect(DB_PATH)
 
     if args.reset:
-        for tbl in ["watchlist", "top_stocks", "turnover_rankings", "klines", "trades",
+        for tbl in ["watchlist", "top_stocks", "turnover_rankings", "stooq_local_all_us_stocks",
+                     "klines_1d", "klines_1w", "klines_60m",
+                     "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
                      "v_backtest_1w", "v_backtest_1d",
                      "v_scores_1w", "v_scores_1d",
-                     "v_stability_1w", "v_stability_1d"]:
+                     "v_stability_1w", "v_stability_1d",
+                     "klines", "trades"]:
             try: conn.execute(f'DROP TABLE IF EXISTS "{tbl}"')
             except: pass
             try: conn.execute(f'DROP VIEW IF EXISTS "{tbl}"')
