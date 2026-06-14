@@ -82,6 +82,7 @@ def main():
                     'us' AS market,
                     "<CLOSE>"::DOUBLE * "<VOL>"::DOUBLE AS turnover_amount
                 FROM read_csv_auto('{pattern}', header=true, union_by_name=true)
+                ORDER BY code, datetime
             """)
             rows = con.execute("SELECT count(*) FROM stooq_local_all_us_stocks").fetchone()[0] - total_rows
             total_rows += rows
@@ -89,6 +90,17 @@ def main():
         except Exception as e:
             errors += 1
             print(f"失败: {e}")
+
+    # 全局排序（按 code, datetime）
+    print("全局排序...", end=" ", flush=True)
+    con.execute("""
+        CREATE TABLE stooq_tmp AS
+        SELECT * FROM stooq_local_all_us_stocks
+        ORDER BY code, datetime
+    """)
+    con.execute("DROP TABLE stooq_local_all_us_stocks")
+    con.execute("ALTER TABLE stooq_tmp RENAME TO stooq_local_all_us_stocks")
+    print("完成")
 
     # 计算成交额均值 + 涨跌幅
     print("计算技术指标...", end=" ", flush=True)
