@@ -258,17 +258,65 @@ def create_views(con):
         SELECT * FROM stooq_local_all_us_stocks
         ORDER BY code, datetime
     """)
+    for _drop in ["DROP VIEW IF EXISTS top_turnover_stock_rank", "DROP TABLE IF EXISTS top_turnover_stock_rank"]:
+        try: con.execute(_drop)
+        except: pass
     con.execute("""
-        CREATE OR REPLACE VIEW top_turnover_200 AS
-        SELECT code, datetime, open, high, low, close, volume, ktype, type, market,
+        CREATE OR REPLACE TABLE top_turnover_stock_rank AS
+        SELECT rank,
+               prev_rank - rank AS rank_change,
+               CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) AS rank_change_pct,
+               CONCAT(ROUND(CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) * 100, 2), '%') AS rank_change_pct_display,
+               code, datetime, open, high, low, close, volume, ktype, type, market,
                turnover_amount, avg_turnover_60d, pct_chg_60d,
                CONCAT(ROUND(pct_chg_60d * 100, 2), '%') AS pct_chg_60d_display
-        FROM stooq_local_all_us_stocks
-        WHERE datetime = (SELECT MAX(datetime) FROM stooq_local_all_us_stocks)
-          AND avg_turnover_60d IS NOT NULL
-        ORDER BY avg_turnover_60d DESC
-        LIMIT 200
+        FROM (
+            SELECT rank,
+                   LAG(rank) OVER (PARTITION BY code ORDER BY datetime) AS prev_rank,
+                   code, datetime, open, high, low, close, volume, ktype, type, market,
+                   turnover_amount, avg_turnover_60d, pct_chg_60d
+            FROM (
+                SELECT ROW_NUMBER() OVER (PARTITION BY datetime ORDER BY avg_turnover_60d DESC) AS rank,
+                       code, datetime, open, high, low, close, volume, ktype, type, market,
+                       turnover_amount, avg_turnover_60d, pct_chg_60d
+                FROM stooq_local_all_us_stocks
+                WHERE (type IS NULL OR type = 'stock')
+                  AND avg_turnover_60d IS NOT NULL
+            ) r
+        ) t
+        ORDER BY datetime DESC, avg_turnover_60d DESC
     """)
+    con.execute("COMMENT ON TABLE top_turnover_stock_rank IS '60日均成交额排名变动(stock): 全历史每日rank + rank_change + rank_change_pct'")
+
+    for _drop in ["DROP VIEW IF EXISTS top_turnover_etf_rank", "DROP TABLE IF EXISTS top_turnover_etf_rank"]:
+        try: con.execute(_drop)
+        except: pass
+    con.execute("""
+        CREATE OR REPLACE TABLE top_turnover_etf_rank AS
+        SELECT rank,
+               prev_rank - rank AS rank_change,
+               CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) AS rank_change_pct,
+               CONCAT(ROUND(CAST(prev_rank - rank AS DOUBLE) / NULLIF(prev_rank, 0) * 100, 2), '%') AS rank_change_pct_display,
+               code, datetime, open, high, low, close, volume, ktype, type, market,
+               turnover_amount, avg_turnover_60d, pct_chg_60d,
+               CONCAT(ROUND(pct_chg_60d * 100, 2), '%') AS pct_chg_60d_display
+        FROM (
+            SELECT rank,
+                   LAG(rank) OVER (PARTITION BY code ORDER BY datetime) AS prev_rank,
+                   code, datetime, open, high, low, close, volume, ktype, type, market,
+                   turnover_amount, avg_turnover_60d, pct_chg_60d
+            FROM (
+                SELECT ROW_NUMBER() OVER (PARTITION BY datetime ORDER BY avg_turnover_60d DESC) AS rank,
+                       code, datetime, open, high, low, close, volume, ktype, type, market,
+                       turnover_amount, avg_turnover_60d, pct_chg_60d
+                FROM stooq_local_all_us_stocks
+                WHERE type = 'etf'
+                  AND avg_turnover_60d IS NOT NULL
+            ) r
+        ) t
+        ORDER BY datetime DESC, avg_turnover_60d DESC
+    """)
+    con.execute("COMMENT ON TABLE top_turnover_etf_rank IS '60日均成交额排名变动(etf): 全历史每日rank + rank_change + rank_change_pct'")
     con.execute("""
         CREATE OR REPLACE VIEW top_gainers_200 AS
         SELECT code, datetime, open, high, low, close, volume, ktype, type, market,
@@ -282,7 +330,6 @@ def create_views(con):
     """)
     # 视图中文描述
     con.execute("COMMENT ON VIEW v_stooq_all_sorted IS 'Stooq全量美股(按代码日期排序)'")
-    con.execute("COMMENT ON VIEW top_turnover_200 IS '最新日期60日均成交额TOP200'")
     con.execute("COMMENT ON VIEW top_gainers_200 IS '最新日期60日涨跌幅TOP200'")
     con.execute("COMMENT ON VIEW top_stocks_all IS '成交额排名(按市场排名日期排序)'")
     for _kt, _desc in [("1d", "日线"), ("1w", "周线"), ("60m", "60分钟")]:
