@@ -488,8 +488,8 @@ def run_plate_sync(selected_markets=None):
 
     symbols = _load_symbols_from_watchlist(api="all")
     if symbols is None:
-        symbols = load_symbols(SYMBOL_FILE)
-    symbols = [c for c in symbols if get_market(c) in selected_markets]
+        print("  watchlist 表不存在，跳过板块同步")
+        return {}
     if not symbols:
         print("无可同步板块信息的标的，跳过")
         return {}
@@ -976,10 +976,11 @@ def run_download(ktype="week", selected_markets=None):
 
     init_symbols_file(SYMBOL_FILE)
 
-    # 从 watchlist 表加载股票（不再按 api 过滤）
+    # 从 watchlist 表加载股票
     _symbols = _load_symbols_from_watchlist(api="all")
     if _symbols is None:
-        _symbols = load_symbols(SYMBOL_FILE)
+        print("  watchlist 表不存在，请先运行同步流程")
+        sys.exit(1)
 
     symbols = [c for c in _symbols if get_market(c) in selected_markets]
     if not symbols:
