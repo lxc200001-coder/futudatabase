@@ -149,6 +149,7 @@ def create_tables(con):
     con.execute("COMMENT ON COLUMN plates.code IS '股票代码'")
     con.execute("COMMENT ON COLUMN plates.stock_name IS '股票名称'")
     con.execute("COMMENT ON COLUMN plates.market IS '市场: 美股/A股'")
+    con.execute("ALTER TABLE plates ADD COLUMN IF NOT EXISTS created_at TIMESTAMP")
     con.execute("COMMENT ON COLUMN plates.plates IS '所属板块(逗号分隔)'")
     con.execute("COMMENT ON COLUMN plates.created_at IS '入库时间'")
 
@@ -327,7 +328,7 @@ if __name__ == "__main__":
     conn = duckdb.connect(DB_PATH)
 
     if args.reset:
-        for tbl in ["watchlist", "turnover_rankings", "stooq_local_all_us_stocks",
+        for tbl in ["watchlist", "plates", "turnover_rankings", "stooq_local_all_us_stocks",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
