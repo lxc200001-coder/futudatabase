@@ -47,22 +47,24 @@ for ktype_dir in ["1w", "1d"]:
 REQUEST_LIMIT = 60
 WINDOW_SECONDS = 30
 
-request_times = deque()
+request_times = deque()  # 默认全局队列（兼容旧调用）
 
 
-def wait_rate_limit():
+def wait_rate_limit(queue=None):
+    if queue is None:
+        queue = request_times
     now = time.time()
-    while request_times and now - request_times[0] > WINDOW_SECONDS:
-        request_times.popleft()
+    while queue and now - queue[0] > WINDOW_SECONDS:
+        queue.popleft()
 
-    if len(request_times) >= REQUEST_LIMIT:
-        sleep_time = WINDOW_SECONDS - (now - request_times[0]) + 0.5
+    if len(queue) >= REQUEST_LIMIT:
+        sleep_time = WINDOW_SECONDS - (now - queue[0]) + 0.5
         sleep_time = max(0, sleep_time)
 
         for _ in tqdm(range(int(sleep_time), 0, -1), desc="  限频倒计时", unit="s", leave=False):
             time.sleep(1)
 
-    request_times.append(time.time())
+    queue.append(time.time())
 
 
 # =========================================================
@@ -110,7 +112,7 @@ def get_start_date_by_ktype(ktype):
 # =========================================================
 # 下载数据（富途 US）
 # =========================================================
-def fetch_futu_data(code, start_str, end_str, quote_ctx, ktype="week"):
+def fetch_futu_data(code, start_str, end_str, quote_ctx, ktype="week", rate_limit_queue=None):
     ktype_map = {"week": KLType.K_WEEK, "day": KLType.K_DAY}
     futu_ktype = ktype_map.get(ktype, KLType.K_WEEK)
     all_data = []
@@ -119,9 +121,9 @@ def fetch_futu_data(code, start_str, end_str, quote_ctx, ktype="week"):
     retry = 0
 
     while True:
-        # 仅首页请求限频
+        # 仅首页请求限频（使用独立队列）
         if page_req_key is None:
-            wait_rate_limit()
+            wait_rate_limit(rate_limit_queue)
 
         ret, data, page_req_key = quote_ctx.request_history_kline(
             code=code, start=start_str, end=end_str,
@@ -981,6 +983,8 @@ def run_download(ktype="week", selected_markets=None):
     _api_of = {}
     futu_ctx = None
     moomoo_ctx = None
+    futu_rl = deque()    # 独立限速队列
+    moomoo_rl = deque()
     if us_codes:
         _, futu_remain, futu_detail = _get_quota_info("127.0.0.1", 11111)
         _, moomoo_remain, moomoo_detail = _get_quota_info(MOOMOO_HOST, MOOMOO_PORT)
@@ -1017,7 +1021,8 @@ def run_download(ktype="week", selected_markets=None):
             _use_api = _api_of.get(code, "stooq-local")
             if _use_api in ("futu", "moomoo"):
                 _ctx = futu_ctx if _use_api == "futu" else moomoo_ctx
-                df = fetch_futu_data(code, start_str, end_str, _ctx, ktype) if _ctx else pd.DataFrame()
+                _rl = futu_rl if _use_api == "futu" else moomoo_rl
+                df = fetch_futu_data(code, start_str, end_str, _ctx, ktype, rate_limit_queue=_rl) if _ctx else pd.DataFrame()
                 _src_map[code] = _use_api
             else:
                 df = fetch_stooq_local_data(code, start_str, end_str, ktype)
