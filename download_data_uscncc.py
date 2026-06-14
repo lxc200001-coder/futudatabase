@@ -1020,7 +1020,6 @@ def run_download(ktype="week", selected_markets=None):
                 df = fetch_futu_data(code, start_str, end_str, _ctx, ktype) if _ctx else pd.DataFrame()
                 _src_map[code] = _use_api
             else:
-                start_str = "2000-01-03"
                 df = fetch_stooq_local_data(code, start_str, end_str, ktype)
                 _src_map[code] = "stooq"
         else:
