@@ -1102,9 +1102,9 @@ if __name__ == "__main__":
                         help="K线周期: week(周K) / day(日K) / all(全部) / week,day(逗号拼接, 默认: week,day)")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--top-turnover", type=int, nargs="?", const=100, default=0,
+    parser.add_argument("--top-turnover", type=int, nargs="?", const=100, default=100,
                         help="获取成交额前 N 的美股列表 (默认 N=100, 设为0跳过)")
-    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=100, default=0,
+    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=100, default=100,
                         help="获取成交额前 N 的沪深主板股票列表 (默认 N=100, 设为0跳过)")
     parser.add_argument("--only-turnover", action="store_true",
                         help="只获取成交额排名和 Stooq 导入，不下载K线数据")
