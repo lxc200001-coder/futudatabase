@@ -1107,9 +1107,7 @@ if __name__ == "__main__":
     parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=100, default=100,
                         help="获取成交额前 N 的沪深主板股票列表 (默认 N=100, 设为0跳过)")
     parser.add_argument("--only-turnover", action="store_true",
-                        help="只获取成交额排名和 Stooq 导入，不下载K线数据")
-    parser.add_argument("--import-stooq", action="store_true",
-                        help="导入 Stooq 全量美股到 DuckDB（含排名变动表生成）")
+                        help="只执行 Stooq 导入和成交额排名，不下载K线数据")
     parser.add_argument("--skip-week", action="store_true", help="跳过周线下载（已弃用，用 --ktype 替代）")
     parser.add_argument("--skip-day", action="store_true", help="跳过日线下载（已弃用，用 --ktype 替代）")
     args = parser.parse_args()
@@ -1120,8 +1118,8 @@ if __name__ == "__main__":
     else:
         selected_markets = [m.strip().lower() for m in args.market.split(",")]
 
-    # ── 1. Stooq 导入（仅 US 市场）────────────────────────────
-    if args.import_stooq and "us" in selected_markets:
+    # ── 1. Stooq 导入（仅 US 市场，每次自动运行）─────────────
+    if "us" in selected_markets:
         import_stooq_all_to_db()
 
     # ── 2. 成交额排名 + watchlist 同步 ─────────────────────────
