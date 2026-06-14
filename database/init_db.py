@@ -172,7 +172,8 @@ def create_tables(con):
             avg_turnover_60d DOUBLE,
             pct_chg_60d DOUBLE,
             source      VARCHAR,
-            created_at  TIMESTAMP
+            created_at  TIMESTAMP,
+            PRIMARY KEY (code, datetime)
         )
     """)
     con.execute("ALTER TABLE stooq_local_all_us_stocks ADD COLUMN IF NOT EXISTS type VARCHAR")

@@ -569,7 +569,8 @@ def import_stooq_all_to_db():
             avg_turnover_60d DOUBLE,
             pct_chg_60d DOUBLE,
             source      VARCHAR,
-            created_at  TIMESTAMP
+            created_at  TIMESTAMP,
+            PRIMARY KEY (code, datetime)
         )
     """)
     _total_rows = 0
