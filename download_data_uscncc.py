@@ -925,26 +925,26 @@ def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None, selected_
             for _c in cn_realtime_codes:
                 _sources.setdefault(_c, set()).add("实时成交额排名")
 
-        # 2. 确定市场
+        # 2. 确定市场（中文）
         _market_of = {}
+        _mkt_order = {}
         for _c in _sources:
             if _c.startswith("CC."):
-                _market_of[_c] = "cc"
+                _market_of[_c] = "加密货币"; _mkt_order[_c] = 1
             elif _c.startswith(("SH.", "SZ.")):
-                _market_of[_c] = "cn"
+                _market_of[_c] = "A股"; _mkt_order[_c] = 2
             elif _c.startswith("US."):
-                _market_of[_c] = "us"
+                _market_of[_c] = "美股"; _mkt_order[_c] = 0
 
-        # 3. 按市场排序写入（us → cc → cn）
-        _mkt_order = {"us": 0, "cc": 1, "cn": 2}
+        # 3. 按市场排序写入（美股 → 加密货币 → A股）
         _con.execute('DELETE FROM watchlist')
-        for _c in sorted(_sources.keys(), key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
+        for _c in sorted(_sources.keys(), key=lambda c: _mkt_order.get(c, 9)):
             _m = _market_of.get(_c)
             if not _m:
                 continue
             _con.execute(
-                'INSERT INTO watchlist(code, market, source, created_at) VALUES (?, ?, ?, ?)',
-                [_c, _m, ",".join(sorted(_sources[_c])), datetime.now()],
+                'INSERT INTO watchlist(code, stock_name, market, source, created_at) VALUES (?, ?, ?, ?, ?)',
+                [_c, "", _m, ",".join(sorted(_sources[_c])), datetime.now()],
             )
         _con.close()
         print(f"  watchlist 已同步: {len(_sources)} 只")
@@ -968,11 +968,11 @@ def _load_symbols_from_watchlist(api="all"):
             _us_filter = "AND source LIKE '%手动添加%'"
         _rows = _con.execute(f"""
             SELECT DISTINCT code FROM watchlist
-            WHERE market = 'us' {_us_filter}
+            WHERE market = '美股' {_us_filter}
             UNION ALL
-            SELECT DISTINCT code FROM watchlist WHERE market = 'cn'
+            SELECT DISTINCT code FROM watchlist WHERE market = 'A股'
             UNION ALL
-            SELECT DISTINCT code FROM watchlist WHERE market = 'cc'
+            SELECT DISTINCT code FROM watchlist WHERE market = '加密货币'
         """).fetchall()
         _con.close()
         _codes = [str(r[0]) for r in _rows]
@@ -1210,11 +1210,12 @@ if __name__ == "__main__":
             _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
             _con = duckdb.connect(_db_path)
             _con.execute("DELETE FROM plates")
+            _now = datetime.now()
             for _c, _info in plates_data.items():
                 _con.execute(
-                    'INSERT INTO plates(code, stock_name, market, plates) VALUES (?, ?, ?, ?) ON CONFLICT (code) DO UPDATE SET stock_name = ?, market = ?, plates = ?',
-                    [_c, _info.get("stock_name", ""), _info.get("market", ""), _info.get("plates", ""),
-                     _info.get("stock_name", ""), _info.get("market", ""), _info.get("plates", "")],
+                    'INSERT INTO plates(code, stock_name, market, plates, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (code) DO UPDATE SET stock_name = ?, market = ?, plates = ?, created_at = ?',
+                    [_c, _info.get("stock_name", ""), _info.get("market", ""), _info.get("plates", ""), _now,
+                     _info.get("stock_name", ""), _info.get("market", ""), _info.get("plates", ""), _now],
                 )
             _con.close()
             print(f"  plates: {len(plates_data)} 只写入")

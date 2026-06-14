@@ -59,26 +59,26 @@ def update_watchlist(con):
     except Exception:
         pass
 
-    # 4. 确定市场
+    # 4. 确定市场（中文）
     _market_of = {}
+    _mkt_order = {}
     for code in _sources:
         if code.startswith("CC."):
-            _market_of[code] = "cc"
+            _market_of[code] = "加密货币"; _mkt_order[code] = 1
         elif code.startswith(("SH.", "SZ.")):
-            _market_of[code] = "cn"
+            _market_of[code] = "A股"; _mkt_order[code] = 2
         elif code.startswith("US."):
-            _market_of[code] = "us"
+            _market_of[code] = "美股"; _mkt_order[code] = 0
 
-    # 5. 按市场排序写入（us → cc → cn）
-    _mkt_order = {"us": 0, "cc": 1, "cn": 2}
+    # 5. 按市场排序写入（美股 → 加密货币 → A股）
     con.execute("DELETE FROM watchlist")
-    for code in sorted(_sources.keys(), key=lambda c: (_mkt_order.get(_market_of.get(c, ""), 9), c)):
+    for code in sorted(_sources.keys(), key=lambda c: _mkt_order.get(c, 9)):
         mkt = _market_of.get(code)
         if not mkt:
             continue
         con.execute(
-            'INSERT INTO watchlist(code, market, source, created_at) VALUES (?, ?, ?, ?)',
-            [code, mkt, ",".join(sorted(_sources[code])), datetime.now()],
+            'INSERT INTO watchlist(code, stock_name, market, source, created_at) VALUES (?, ?, ?, ?, ?)',
+            [code, "", mkt, ",".join(sorted(_sources[code])), datetime.now()],
         )
     print(f"  watchlist: {len(_sources)} 只")
 
@@ -89,13 +89,15 @@ def create_tables(con):
     con.execute("""
         CREATE TABLE watchlist (
             code        VARCHAR,
+            stock_name  VARCHAR,
             market      VARCHAR,
             source      VARCHAR,
             created_at  TIMESTAMP
         )
     """)
     con.execute("COMMENT ON COLUMN watchlist.code IS '股票代码'")
-    con.execute("COMMENT ON COLUMN watchlist.market IS '市场: us/cn/cc'")
+    con.execute("COMMENT ON COLUMN watchlist.stock_name IS '股票名称'")
+    con.execute("COMMENT ON COLUMN watchlist.market IS '市场: 美股/A股/加密货币'")
     con.execute("COMMENT ON COLUMN watchlist.source IS '来源: 手动添加/60日成交额排名/ETF成交额排名/实时成交额排名(逗号拼接)'")
     con.execute("COMMENT ON COLUMN watchlist.created_at IS '添加时间(精确到秒)'")
 
@@ -140,13 +142,15 @@ def create_tables(con):
             code        VARCHAR PRIMARY KEY,
             stock_name  VARCHAR,
             market      VARCHAR,
-            plates      VARCHAR
+            plates      VARCHAR,
+            created_at  TIMESTAMP
         )
     """)
     con.execute("COMMENT ON COLUMN plates.code IS '股票代码'")
     con.execute("COMMENT ON COLUMN plates.stock_name IS '股票名称'")
-    con.execute("COMMENT ON COLUMN plates.market IS '市场: us/cn/cc'")
+    con.execute("COMMENT ON COLUMN plates.market IS '市场: 美股/A股'")
     con.execute("COMMENT ON COLUMN plates.plates IS '所属板块(逗号分隔)'")
+    con.execute("COMMENT ON COLUMN plates.created_at IS '入库时间'")
 
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
