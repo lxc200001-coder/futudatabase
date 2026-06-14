@@ -850,12 +850,13 @@ def fetch_cn_top_turnover(limit=100):
     return codes
 
 
-def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None):
+def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None, selected_markets=None):
     """从排名表 + 实时排名结果 + symbols.csv 合并写入 watchlist 表
 
     Args:
         us_realtime_codes: fetch_top_turnover_stocks() 返回的 US 代码列表
         cn_realtime_codes: fetch_cn_top_turnover() 返回的 CN 代码列表
+        selected_markets: 仅导入该列表中的市场（如 ['us', 'cc']），None=全部
     """
     try:
         _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
@@ -864,12 +865,18 @@ def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None):
         # 1. 各来源收集代码
         _sources = {}  # code → set of source strings
 
-        # a. symbols.csv → 手动添加
+        # a. symbols.csv → 手动添加（按 market 过滤）
         _csv_path = os.path.join(os.path.dirname(__file__), "symbols", "symbols.csv")
         if os.path.exists(_csv_path):
             _symbols = pd.read_csv(_csv_path)
             for _, _row in _symbols.iterrows():
                 _c = str(_row["code"]).strip()
+                if selected_markets is not None:
+                    try:
+                        if get_market(_c) not in selected_markets:
+                            continue
+                    except ValueError:
+                        continue
                 _sources.setdefault(_c, set()).add("手动添加")
 
         # b. top_turnover_stock_rank 最新日期 rank ≤ 200
@@ -1140,7 +1147,7 @@ if __name__ == "__main__":
         _us_realtime = fetch_top_turnover_stocks(limit=args.top_turnover) or []
     if args.top_turnover_cn and "cn" in selected_markets:
         _cn_realtime = fetch_cn_top_turnover(limit=args.top_turnover_cn) or []
-    _sync_watchlist_db(us_realtime_codes=_us_realtime, cn_realtime_codes=_cn_realtime)
+    _sync_watchlist_db(us_realtime_codes=_us_realtime, cn_realtime_codes=_cn_realtime, selected_markets=selected_markets)
 
     # --only-turnover：不下载K线数据和板块
     if args.only_turnover:
