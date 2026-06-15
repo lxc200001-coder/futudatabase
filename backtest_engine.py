@@ -29,6 +29,7 @@ FEE_RATE = 0.001
 SLIPPAGE = 0.0
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
+WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
 # Numba 加速：账户状态逐K线计算
@@ -214,9 +215,22 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
     return pd.DataFrame(rows)
 
 
-def run_stock(code, ktype, ma_range, trade_mode, slippage, fee_rate):
-    """对一只股票加载K线，运行所有 MA 参数。"""
-    # 加载一次K线数据
+def generate_windows(df, step_months):
+    """生成累积扩展窗口列表：起点固定，终点按月步长递增。"""
+    dates = pd.to_datetime(df["datetime"])
+    start = pd.Timestamp(WINDOW_START_DATE)
+    end = dates.max()
+    windows = []
+    cur = start + pd.DateOffset(months=step_months)
+    while cur < end:
+        windows.append((start, cur))
+        cur += pd.DateOffset(months=step_months)
+    windows.append((start, cur))
+    return windows
+
+
+def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
+    """对一只股票加载K线，按窗口运行所有 MA 参数。"""
     _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
     con = duckdb.connect(DB_PATH, read_only=True)
     try:
@@ -238,10 +252,18 @@ def run_stock(code, ktype, ma_range, trade_mode, slippage, fee_rate):
             df_k[c] = "" if c in ("code", "stock_name", "market", "ktype", "source") else 0.0
 
     all_dfs = []
-    for ma in ma_range:
-        df = process_stock(df_k, ma, trade_mode, slippage, fee_rate, ktype)
-        if not df.empty:
-            all_dfs.append(df)
+    for ws, we in windows:
+        window_label = f"{ws.date()}~{we.date()}"
+        df_w = df_k[(pd.to_datetime(df_k["datetime"]) >= ws) &
+                    (pd.to_datetime(df_k["datetime"]) < we)]
+        if df_w.empty:
+            continue
+
+        for ma in ma_range:
+            df = process_stock(df_w, ma, trade_mode, slippage, fee_rate, ktype)
+            if not df.empty:
+                df["window_label"] = window_label
+                all_dfs.append(df)
 
     if all_dfs:
         return pd.concat(all_dfs, ignore_index=True)
@@ -252,6 +274,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                  trade_mode="close", slippage=0.0, fee_rate=0.001):
     """主入口：对所有股票运行回测并写入 backtest_stats 表。"""
     ma_range = ma_list if ma_list is not None else list(range(ma_start, ma_end, ma_step))
+
+    # 窗口步长
+    _step_map = {"1w": 12, "1d": 6}
+    step_months = _step_map.get(ktype, 12)
 
     # 获取股票列表
     con = duckdb.connect(DB_PATH, read_only=True)
@@ -264,14 +290,27 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         print("  watchlist 为空")
         return
 
+    # 用第一只股票生成窗口列表
+    _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
+    con2 = duckdb.connect(DB_PATH, read_only=True)
+    _df_sample = con2.execute(f"SELECT datetime FROM klines_{_kt} WHERE code = ? ORDER BY datetime LIMIT 1", [codes[0]]).fetchdf()
+    _df_sample2 = con2.execute(f"SELECT MAX(datetime) as max_dt FROM klines_{_kt}").fetchdf()
+    con2.close()
+    if _df_sample2.empty or _df_sample2["max_dt"].iloc[0] is None:
+        print("  无K线数据")
+        return
+    _sample_end = _df_sample2["max_dt"].iloc[0]
+    _sample_df = pd.DataFrame({"datetime": [_df_sample["datetime"].iloc[0] if not _df_sample.empty else pd.Timestamp(WINDOW_START_DATE), _sample_end]})
+    windows = generate_windows(_sample_df, step_months)
+
     total_ma = len(ma_range)
     total_rows = 0
     con_w = duckdb.connect(DB_PATH)
 
     for i, code in enumerate(codes, 1):
-        print(f"  [{i}/{len(codes)}] {code} ({total_ma} MA)...", end=" ", flush=True)
+        print(f"  [{i}/{len(codes)}] {code} ({len(windows)}窗×{total_ma}MA)...", end=" ", flush=True)
         t0 = time.time()
-        df = run_stock(code, ktype, ma_range, trade_mode, slippage, fee_rate)
+        df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
         if df.empty:
             print("跳过")
             continue
@@ -284,7 +323,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             con_w.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
             con_w.execute("""
                 INSERT INTO backtest_stats (
-                    code, stock_name, market, ktype, datetime,
+                    code, stock_name, market, ktype, window_label, datetime,
                     open, high, low, close, volume, turnover, turnover_amount, source,
                     ha_close, ma_len, ha_ma_value, trend_direction, signal,
                     trade_action, trade_price, available_cash, trade_shares,
@@ -293,7 +332,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     change_from_initial, change_from_initial_pct, created_at
                 )
                 SELECT
-                    code, stock_name, market, ktype, datetime,
+                    code, stock_name, market, ktype, window_label, datetime,
                     open, high, low, close, volume, turnover, turnover_amount, source,
                     ha_close, ma_len, ha_ma_value, trend_direction, signal,
                     trade_action, trade_price, available_cash, trade_shares,

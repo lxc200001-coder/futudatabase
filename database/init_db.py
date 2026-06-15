@@ -361,6 +361,7 @@ def create_tables(con):
             stock_name              VARCHAR,
             market                  VARCHAR,
             ktype                   VARCHAR,
+            window_label            VARCHAR,
             datetime                TIMESTAMP,
             open                    DOUBLE,
             high                    DOUBLE,
@@ -392,7 +393,7 @@ def create_tables(con):
     """)
     con.execute("COMMENT ON TABLE backtest_stats IS '策略回测统计（逐K线记录）'")
     for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
-        ("ktype","K线周期"),("datetime","K线时间"),("open","开盘价"),("high","最高价"),
+        ("ktype","K线周期"),("window_label","窗口标签"),("datetime","K线时间"),("open","开盘价"),("high","最高价"),
         ("low","最低价"),("close","收盘价"),("volume","成交量"),("turnover","成交额(数据源原生)"),
         ("turnover_amount","估算成交额"),("source","数据来源"),
         ("ha_close","平均K线收盘价"),("ma_len","均线周期"),
