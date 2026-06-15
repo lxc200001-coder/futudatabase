@@ -29,6 +29,8 @@ FEE_RATE = 0.001
 SLIPPAGE = 0.0
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
+DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -272,7 +274,7 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
 
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
-                 trade_mode="close", slippage=0.0, fee_rate=0.001):
+                 trade_mode="close", slippage=0.0, fee_rate=0.001, markets=None):
     """主入口：对所有股票运行回测并写入 backtest_stats 表。"""
     ma_range = ma_list if ma_list is not None else list(range(ma_start, ma_end, ma_step))
 
@@ -280,12 +282,21 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     _step_map = {"1w": 12, "1d": 6}
     step_months = _step_map.get(ktype, 12)
 
-    # 获取股票列表
+    # 获取股票列表（按 markets 过滤）
     con = duckdb.connect(DB_PATH, read_only=True)
     codes = [str(r[0]) for r in con.execute(
         "SELECT DISTINCT code FROM watchlist ORDER BY code"
     ).fetchall()]
     con.close()
+    if markets:
+        _pfx = []
+        for _m in markets.upper().split(","):
+            _m = _m.strip()
+            if _m in ("ALL", "US"): _pfx.append("US.")
+            if _m in ("ALL", "CN"): _pfx.extend(("SH.", "SZ."))
+            if _m in ("ALL", "CC"): _pfx.append("CC.")
+        if _pfx:
+            codes = [c for c in codes if any(c.startswith(p) for p in _pfx)]
 
     if not codes:
         print("  watchlist 为空")
@@ -355,8 +366,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 # =========================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="逐K线策略回测引擎")
-    parser.add_argument("--ktype", default="1w",
-                        help="K线周期: 1w / 1d / 1w,1d / all (默认: 1w)")
+    parser.add_argument("--ktype", default=DEFAULT_KTYPE,
+                        help=f"K线周期: 1w / 1d / 1w,1d / all (默认: {DEFAULT_KTYPE})")
+    parser.add_argument("--market", default=DEFAULT_MARKET,
+                        help=f"市场: US / CN / CC / US,CC / all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--ma-start", type=int, default=2,
                         help="MA起始值 (默认: 2)")
     parser.add_argument("--ma-end", type=int, default=61,
@@ -410,6 +423,7 @@ if __name__ == "__main__":
             trade_mode=args.trade_mode,
             slippage=args.slippage,
             fee_rate=args.fee_rate,
+            markets=args.market,
         )
         run_backtest(
             ktype=_kt,
