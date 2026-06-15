@@ -61,6 +61,8 @@ os.makedirs(TRADE_DIR, exist_ok=True)
 
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
+TRADE_MODE = "close"   # "close" 按信号K线收盘价成交 / "open" 按下根K线开盘价成交
+SLIPPAGE = 0.0         # 滑点（百分比，如 0.001 = 0.1%）
 
 DEFAULT_KTYPE = "week,day"     # 默认ktype: week(周K) / day(日K) / all(两者全部) / week,day(逗号拼接)
 DEFAULT_MARKET = "US,CC"    # 默认market: all / US / CN / CC / US,CC
@@ -158,7 +160,7 @@ WINDOW_START_DATE = "2000-01-03"
 # ---- 命令行参数解析（前置，仅在作为主程序运行时生效）----
 def _setup_ktype(ktype, ma_mode="continuous"):
     """设置backtest_period的全局变量（供 worker 进程调用）。"""
-    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS, MA_MODE
+    global BAR_INTERVAL, MA_LIST, FILE_SUFFIX, TRADING_PERIOD, TRADE_SUBDIR, STEP_MONTHS, MA_MODE, TRADE_MODE, SLIPPAGE
     MA_MODE = ma_mode
     if ktype == "day":
         BAR_INTERVAL = "1D"
@@ -200,8 +202,12 @@ def calc_heikin_ashi(df):
 
 
 @njit
-def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
+def _numba_backtest(close, buy, sell, initial_cash, fee_rate,
+                    slippage=0.0, trade_mode=0, open_arr=None):
     """Numba 加速核心回测：单次遍历计算交易记录和资金曲线。
+
+    trade_mode: 0=按信号K线收盘价成交, 1=按下根K线开盘价成交
+    slippage: 滑点比例（如 0.001 = 0.1%），买入加滑点，卖出减滑点
 
     返回 (trades_arr, equity_arr, n_trades)。
 
@@ -217,7 +223,7 @@ def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
     trades = np.zeros((max_trades, 13))
 
     available_cash = initial_cash
-    realized_cash = initial_cash  # 累计已平仓盈亏（用于资金曲线）
+    realized_cash = initial_cash
     position = 0.0
     entry_price_val = 0.0
     entry_idx = 0
@@ -231,41 +237,50 @@ def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
             equity[i] = equity[i - 1] if i > 0 else initial_cash
             continue
 
+        # ---- 确定成交价 ----
+        if trade_mode == 1 and open_arr is not None and i < n - 1:
+            exec_price = open_arr[i + 1]  # 按下根K线开盘价
+        else:
+            exec_price = p  # 按本根K线收盘价
+        exec_price = max(exec_price, 1e-10)  # 防止零值
+
         # ---- 开仓 ----
         if buy[i] and position == 0:
-            shares = int(available_cash / (p * (1 + fee_rate)))
+            buy_price = exec_price * (1 + slippage)
+            shares = int(available_cash / (buy_price * (1 + fee_rate)))
             if shares > 0:
-                cost = shares * p
+                cost = shares * buy_price
                 fee = cost * fee_rate
                 cash_before_buy = available_cash
                 available_cash -= (cost + fee)
                 position = shares
-                entry_price_val = p
+                entry_price_val = buy_price
                 entry_idx = i
                 trades[trade_count, 8] = cash_before_buy
                 trades[trade_count, 9] = available_cash
 
         # ---- 平仓 ----
         elif sell[i] and position > 0:
-            sell_value = position * p
+            sell_price = exec_price * (1 - slippage)
+            sell_value = position * sell_price
             sell_fee = sell_value * fee_rate
             cash_before_sell = available_cash
             available_cash += (sell_value - sell_fee)
 
             buy_fee = entry_price_val * position * fee_rate
-            pnl = (p - entry_price_val) * position - buy_fee - sell_fee
+            pnl = (sell_price - entry_price_val) * position - buy_fee - sell_fee
 
             trades[trade_count, 0] = entry_price_val
             trades[trade_count, 1] = position
             trades[trade_count, 2] = entry_idx
-            trades[trade_count, 3] = p
+            trades[trade_count, 3] = sell_price
             trades[trade_count, 4] = i
             trades[trade_count, 5] = buy_fee
             trades[trade_count, 6] = sell_fee
             trades[trade_count, 7] = pnl
             trades[trade_count, 10] = cash_before_sell
             trades[trade_count, 11] = available_cash
-            trades[trade_count, 12] = 0  # 正常平仓
+            trades[trade_count, 12] = 0
             trade_count += 1
 
             realized_cash += pnl
@@ -281,25 +296,25 @@ def _numba_backtest(close, buy, sell, initial_cash, fee_rate):
     # 末尾强平
     if position > 0:
         p = close[-1]
-        sell_value = position * p
+        sell_price = p * (1 - slippage)
+        sell_value = position * sell_price
         sell_fee = sell_value * fee_rate
         buy_fee = entry_price_val * position * fee_rate
-        pnl = (p - entry_price_val) * position - buy_fee - sell_fee
+        pnl = (sell_price - entry_price_val) * position - buy_fee - sell_fee
         cash_before_sell = available_cash
         available_cash += (sell_value - sell_fee)
 
         trades[trade_count, 0] = entry_price_val
         trades[trade_count, 1] = position
         trades[trade_count, 2] = entry_idx
-        trades[trade_count, 3] = p
+        trades[trade_count, 3] = sell_price
         trades[trade_count, 4] = n - 1
         trades[trade_count, 5] = buy_fee
         trades[trade_count, 6] = sell_fee
         trades[trade_count, 7] = pnl
-        # cash_before/after_buy 已在开仓时写入 idx 8/9，不覆盖
         trades[trade_count, 10] = cash_before_sell
         trades[trade_count, 11] = available_cash
-        trades[trade_count, 12] = 1  # 强平
+        trades[trade_count, 12] = 1
         trade_count += 1
         realized_cash += pnl
         equity[-1] = max(realized_cash, 1e-6)
@@ -1340,6 +1355,7 @@ def generate_heatmap_dashboard(cache_data):
                         _buy_k = (_ma_diff > 0) & (_ma_diff.shift(1) <= 0)
                         _sell_k = (_ma_diff < 0) & (_ma_diff.shift(1) >= 0)
                         _bt_close = _df_k["close"].values.astype(np.float64)
+                        _bt_open = _df_k["open"].values.astype(np.float64)
                         _bt_buy = _buy_k.values.astype(np.bool_)
                         _bt_sell = _sell_k.values.astype(np.bool_)
                         _bt_datetime = _df_k["datetime"].values
@@ -1379,8 +1395,10 @@ def generate_heatmap_dashboard(cache_data):
                     # 资金曲线 + 交易明细
                     if _lwc_figs and _bt_close is not None:
                         try:
+                            _tm = 1 if TRADE_MODE == "open" else 0
                             _trades_arr, _equity_arr, _n_tr = _numba_backtest(
                                 _bt_close, _bt_buy, _bt_sell, INITIAL_CASH, FEE_RATE,
+                                slippage=SLIPPAGE, trade_mode=_tm, open_arr=_bt_open,
                             )
                             _eq_times = [_c["time"] for _c in _candles]
                             _lwc_figs["equity"] = [
@@ -1476,8 +1494,12 @@ def _build_heatmap_dashboard_html(data_json, timestamp=""):
 # =========================================================
 # 主程序
 # =========================================================
-def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
+def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous",
+                       trade_mode="close", slippage=0.0):
     """Process a single stock. Returns (all_rows, stability_dfs, signal_map)."""
+    global TRADE_MODE, SLIPPAGE
+    TRADE_MODE = trade_mode
+    SLIPPAGE = slippage
     if ktype:
         _setup_ktype(ktype, ma_mode)
     df = _load_data(code)
@@ -1523,6 +1545,7 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
 
         # 每window_label预计算一次（各 MA 共用）
         close_w_arr = df_w["close"].values.astype(np.float64)
+        open_w_arr = df_w["open"].values.astype(np.float64)
         datetime_w_arr = df_w["datetime"].values
 
         for ma in MA_LIST:
@@ -1539,8 +1562,10 @@ def _process_one_stock(code, windows=None, ktype=None, ma_mode="continuous"):
             sell_arr = np.zeros(len(ma_arr), dtype=np.bool_)
             sell_arr[1:] = (dir_arr[1:] == -1) & (dir_arr[:-1] == 1)
 
+            _tm = 1 if TRADE_MODE == "open" else 0
             trades_arr, equity_arr, n_trades = _numba_backtest(
-                close_w_arr, buy_arr, sell_arr, INITIAL_CASH, FEE_RATE
+                close_w_arr, buy_arr, sell_arr, INITIAL_CASH, FEE_RATE,
+                slippage=SLIPPAGE, trade_mode=_tm, open_arr=open_w_arr
             )
 
             trades, _ = _build_trades_from_arrays(
@@ -2158,7 +2183,7 @@ def run_trade():
         _kt = {"1W": "week", "1D": "day"}.get(BAR_INTERVAL, "week")
         _workers = os.cpu_count() - 1
         with concurrent.futures.ProcessPoolExecutor(max_workers=_workers) as executor:
-            future_to_code = {executor.submit(_process_one_stock, code, windows, _kt, MA_MODE): code for code in group}
+            future_to_code = {executor.submit(_process_one_stock, code, windows, _kt, MA_MODE, TRADE_MODE, SLIPPAGE): code for code in group}
             with tqdm(total=len(group), desc=f"{mkt.upper()}回测", unit="stock") as pbar:
                     for future in concurrent.futures.as_completed(future_to_code):
                         code = future_to_code[future]
@@ -2486,12 +2511,18 @@ if __name__ == "__main__":
                         help=f"market: US/CN/CC/US,CN/all (默认: {DEFAULT_MARKET})")
     parser.add_argument("--ma-mode", choices=["continuous", "jump"], default=MA_MODE,
                         help="MA序列类型: continuous=连续回测, jump=跳跃回测(日线step=2,周线强制连续)")
+    parser.add_argument("--trade-mode", choices=["close", "open"], default=TRADE_MODE,
+                        help="成交方式: close=信号K线收盘价成交, open=下根K线开盘价成交 (默认: close)")
+    parser.add_argument("--slippage", type=float, default=SLIPPAGE,
+                        help=f"滑点比例 (默认 {SLIPPAGE}, 如 0.001 = 0.1%%)")
     parser.add_argument("--save-cache", action="store_true",
                         help="回测完成后保存缓存到文件，下次可用 --from-cache 跳过回测直接生成看板")
     parser.add_argument("--from-cache", type=str, nargs="?", const="latest", default=None,
                         help="从缓存文件加载数据，跳过回测直接生成看板。指定路径或 latest（自动取最新）")
     _CLI_ARGS = parser.parse_args()
     MA_MODE = _CLI_ARGS.ma_mode
+    TRADE_MODE = _CLI_ARGS.trade_mode
+    SLIPPAGE = _CLI_ARGS.slippage
 
     # 解析 ktype 列表（支持逗号拼接）
     _KT_MAP = {"day": "日K", "week": "周K", "all": "全部"}
