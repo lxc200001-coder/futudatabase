@@ -27,7 +27,8 @@ DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 SLIPPAGE = 0.0
-TRADE_MODE = "close"  # close / open
+TRADE_MODE = "close"   # close / open
+MA_MODE = "continuous" # continuous / jump
 
 # =========================================================
 # Numba 加速：账户状态逐K线计算
@@ -334,10 +335,16 @@ if __name__ == "__main__":
                         help="佣金比例 (默认 0.001)")
     args = parser.parse_args()
 
+    # 应用前置配置项
+    MA_MODE = args.ma_mode
+    TRADE_MODE = args.trade_mode
+    SLIPPAGE = args.slippage
+    FEE_RATE = args.fee_rate
+
     # 生成 MA 序列（沿用 backtest_uscncc.py 逻辑）
     _ma_map = {
-        "1w": list(range(2, 61)),        # 周线: 2..60 step=1
-        "1d": list(range(2, 181)),       # 日线 continuous: 2..180 step=1
+        "1w": list(range(2, 61)),                          # 周线: 2..60 (固定 step=1)
+        "1d": list(range(2, 181, 2 if MA_MODE == "jump" else 1)),  # 日线
     }
     if args.ma_mode == "jump":
         _ma_map["1d"] = list(range(2, 181, 2))  # 日线 jump: 2..180 step=2
