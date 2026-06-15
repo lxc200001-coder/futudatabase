@@ -216,18 +216,17 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
 
 
 def generate_windows(step_months, end_date=None):
-    """根据步长生成固定窗口列表，数据不足时自动延长最后一窗。"""
+    """根据步长生成固定窗口列表，末窗停在最后一个完整步长边界。"""
     start = pd.Timestamp(WINDOW_START_DATE)
     if end_date is None:
         end_date = pd.Timestamp.now()
+    else:
+        end_date = pd.Timestamp(end_date)
     windows = []
     cur = start + pd.DateOffset(months=step_months)
     while cur <= end_date:
         windows.append((start, cur))
         cur += pd.DateOffset(months=step_months)
-    # 最后一窗自动延长覆盖剩余数据
-    if not windows or windows[-1][1] < end_date:
-        windows.append((start, end_date))
     return windows
 
 
