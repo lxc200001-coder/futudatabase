@@ -339,7 +339,7 @@ if __name__ == "__main__":
         "1w": list(range(2, 61)),        # 周线: 2..60 step=1
         "1d": list(range(2, 181)),       # 日线 continuous: 2..180 step=1
     }
-    if hasattr(args, 'ma_mode') and args.ma_mode == "jump":
+    if args.ma_mode == "jump":
         _ma_map["1d"] = list(range(2, 181, 2))  # 日线 jump: 2..180 step=2
 
     # 解析 ktype
