@@ -353,6 +353,61 @@ def create_tables(con):
         ("holding_daily_return","持仓日化收益率")]:
         con.execute(f"COMMENT ON COLUMN backtest_signals.{_c} IS '{_d}'")
 
+    # 6. backtest_stats：策略回测统计（逐K线记录）
+    con.execute("DROP TABLE IF EXISTS backtest_stats")
+    con.execute("""
+        CREATE TABLE backtest_stats (
+            code                    VARCHAR,
+            stock_name              VARCHAR,
+            market                  VARCHAR,
+            ktype                   VARCHAR,
+            datetime                TIMESTAMP,
+            open                    DOUBLE,
+            high                    DOUBLE,
+            low                     DOUBLE,
+            close                   DOUBLE,
+            volume                  DOUBLE,
+            turnover                DOUBLE,
+            turnover_amount         DOUBLE,
+            source                  VARCHAR,
+            ha_close                DOUBLE,
+            ma_len                  INTEGER,
+            ha_ma_value             DOUBLE,
+            trend_direction         INTEGER,
+            signal                  VARCHAR,
+            trade_action            VARCHAR,
+            trade_price             DOUBLE,
+            available_cash          DOUBLE,
+            trade_shares            INTEGER,
+            slippage                DOUBLE,
+            commission              DOUBLE,
+            held_shares             INTEGER,
+            account_value           DOUBLE,
+            account_value_change    DOUBLE,
+            account_value_change_pct DOUBLE,
+            change_from_initial     DOUBLE,
+            change_from_initial_pct DOUBLE,
+            created_at              TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_stats IS '策略回测统计（逐K线记录）'")
+    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
+        ("ktype","K线周期"),("datetime","K线时间"),("open","开盘价"),("high","最高价"),
+        ("low","最低价"),("close","收盘价"),("volume","成交量"),("turnover","成交额(数据源原生)"),
+        ("turnover_amount","估算成交额"),("source","数据来源"),
+        ("ha_close","平均K线收盘价"),("ma_len","均线周期"),
+        ("ha_ma_value","根据平均K线收盘价计算的均线周期值"),
+        ("trend_direction","趋势方向"),("signal","信号"),
+        ("trade_action","交易动作"),("trade_price","交易价格"),
+        ("available_cash","可用现金"),("trade_shares","交易股数"),
+        ("slippage","交易滑点"),("commission","交易佣金"),
+        ("held_shares","持有股数"),("account_value","账户价值"),
+        ("account_value_change","账户价值变动数"),
+        ("account_value_change_pct","账户价值变动比"),
+        ("change_from_initial","自初始账户价值变动数"),
+        ("change_from_initial_pct","自初始账户价值变动比")]:
+        con.execute(f"COMMENT ON COLUMN backtest_stats.{_c} IS '{_d}'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -497,9 +552,13 @@ def list_all(con):
              "klines_1d", "klines_1w",
              "v_klines_1d", "v_klines_1w",
              "backtest_trades", "backtest_summary", "backtest_scores",
-             "backtest_stability", "backtest_signals"]
+             "backtest_stability", "backtest_signals", "backtest_stats"]
     for name in names:
-        _type = "T" if "rankings" in name else "V"
+        try:
+            _type = {"BASE TABLE": "T", "VIEW": "V"}.get(
+                con.execute(f"SELECT table_type FROM information_schema.tables WHERE table_name = '{name}'").fetchone()[0], "?")
+        except Exception:
+            _type = "?"
         try:
             cnt = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
             print(f"  [{_type}] {name}: {cnt}")
@@ -532,7 +591,7 @@ if __name__ == "__main__":
     if args.reset:
         for tbl in ["watchlist", "plates", "turnover_rankings", "stooq_local_all_us_stocks",
                      "backtest_trades", "backtest_summary", "backtest_scores",
-                     "backtest_stability", "backtest_signals",
+                     "backtest_stability", "backtest_signals", "backtest_stats",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
