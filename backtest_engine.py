@@ -215,17 +215,19 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
     return pd.DataFrame(rows)
 
 
-def generate_windows(df, step_months):
-    """生成累积扩展窗口列表：起点固定，终点按月步长递增。"""
-    dates = pd.to_datetime(df["datetime"])
+def generate_windows(step_months, end_date=None):
+    """根据步长生成固定窗口列表，数据不足时自动延长最后一窗。"""
     start = pd.Timestamp(WINDOW_START_DATE)
-    end = dates.max()
+    if end_date is None:
+        end_date = pd.Timestamp.now()
     windows = []
     cur = start + pd.DateOffset(months=step_months)
-    while cur < end:
+    while cur <= end_date:
         windows.append((start, cur))
         cur += pd.DateOffset(months=step_months)
-    windows.append((start, cur))
+    # 最后一窗自动延长覆盖剩余数据
+    if not windows or windows[-1][1] < end_date:
+        windows.append((start, end_date))
     return windows
 
 
@@ -290,21 +292,16 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         print("  watchlist 为空")
         return
 
-    # 用全市场K线的最早和最晚日期生成统一窗口列表
+    # 用全市场K线最大日期生成固定窗口列表
     _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
     con2 = duckdb.connect(DB_PATH, read_only=True)
-    _range = con2.execute(f"""
-        SELECT MIN(datetime) as min_dt, MAX(datetime) as max_dt FROM klines_{_kt}
-    """).fetchdf()
+    _max_dt = con2.execute(f"SELECT MAX(datetime) FROM klines_{_kt}").fetchone()[0]
     con2.close()
-    if _range.empty or _range["max_dt"].iloc[0] is None:
+    if _max_dt is None:
         print("  无K线数据")
         return
-    _sample_df = pd.DataFrame({"datetime": [
-        max(pd.Timestamp(WINDOW_START_DATE), _range["min_dt"].iloc[0]),
-        _range["max_dt"].iloc[0]
-    ]})
-    windows = generate_windows(_sample_df, step_months)
+    _end = pd.Timestamp(_max_dt)
+    windows = generate_windows(step_months, end_date=_end)
 
     total_ma = len(ma_range)
     total_rows = 0
