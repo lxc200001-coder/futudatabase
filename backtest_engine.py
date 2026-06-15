@@ -19,6 +19,7 @@ from datetime import datetime
 import duckdb
 import pandas as pd
 import numpy as np
+from numba import njit
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
@@ -27,6 +28,59 @@ INITIAL_CASH = 10000
 FEE_RATE = 0.001
 SLIPPAGE = 0.0
 TRADE_MODE = "close"  # close / open
+
+# =========================================================
+# Numba 加速：账户状态逐K线计算
+# =========================================================
+
+@njit
+def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, slippage, fee_rate):
+    """@njit 逐K线计算账户状态。
+
+    trade_actions: 0=无, 1=开多, 2=平多
+    trade_prices: 成交价，NaN 表示无交易
+    返回所有账户数组。
+    """
+    available_cash = np.full(n, initial_cash, dtype=np.float64)
+    held_shares = np.zeros(n, dtype=np.int64)
+    trade_shares_arr = np.zeros(n, dtype=np.int64)
+    comm_arr = np.zeros(n, dtype=np.float64)
+    slip_arr = np.zeros(n, dtype=np.float64)
+    account_value = np.zeros(n, dtype=np.float64)
+
+    for i in range(n):
+        if i > 0:
+            available_cash[i] = available_cash[i - 1]
+            held_shares[i] = held_shares[i - 1]
+
+        ta = trade_actions[i]
+        tp = trade_prices[i]
+
+        if ta == 1 and not np.isnan(tp) and tp > 0:  # 开多
+            sh = int(available_cash[i] / (tp * (1 + slippage + fee_rate)))
+            if sh > 0:
+                sc = sh * tp * slippage
+                cm = sh * tp * fee_rate
+                slip_arr[i] = sc
+                comm_arr[i] = cm
+                available_cash[i] -= sh * tp + sc + cm
+                held_shares[i] += sh
+                trade_shares_arr[i] = sh
+
+        elif ta == 2 and not np.isnan(tp) and held_shares[i] > 0:  # 平多
+            sh = held_shares[i]
+            sc = sh * tp * slippage
+            cm = sh * tp * fee_rate
+            slip_arr[i] = sc
+            comm_arr[i] = cm
+            available_cash[i] += sh * tp - sc - cm
+            held_shares[i] = 0
+            trade_shares_arr[i] = sh
+
+        account_value[i] = available_cash[i] + held_shares[i] * closes[i]
+
+    return available_cash, held_shares, trade_shares_arr, comm_arr, slip_arr, account_value
+
 
 # =========================================================
 # 核心计算
@@ -44,8 +98,8 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
     # ── ha_close ──
     ha_close = (df["open"].values + df["high"].values + df["low"].values + closes) / 4.0
 
-    # ── ha_ma_value ── (手算rolling避免pandas开销)
-    ha_ma_val = np.full(n, np.nan, dtype=float)
+    # ── ha_ma_value ── (手算 rolling 避免 pandas 开销)
+    ha_ma_val = np.full(n, np.nan, dtype=np.float64)
     for i in range(ma_len - 1, n):
         ha_ma_val[i] = ha_close[i - ma_len + 1:i + 1].mean()
 
@@ -65,82 +119,60 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             signal[i] = "卖出"
         elif direction[i] == "空头" and direction[i - 1] == "空头":
             signal[i] = "等待"
-    # 第一根K线
     if n > 0:
         signal[0] = "等待"
 
-    # ── trade_action / trade_price ──
-    trade_action = np.full(n, None, dtype=object)
-    trade_price = np.full(n, np.nan, dtype=float)
+    # ── trade_action / trade_price (编码为 int/float 供 numba 使用) ──
+    trade_actions = np.zeros(n, dtype=np.int64)   # 0=无, 1=开多, 2=平多
+    trade_prices = np.full(n, np.nan, dtype=np.float64)
 
     if trade_mode == "close":
         for i in range(n):
             if signal[i] == "买入":
-                trade_action[i] = "开多"
-                trade_price[i] = closes[i]
+                trade_actions[i] = 1
+                trade_prices[i] = closes[i]
             elif signal[i] == "卖出":
-                trade_action[i] = "平多"
-                trade_price[i] = closes[i]
+                trade_actions[i] = 2
+                trade_prices[i] = closes[i]
     else:  # open
+        opens_arr = df["open"].values.astype(np.float64)
         for i in range(1, n):
             if signal[i - 1] == "买入":
-                trade_action[i] = "开多"
-                trade_price[i] = float(df["open"].iloc[i])
+                trade_actions[i] = 1
+                trade_prices[i] = opens_arr[i]
             elif signal[i - 1] == "卖出":
-                trade_action[i] = "平多"
-                trade_price[i] = float(df["open"].iloc[i])
+                trade_actions[i] = 2
+                trade_prices[i] = opens_arr[i]
 
-    # ── 账户状态逐K线计算 ──
-    available_cash_arr = np.full(n, INITIAL_CASH, dtype=float)
-    held_shares_arr = np.zeros(n, dtype=int)
-    trade_shares_arr = np.zeros(n, dtype=int)
-    commission_arr = np.zeros(n, dtype=float)
-    slippage_arr = np.zeros(n, dtype=float)
-    account_value_arr = np.zeros(n, dtype=float)
+    # ── @njit 账户状态计算 ──
+    (available_cash_arr, held_shares_arr, trade_shares_arr,
+     commission_arr, slippage_arr, account_value_arr) = _numba_account_loop(
+        closes, trade_actions, trade_prices, n, INITIAL_CASH, slippage, fee_rate
+    )
 
+    # ── 变动指标（numpy 向量化） ──
+    acc_change = np.zeros(n, dtype=np.float64)
+    acc_change_pct = np.zeros(n, dtype=np.float64)
+    acc_change[1:] = account_value_arr[1:] - account_value_arr[:-1]
+    acc_change_pct[1:] = np.divide(acc_change[1:], account_value_arr[:-1],
+                                   out=np.zeros_like(acc_change[1:]),
+                                   where=account_value_arr[:-1] != 0)
+
+    change_init = account_value_arr - INITIAL_CASH
+    change_init_pct = np.divide(change_init, INITIAL_CASH,
+                                out=np.zeros_like(change_init),
+                                where=INITIAL_CASH != 0)
+
+    # ── 构建结果（从 int trade_actions 恢复中文字段） ──
+    ta_labels = np.full(n, None, dtype=object)
+    tp_vals = np.full(n, None, dtype=object)
     for i in range(n):
-        if i > 0:
-            available_cash_arr[i] = available_cash_arr[i - 1]
-            held_shares_arr[i] = held_shares_arr[i - 1]
-
-        ta = trade_action[i]
-        tp = trade_price[i]
-
-        if ta == "开多" and not np.isnan(tp) and tp > 0:
-            sh = int(available_cash_arr[i] / (tp * (1 + slippage + fee_rate)))
-            if sh > 0:
-                cost_slip = sh * tp * slippage
-                cost_comm = sh * tp * fee_rate
-                slippage_arr[i] = cost_slip
-                commission_arr[i] = cost_comm
-                available_cash_arr[i] -= sh * tp + cost_slip + cost_comm
-                held_shares_arr[i] += sh
-                trade_shares_arr[i] = sh
-
-        elif ta == "平多" and not np.isnan(tp) and held_shares_arr[i] > 0:
-            sh = held_shares_arr[i]
-            cost_slip = sh * tp * slippage
-            cost_comm = sh * tp * fee_rate
-            slippage_arr[i] = cost_slip
-            commission_arr[i] = cost_comm
-            available_cash_arr[i] += sh * tp - cost_slip - cost_comm
-            held_shares_arr[i] = 0
-            trade_shares_arr[i] = sh
-
-        account_value_arr[i] = available_cash_arr[i] + held_shares_arr[i] * closes[i]
-
-    # ── 变动指标 ──
-    acc_change = np.zeros(n, dtype=float)
-    acc_change_pct = np.zeros(n, dtype=float)
-    change_init = np.zeros(n, dtype=float)
-    change_init_pct = np.zeros(n, dtype=float)
-
-    for i in range(1, n):
-        acc_change[i] = account_value_arr[i] - account_value_arr[i - 1]
-        acc_change_pct[i] = acc_change[i] / account_value_arr[i - 1] if account_value_arr[i - 1] != 0 else 0.0
-    for i in range(n):
-        change_init[i] = account_value_arr[i] - INITIAL_CASH
-        change_init_pct[i] = change_init[i] / INITIAL_CASH if INITIAL_CASH != 0 else 0.0
+        if trade_actions[i] == 1:
+            ta_labels[i] = "开多"
+            tp_vals[i] = float(trade_prices[i]) if not np.isnan(trade_prices[i]) else None
+        elif trade_actions[i] == 2:
+            ta_labels[i] = "平多"
+            tp_vals[i] = float(trade_prices[i]) if not np.isnan(trade_prices[i]) else None
 
     # ── 构建结果 ──
     for i in range(n):
@@ -163,8 +195,8 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "ha_ma_value": float(ha_ma_val[i]) if not np.isnan(ha_ma_val[i]) else None,
             "trend_direction": direction[i],
             "signal": signal[i],
-            "trade_action": str(trade_action[i]) if trade_action[i] is not None else None,
-            "trade_price": float(trade_price[i]) if not np.isnan(trade_price[i]) else None,
+            "trade_action": str(ta_labels[i]) if ta_labels[i] is not None else None,
+            "trade_price": float(tp_vals[i]) if tp_vals[i] is not None else None,
             "available_cash": float(available_cash_arr[i]),
             "trade_shares": int(trade_shares_arr[i]),
             "slippage": float(slippage_arr[i]),
