@@ -247,10 +247,10 @@ def run_stock(code, ktype, ma_range, trade_mode, slippage, fee_rate):
     return pd.DataFrame()
 
 
-def run_backtest(ktype="1w", ma_start=2, ma_end=61, ma_step=1,
+def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                  trade_mode="close", slippage=0.0, fee_rate=0.001):
     """主入口：对所有股票运行回测并写入 backtest_stats 表。"""
-    ma_range = list(range(ma_start, ma_end, ma_step))
+    ma_range = ma_list if ma_list is not None else list(range(ma_start, ma_end, ma_step))
 
     # 获取股票列表
     con = duckdb.connect(DB_PATH, read_only=True)
@@ -322,8 +322,10 @@ if __name__ == "__main__":
                         help="MA起始值 (默认: 2)")
     parser.add_argument("--ma-end", type=int, default=61,
                         help="MA结束值 (默认: 61, 日线建议 181)")
+    parser.add_argument("--ma-mode", choices=["continuous", "jump"], default="continuous",
+                        help="MA序列类型: continuous=连续, jump=跳跃(仅日线, step=2)")
     parser.add_argument("--ma-step", type=int, default=1,
-                        help="MA步长 (默认: 1)")
+                        help="MA步长 (默认: 1, 仅 --ma-start/end 手动模式生效)")
     parser.add_argument("--trade-mode", choices=["close", "open"], default=TRADE_MODE,
                         help="成交方式: close=收盘价成交, open=下根开盘价成交")
     parser.add_argument("--slippage", type=float, default=SLIPPAGE,
@@ -331,6 +333,14 @@ if __name__ == "__main__":
     parser.add_argument("--fee-rate", type=float, default=FEE_RATE,
                         help="佣金比例 (默认 0.001)")
     args = parser.parse_args()
+
+    # 生成 MA 序列（沿用 backtest_uscncc.py 逻辑）
+    _ma_map = {
+        "1w": list(range(2, 61)),        # 周线: 2..60 step=1
+        "1d": list(range(2, 181)),       # 日线 continuous: 2..180 step=1
+    }
+    if hasattr(args, 'ma_mode') and args.ma_mode == "jump":
+        _ma_map["1d"] = list(range(2, 181, 2))  # 日线 jump: 2..180 step=2
 
     # 解析 ktype
     _raw = args.ktype.lower().replace("，", ",").split(",")
@@ -344,11 +354,18 @@ if __name__ == "__main__":
     if not _ktypes:
         _ktypes = ["1w"]
 
-    print(f"K线周期: {','.join(_ktypes)} | MA: {args.ma_start}~{args.ma_end} step={args.ma_step} | "
+    print(f"K线周期: {','.join(_ktypes)} | MA 序列: {_ma_map[_ktypes[0]][:3]}...~{_ma_map[_ktypes[0]][-1]} ({len(_ma_map[_ktypes[0]])}个) | "
           f"成交方式: {args.trade_mode} | 滑点: {args.slippage} | 佣金: {args.fee_rate}")
 
     t0 = time.time()
     for _kt in _ktypes:
+        _ma_list = _ma_map[_kt]
+        run_backtest(
+            ktype=_kt, ma_list=_ma_list,
+            trade_mode=args.trade_mode,
+            slippage=args.slippage,
+            fee_rate=args.fee_rate,
+        )
         run_backtest(
             ktype=_kt,
             ma_start=args.ma_start,
