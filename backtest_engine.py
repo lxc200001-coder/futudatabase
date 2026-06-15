@@ -14,7 +14,9 @@ import os
 import sys
 import argparse
 import time
+import concurrent.futures
 from datetime import datetime
+from tqdm import tqdm
 
 import duckdb
 import pandas as pd
@@ -273,16 +275,24 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
     return pd.DataFrame()
 
 
+def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
+    """工作进程：计算一只股票的所有MA+窗口，返回 (code, df, err)"""
+    try:
+        df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
+        return code, df, None
+    except Exception as e:
+        return code, None, str(e)
+
+
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                  trade_mode="close", slippage=0.0, fee_rate=0.001, markets=None):
-    """主入口：对所有股票运行回测并写入 backtest_stats 表。"""
+    """主入口：对所有股票并行回测并写入 backtest_stats 表。"""
     ma_range = ma_list if ma_list is not None else list(range(ma_start, ma_end, ma_step))
 
-    # 窗口步长
     _step_map = {"1w": 12, "1d": 6}
     step_months = _step_map.get(ktype, 12)
 
-    # 获取股票列表（按 markets 过滤）
+    # 获取股票列表
     con = duckdb.connect(DB_PATH, read_only=True)
     codes = [str(r[0]) for r in con.execute(
         "SELECT DISTINCT code FROM watchlist ORDER BY code"
@@ -295,67 +305,68 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             if _m in ("ALL", "US"): _pfx.append("US.")
             if _m in ("ALL", "CN"): _pfx.extend(("SH.", "SZ."))
             if _m in ("ALL", "CC"): _pfx.append("CC.")
-        if _pfx:
-            codes = [c for c in codes if any(c.startswith(p) for p in _pfx)]
+        if _pfx: codes = [c for c in codes if any(c.startswith(p) for p in _pfx)]
+    if not codes: print("  watchlist 为空"); return
 
-    if not codes:
-        print("  watchlist 为空")
-        return
-
-    # 用全市场K线最大日期生成固定窗口列表
+    # 全市场K线最大日期
     _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
     con2 = duckdb.connect(DB_PATH, read_only=True)
     _max_dt = con2.execute(f"SELECT MAX(datetime) FROM klines_{_kt}").fetchone()[0]
     con2.close()
-    if _max_dt is None:
-        print("  无K线数据")
-        return
-    _end = pd.Timestamp(_max_dt)
-    windows = generate_windows(step_months, end_date=_end)
+    if _max_dt is None: print("  无K线数据"); return
+    windows = generate_windows(step_months, end_date=pd.Timestamp(_max_dt))
 
+    _n_workers = max(1, os.cpu_count() - 1)
     total_ma = len(ma_range)
     total_rows = 0
+    print(f"  并行: {_n_workers}进程 | 股票: {len(codes)} | 窗口: {len(windows)} | MA: {total_ma}")
     con_w = duckdb.connect(DB_PATH)
 
-    for i, code in enumerate(codes, 1):
-        print(f"  [{i}/{len(codes)}] {code} ({len(windows)}窗×{total_ma}MA)...", end=" ", flush=True)
-        t0 = time.time()
-        df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
-        if df.empty:
-            print("跳过")
-            continue
+    with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
+        futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
+                                   trade_mode, slippage, fee_rate): code for code in codes}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                _code, df, err = future.result()
+            except Exception as e:
+                print(f"\n  进程异常: {e}")
+                continue
+            if err:
+                print(f"\n  {_code} 失败: {err}")
+                continue
+            if df is None or df.empty:
+                continue
 
-        try:
-            con_w.execute("DELETE FROM backtest_stats WHERE code = ? AND ktype = ?", [code, ktype])
-        except Exception:
-            pass
-        try:
-            con_w.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-            con_w.execute("""
-                INSERT INTO backtest_stats (
-                    code, stock_name, market, ktype, window_label, datetime,
-                    open, high, low, close, volume, turnover, turnover_amount, source,
-                    ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                    trade_action, trade_price, available_cash, trade_shares,
-                    slippage, commission, held_shares, account_value,
-                    account_value_change, account_value_change_pct,
-                    change_from_initial, change_from_initial_pct, created_at
-                )
-                SELECT
-                    code, stock_name, market, ktype, window_label, datetime,
-                    open, high, low, close, volume, turnover, turnover_amount, source,
-                    ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                    trade_action, trade_price, available_cash, trade_shares,
-                    slippage, commission, held_shares, account_value,
-                    account_value_change, account_value_change_pct,
-                    change_from_initial, change_from_initial_pct, created_at
-                FROM _tmp
-            """)
-            elapsed = time.time() - t0
-            print(f"{len(df)} 行 ({elapsed:.1f}s)")
-            total_rows += len(df)
-        except Exception as e:
-            print(f"写入失败: {e}")
+            try:
+                con_w.execute("DELETE FROM backtest_stats WHERE code = ? AND ktype = ?", [_code, ktype])
+            except Exception:
+                pass
+            try:
+                con_w.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
+                con_w.execute("""
+                    INSERT INTO backtest_stats (
+                        code, stock_name, market, ktype, window_label, datetime,
+                        open, high, low, close, volume, turnover, turnover_amount, source,
+                        ha_close, ma_len, ha_ma_value, trend_direction, signal,
+                        trade_action, trade_price, available_cash, trade_shares,
+                        slippage, commission, held_shares, account_value,
+                        account_value_change, account_value_change_pct,
+                        change_from_initial, change_from_initial_pct, created_at
+                    )
+                    SELECT
+                        code, stock_name, market, ktype, window_label, datetime,
+                        open, high, low, close, volume, turnover, turnover_amount, source,
+                        ha_close, ma_len, ha_ma_value, trend_direction, signal,
+                        trade_action, trade_price, available_cash, trade_shares,
+                        slippage, commission, held_shares, account_value,
+                        account_value_change, account_value_change_pct,
+                        change_from_initial, change_from_initial_pct, created_at
+                    FROM _tmp
+                """)
+                total_rows += len(df)
+                print(f"  {_code}: {len(df)} 行")
+            except Exception as e:
+                print(f"\n  {_code} 写入失败: {e}")
 
     con_w.close()
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
