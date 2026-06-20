@@ -27,7 +27,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 
 INITIAL_CASH = 10000
-FEE_RATE = 0.001
+FEE_RATE = 0.002
 SLIPPAGE = 0.001
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
@@ -213,8 +213,10 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "trade_price_after_slippage": float(tp_slip[i]) if tp_slip[i] is not None else None,
             "available_cash": float(available_cash_arr[i]),
             "trade_shares": int(trade_shares_arr[i]),
+            "trade_amount": float(round(tp_slip[i] * trade_shares_arr[i], 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
+            "commission": float(round(tp_slip[i] * trade_shares_arr[i] * fee_rate, 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
+            "actual_trade_amount": float(round(tp_slip[i] * trade_shares_arr[i] * (1 + fee_rate), 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "slippage": float(slippage_arr[i]),
-            "commission": float(commission_arr[i]),
             "held_shares": int(held_shares_arr[i]),
             "account_value": float(account_value_arr[i]),
             "account_value_change": float(acc_change[i]),
@@ -369,8 +371,9 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                         code, stock_name, market, ktype, window_label, datetime,
                         open, high, low, close, volume, turnover, turnover_amount, source,
                         ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                        trade_action, trade_price, trade_price_after_slippage, available_cash, trade_shares,
-                        slippage, commission, held_shares, account_value,
+                        trade_action, trade_price, trade_price_after_slippage, available_cash,
+                        trade_shares, trade_amount, commission, actual_trade_amount,
+                        slippage, held_shares, account_value,
                         account_value_change, account_value_change_pct,
                         change_from_initial, change_from_initial_pct, created_at
                     )
@@ -378,8 +381,9 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                         code, stock_name, market, ktype, window_label, datetime,
                         open, high, low, close, volume, turnover, turnover_amount, source,
                         ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                        trade_action, trade_price, trade_price_after_slippage, available_cash, trade_shares,
-                        slippage, commission, held_shares, account_value,
+                        trade_action, trade_price, trade_price_after_slippage, available_cash,
+                        trade_shares, trade_amount, commission, actual_trade_amount,
+                        slippage, held_shares, account_value,
                         account_value_change, account_value_change_pct,
                         change_from_initial, change_from_initial_pct, created_at
                     FROM _tmp
