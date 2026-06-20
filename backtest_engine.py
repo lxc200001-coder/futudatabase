@@ -40,16 +40,17 @@ WINDOW_START_DATE = "2000-01-03"
 # =========================================================
 
 @njit
-def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, slippage, fee_rate):
+def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, slippage, fee_rate, allow_fractional=False):
     """@njit 逐K线计算账户状态。
 
     trade_actions: 0=无, 1=开多, 2=平多
     trade_prices: 成交价，NaN 表示无交易
+    allow_fractional: 是否允许碎股（加密货币用）
     返回所有账户数组。
     """
     available_cash = np.full(n, initial_cash, dtype=np.float64)
-    held_shares = np.zeros(n, dtype=np.int64)
-    trade_shares_arr = np.zeros(n, dtype=np.int64)
+    held_shares = np.zeros(n, dtype=np.float64)
+    trade_shares_arr = np.zeros(n, dtype=np.float64)
     comm_arr = np.zeros(n, dtype=np.float64)
     slip_arr = np.zeros(n, dtype=np.float64)
     account_value = np.zeros(n, dtype=np.float64)
@@ -63,7 +64,11 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
         tp = trade_prices[i]
 
         if ta == 1 and not np.isnan(tp) and tp > 0:  # 开多
-            sh = int(available_cash[i] / (tp * (1 + slippage + fee_rate)))
+            sh = available_cash[i] / (tp * (1 + slippage + fee_rate))
+            if not allow_fractional:
+                sh = int(sh)
+            elif sh < 0.000001:
+                sh = 0.0
             if sh > 0:
                 sc = sh * tp * slippage
                 cm = sh * tp * fee_rate
@@ -151,9 +156,11 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
                 trade_prices[i] = opens_arr[i]
 
     # ── @njit 账户状态计算 ──
+    _is_cc = "加密货币" in str(df.get("market", pd.Series([""])).iloc[0])
     (available_cash_arr, held_shares_arr, trade_shares_arr,
      commission_arr, slippage_arr, account_value_arr) = _numba_account_loop(
-        closes, trade_actions, trade_prices, n, INITIAL_CASH, slippage, fee_rate
+        closes, trade_actions, trade_prices, n, INITIAL_CASH, slippage, fee_rate,
+        allow_fractional=_is_cc
     )
 
     # ── 变动指标（numpy 向量化） ──
@@ -212,12 +219,12 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "trade_price": float(tp_vals[i]) if tp_vals[i] is not None else None,
             "trade_price_after_slippage": float(tp_slip[i]) if tp_slip[i] is not None else None,
             "available_cash": float(available_cash_arr[i]),
-            "trade_shares": int(trade_shares_arr[i]),
+            "trade_shares": float(trade_shares_arr[i]),
             "trade_amount": float(round(tp_slip[i] * trade_shares_arr[i], 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "commission": float(round(tp_slip[i] * trade_shares_arr[i] * fee_rate, 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "actual_trade_amount": float(round(tp_slip[i] * trade_shares_arr[i] * (1 + fee_rate), 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "slippage": float(slippage_arr[i]),
-            "held_shares": int(held_shares_arr[i]),
+            "held_shares": float(held_shares_arr[i]),
             "account_value": float(account_value_arr[i]),
             "account_value_change": float(acc_change[i]),
             "account_value_change_pct": float(acc_change_pct[i]),

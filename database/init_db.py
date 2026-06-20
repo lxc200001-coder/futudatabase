@@ -380,7 +380,7 @@ def create_tables(con):
             trade_price             DOUBLE,
             trade_price_after_slippage DOUBLE,
             available_cash          DOUBLE,
-            trade_shares            INTEGER,
+            trade_shares            DOUBLE,
             trade_amount            DOUBLE,
             commission              DOUBLE,
             actual_trade_amount     DOUBLE,
