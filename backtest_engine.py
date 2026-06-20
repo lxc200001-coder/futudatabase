@@ -320,7 +320,6 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     total_ma = len(ma_range)
     total_rows = 0
     print(f"  并行: {_n_workers}进程 | 股票: {len(codes)} | 窗口: {len(windows)} | MA: {total_ma}")
-    con_w = duckdb.connect(DB_PATH)
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
@@ -338,12 +337,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 continue
 
             try:
-                con_w.execute("DELETE FROM backtest_stats WHERE code = ? AND ktype = ?", [_code, ktype])
-            except Exception:
-                pass
-            try:
-                con_w.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-                con_w.execute("""
+                _cw = duckdb.connect(DB_PATH)
+                _cw.execute("DELETE FROM backtest_stats WHERE code = ? AND ktype = ?", [_code, ktype])
+                _cw.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
+                _cw.execute("""
                     INSERT INTO backtest_stats (
                         code, stock_name, market, ktype, window_label, datetime,
                         open, high, low, close, volume, turnover, turnover_amount, source,
@@ -363,12 +360,12 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                         change_from_initial, change_from_initial_pct, created_at
                     FROM _tmp
                 """)
+                _cw.close()
                 total_rows += len(df)
                 print(f"  {_code}: {len(df)} 行")
             except Exception as e:
                 print(f"\n  {_code} 写入失败: {e}")
 
-    con_w.close()
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
 
 
