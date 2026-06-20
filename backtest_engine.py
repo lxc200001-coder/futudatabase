@@ -392,6 +392,13 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 print(f"  {_code}: {len(df)} 行")
             except Exception as e:
                 print(f"\n  {_code} 写入失败: {e}")
+        _cw.execute(f"""
+            CREATE TABLE backtest_stats_sorted AS
+            SELECT * FROM backtest_stats
+            ORDER BY code ASC, ktype ASC, window_label ASC, ma_len ASC, datetime ASC
+        """)
+        _cw.execute("DROP TABLE backtest_stats")
+        _cw.execute("ALTER TABLE backtest_stats_sorted RENAME TO backtest_stats")
         _cw.close()
 
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
