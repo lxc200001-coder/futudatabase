@@ -271,7 +271,10 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
                 all_dfs.append(df)
 
     if all_dfs:
-        return pd.concat(all_dfs, ignore_index=True)
+        import warnings as _w
+        with _w.catch_warnings():
+            _w.simplefilter("ignore", FutureWarning)
+            return pd.concat(all_dfs, ignore_index=True)
     return pd.DataFrame()
 
 
