@@ -701,8 +701,16 @@ MOOMOO_PORT = 11112
 
 def _get_quota_info(host="127.0.0.1", port=11111):
     """查询 OpenD 实例的历史 K 线额度使用明细"""
+    import socket as _sock
+    _s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    _s.settimeout(1)
+    try:
+        if _s.connect_ex((host, port)) != 0:
+            return 0, 0, set()
+    finally:
+        _s.close()
     from futu import OpenQuoteContext, RET_OK
-    wait_rate_limit()  # quota 查询也占用 API 限额
+    wait_rate_limit()
     ctx = OpenQuoteContext(host=host, port=port)
     try:
         ret, result = ctx.get_history_kl_quota(get_detail=True)
