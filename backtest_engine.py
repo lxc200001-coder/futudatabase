@@ -67,8 +67,10 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
             sh = available_cash[i] / (tp * (1 + slippage + fee_rate))
             if not allow_fractional:
                 sh = int(sh)
-            elif sh < 0.000001:
-                sh = 0.0
+            else:
+                sh = np.round(sh, 4)
+                if sh < 0.0001:
+                    sh = 0.0
             if sh > 0:
                 sc = sh * tp * slippage
                 cm = sh * tp * fee_rate
