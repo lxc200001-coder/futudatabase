@@ -346,37 +346,41 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             if df is not None and not df.empty:
                 all_results.append((_code, df))
 
-    # 所有子进程结束 → 统一写入（避免锁冲突）
-    for _code, df in all_results:
+    # 全表清空后统一写入
+    if all_results:
+        _cw = duckdb.connect(DB_PATH)
         try:
-            _cw = duckdb.connect(DB_PATH)
-            _cw.execute("DELETE FROM backtest_stats WHERE code = ? AND ktype = ?", [_code, ktype])
-            _cw.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-            _cw.execute("""
-                INSERT INTO backtest_stats (
-                    code, stock_name, market, ktype, window_label, datetime,
-                    open, high, low, close, volume, turnover, turnover_amount, source,
-                    ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                    trade_action, trade_price, available_cash, trade_shares,
-                    slippage, commission, held_shares, account_value,
-                    account_value_change, account_value_change_pct,
-                    change_from_initial, change_from_initial_pct, created_at
-                )
-                SELECT
-                    code, stock_name, market, ktype, window_label, datetime,
-                    open, high, low, close, volume, turnover, turnover_amount, source,
-                    ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                    trade_action, trade_price, available_cash, trade_shares,
-                    slippage, commission, held_shares, account_value,
-                    account_value_change, account_value_change_pct,
-                    change_from_initial, change_from_initial_pct, created_at
-                FROM _tmp
-            """)
-            _cw.close()
-            total_rows += len(df)
-            print(f"  {_code}: {len(df)} 行")
-        except Exception as e:
-            print(f"\n  {_code} 写入失败: {e}")
+            _cw.execute("DELETE FROM backtest_stats")
+        except Exception:
+            pass
+        for _code, df in all_results:
+            try:
+                _cw.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
+                _cw.execute("""
+                    INSERT INTO backtest_stats (
+                        code, stock_name, market, ktype, window_label, datetime,
+                        open, high, low, close, volume, turnover, turnover_amount, source,
+                        ha_close, ma_len, ha_ma_value, trend_direction, signal,
+                        trade_action, trade_price, available_cash, trade_shares,
+                        slippage, commission, held_shares, account_value,
+                        account_value_change, account_value_change_pct,
+                        change_from_initial, change_from_initial_pct, created_at
+                    )
+                    SELECT
+                        code, stock_name, market, ktype, window_label, datetime,
+                        open, high, low, close, volume, turnover, turnover_amount, source,
+                        ha_close, ma_len, ha_ma_value, trend_direction, signal,
+                        trade_action, trade_price, available_cash, trade_shares,
+                        slippage, commission, held_shares, account_value,
+                        account_value_change, account_value_change_pct,
+                        change_from_initial, change_from_initial_pct, created_at
+                    FROM _tmp
+                """)
+                total_rows += len(df)
+                print(f"  {_code}: {len(df)} 行")
+            except Exception as e:
+                print(f"\n  {_code} 写入失败: {e}")
+        _cw.close()
 
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
 
