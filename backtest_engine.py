@@ -75,8 +75,6 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
                 sc = sh * tp * slippage
                 cm = sh * tp * fee_rate
                 available_cash[i] -= sh * tp + sc + cm
-                if available_cash[i] < 0:
-                    available_cash[i] = 0.0
                 held_shares[i] += sh
                 trade_shares_arr[i] = sh
 
