@@ -374,7 +374,7 @@ def create_tables(con):
             ha_close                DOUBLE,
             ma_len                  INTEGER,
             ha_ma_value             DOUBLE,
-            trend_direction         INTEGER,
+            trend_direction         VARCHAR,
             signal                  VARCHAR,
             trade_action            VARCHAR,
             trade_price             DOUBLE,
