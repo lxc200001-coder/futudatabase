@@ -28,8 +28,8 @@ DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
-SLIPPAGE = 0.0
-TRADE_MODE = "close"   # close / open
+SLIPPAGE = 0.001
+TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
 DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
@@ -172,13 +172,20 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
     # ── 构建结果（从 int trade_actions 恢复中文字段） ──
     ta_labels = np.full(n, None, dtype=object)
     tp_vals = np.full(n, None, dtype=object)
+    tp_slip = np.full(n, None, dtype=object)
     for i in range(n):
-        if trade_actions[i] == 1:
+        if trade_actions[i] == 1:  # 开多
             ta_labels[i] = "开多"
-            tp_vals[i] = float(trade_prices[i]) if not np.isnan(trade_prices[i]) else None
-        elif trade_actions[i] == 2:
+            _t = trade_prices[i]
+            if not np.isnan(_t):
+                tp_vals[i] = float(_t)
+                tp_slip[i] = float(_t * (1 + slippage))
+        elif trade_actions[i] == 2:  # 平多
             ta_labels[i] = "平多"
-            tp_vals[i] = float(trade_prices[i]) if not np.isnan(trade_prices[i]) else None
+            _t = trade_prices[i]
+            if not np.isnan(_t):
+                tp_vals[i] = float(_t)
+                tp_slip[i] = float(_t * (1 - slippage))
 
     # ── 构建结果 ──
     for i in range(n):
@@ -203,6 +210,7 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "signal": signal[i],
             "trade_action": str(ta_labels[i]) if ta_labels[i] is not None else None,
             "trade_price": float(tp_vals[i]) if tp_vals[i] is not None else None,
+            "trade_price_after_slippage": float(tp_slip[i]) if tp_slip[i] is not None else None,
             "available_cash": float(available_cash_arr[i]),
             "trade_shares": int(trade_shares_arr[i]),
             "slippage": float(slippage_arr[i]),
@@ -361,7 +369,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                         code, stock_name, market, ktype, window_label, datetime,
                         open, high, low, close, volume, turnover, turnover_amount, source,
                         ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                        trade_action, trade_price, available_cash, trade_shares,
+                        trade_action, trade_price, trade_price_after_slippage, available_cash, trade_shares,
                         slippage, commission, held_shares, account_value,
                         account_value_change, account_value_change_pct,
                         change_from_initial, change_from_initial_pct, created_at
@@ -370,7 +378,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                         code, stock_name, market, ktype, window_label, datetime,
                         open, high, low, close, volume, turnover, turnover_amount, source,
                         ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                        trade_action, trade_price, available_cash, trade_shares,
+                        trade_action, trade_price, trade_price_after_slippage, available_cash, trade_shares,
                         slippage, commission, held_shares, account_value,
                         account_value_change, account_value_change_pct,
                         change_from_initial, change_from_initial_pct, created_at
