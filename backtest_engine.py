@@ -442,13 +442,4 @@ if __name__ == "__main__":
             fee_rate=args.fee_rate,
             markets=args.market,
         )
-        run_backtest(
-            ktype=_kt,
-            ma_start=args.ma_start,
-            ma_end=args.ma_end,
-            ma_step=args.ma_step,
-            trade_mode=args.trade_mode,
-            slippage=args.slippage,
-            fee_rate=args.fee_rate,
-        )
     print(f"总耗时: {time.time() - t0:.0f}s")
