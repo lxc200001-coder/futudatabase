@@ -277,11 +277,17 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
     """工作进程：计算一只股票的所有MA+窗口，返回 (code, df, err)"""
-    try:
-        df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
-        return code, df, None
-    except Exception as e:
-        return code, None, str(e)
+    for _attempt in range(5):
+        try:
+            df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
+            return code, df, None
+        except Exception as e:
+            _err = str(e)
+            if "另一个程序正在使用" in _err or "Cannot open file" in _err:
+                time.sleep(1 * (_attempt + 1))  # 退避重试
+                continue
+            return code, None, _err
+    return code, None, "多次重试后仍无法访问数据库"
 
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
