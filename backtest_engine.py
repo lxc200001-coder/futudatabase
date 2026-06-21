@@ -64,7 +64,8 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
         tp = trade_prices[i]
 
         if ta == 1 and not np.isnan(tp) and tp > 0:  # 开多
-            sh = available_cash[i] / (tp * (1 + slippage + fee_rate))
+            tp_slip = tp * (1 + slippage)
+            sh = available_cash[i] / (tp_slip * (1 + fee_rate))
             if not allow_fractional:
                 sh = int(sh)
             else:
@@ -72,19 +73,22 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
                 if sh < 0.0001:
                     sh = 0.0
             if sh > 0:
-                sc = sh * tp * slippage
-                cm = sh * tp * fee_rate
-                available_cash[i] -= sh * tp + sc + cm
+                sc = sh * tp_slip * slippage / (1 + slippage)
+                cm = sh * tp_slip * fee_rate
+                available_cash[i] -= sh * tp_slip + cm
+                slip_arr[i] = sc
+                comm_arr[i] = cm
                 held_shares[i] += sh
                 trade_shares_arr[i] = sh
 
         elif ta == 2 and not np.isnan(tp) and held_shares[i] > 0:  # 平多
             sh = held_shares[i]
-            sc = sh * tp * slippage
-            cm = sh * tp * fee_rate
+            tp_slip = tp * (1 - slippage)
+            sc = sh * tp_slip * slippage / (1 - slippage)
+            cm = sh * tp_slip * fee_rate
             slip_arr[i] = sc
             comm_arr[i] = cm
-            available_cash[i] += sh * tp - sc - cm
+            available_cash[i] += sh * tp_slip - cm
             held_shares[i] = 0
             trade_shares_arr[i] = sh
 
