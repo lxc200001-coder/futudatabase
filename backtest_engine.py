@@ -192,15 +192,13 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
         ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
                         ac_arr, hs_arr, ts_arr, av_arr)
 
-    # 逐窗口切片构建结果（不再跑 numba）
+    # 仅取末窗切片构建结果（前窗为冗余子集）
+    ws, we = windows[-1]
+    window_label = f"{ws.date()}~{we.date()}"
+    mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
+           (pd.to_datetime(df_k["datetime"]) <= we)
     all_dfs = []
-    for ws, we in windows:
-        window_label = f"{ws.date()}~{we.date()}"
-        mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
-               (pd.to_datetime(df_k["datetime"]) <= we)
-        if not mask.any():
-            continue
-
+    if mask.any():
         for ma in ma_range:
             (ha_ma_val, direction, signal, trade_actions, trade_prices,
              ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
