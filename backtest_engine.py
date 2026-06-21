@@ -398,9 +398,12 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             try: os.remove(_p)
             except: pass
 
-    # 全局排序
+    # 全局排序（设置临时目录避免 OOM）
     if total_rows > 0:
+        _tmp_dir = os.path.join(PROJECT_ROOT, "results_uscncc", "_duckdb_tmp")
+        os.makedirs(_tmp_dir, exist_ok=True)
         _cw = duckdb.connect(DB_PATH)
+        _cw.execute(f"SET temp_directory = '{_tmp_dir}'")
         _cw.execute(f"""
             CREATE TABLE backtest_stats_sorted AS
             SELECT * FROM backtest_stats
