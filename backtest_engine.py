@@ -223,7 +223,7 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "trade_amount": float(round(tp_slip[i] * trade_shares_arr[i], 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "commission": float(round(tp_slip[i] * trade_shares_arr[i] * fee_rate, 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "actual_trade_amount": float(round(tp_slip[i] * trade_shares_arr[i] * (1 + fee_rate), 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
-            "slippage": float(slippage_arr[i]),
+            "slippage": float(round(tp_slip[i] * trade_shares_arr[i] * slippage / (1 + slippage), 2)) if ta_labels[i] == "开多" and trade_shares_arr[i] > 0 else (float(round(tp_slip[i] * trade_shares_arr[i] * slippage / (1 - slippage), 2)) if ta_labels[i] == "平多" and trade_shares_arr[i] > 0 else 0.0),
             "held_shares": float(held_shares_arr[i]),
             "account_value": float(account_value_arr[i]),
             "account_value_change": float(acc_change[i]),
@@ -372,29 +372,17 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             pass
         for _code, df in all_results:
             try:
-                _cw.execute("CREATE OR REPLACE TEMP TABLE _tmp AS SELECT * FROM df")
-                _cw.execute("""
-                    INSERT INTO backtest_stats (
-                        code, stock_name, market, ktype, window_label, datetime,
-                        open, high, low, close, volume, turnover, turnover_amount, source,
-                        ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                        trade_action, trade_price, trade_price_after_slippage, available_cash,
-                        trade_shares, trade_amount, commission, actual_trade_amount,
-                        slippage, held_shares, account_value,
-                        account_value_change, account_value_change_pct,
-                        change_from_initial, change_from_initial_pct, created_at
-                    )
-                    SELECT
-                        code, stock_name, market, ktype, window_label, datetime,
-                        open, high, low, close, volume, turnover, turnover_amount, source,
-                        ha_close, ma_len, ha_ma_value, trend_direction, signal,
-                        trade_action, trade_price, trade_price_after_slippage, available_cash,
-                        trade_shares, trade_amount, commission, actual_trade_amount,
-                        slippage, held_shares, account_value,
-                        account_value_change, account_value_change_pct,
-                        change_from_initial, change_from_initial_pct, created_at
-                    FROM _tmp
-                """)
+                # 按表字段顺序排列后写入
+                _cols = ["code","stock_name","market","ktype","window_label","datetime",
+                    "open","high","low","close","volume","turnover","turnover_amount","source",
+                    "ha_close","ma_len","ha_ma_value","trend_direction","signal",
+                    "trade_action","trade_price","trade_price_after_slippage","available_cash",
+                    "trade_shares","trade_amount","commission","actual_trade_amount",
+                    "slippage","held_shares","account_value",
+                    "account_value_change","account_value_change_pct",
+                    "change_from_initial","change_from_initial_pct","created_at"]
+                _sel = ",".join(_cols)
+                _cw.execute(f"INSERT INTO backtest_stats ({_sel}) SELECT {_sel} FROM df")
                 total_rows += len(df)
                 print(f"  {_code}: {len(df)} 行")
             except Exception as e:
