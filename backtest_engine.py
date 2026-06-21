@@ -358,17 +358,19 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
                                    trade_mode, slippage, fee_rate): code for code in codes}
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                _code, df, err = future.result()
-            except Exception as e:
-                print(f"\n  进程异常: {e}")
-                continue
-            if err:
-                print(f"\n  {_code} 失败: {err}")
-                continue
-            if df is not None and not df.empty:
-                all_results.append((_code, df))
+        with tqdm(total=len(futures), desc="  回测", unit="stock", leave=False) as pbar:
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    _code, df, err = future.result()
+                except Exception as e:
+                    print(f"\n  进程异常: {e}")
+                    pbar.update(1)
+                    continue
+                if err:
+                    print(f"\n  {_code} 失败: {err}")
+                elif df is not None and not df.empty:
+                    all_results.append((_code, df))
+                pbar.update(1)
 
     # 全表清空后统一写入
     if all_results:
