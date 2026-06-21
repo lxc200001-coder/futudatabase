@@ -32,7 +32,7 @@ SLIPPAGE = 0.001
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -358,7 +358,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
                                    trade_mode, slippage, fee_rate): code for code in codes}
-        with tqdm(total=len(futures), desc="  回测", unit="stock", leave=False) as pbar:
+        with tqdm(total=len(futures), desc="  回测", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(futures):
                 try:
                     _code, df, err = future.result()
