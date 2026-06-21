@@ -223,7 +223,7 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "trade_amount": float(round(tp_slip[i] * trade_shares_arr[i], 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "commission": float(round(tp_slip[i] * trade_shares_arr[i] * fee_rate, 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
             "actual_trade_amount": float(round(tp_slip[i] * trade_shares_arr[i] * (1 + fee_rate), 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
-            "slippage": float(round(tp_slip[i] * trade_shares_arr[i] * slippage / (1 + slippage), 2)) if ta_labels[i] == "开多" and trade_shares_arr[i] > 0 else (float(round(tp_slip[i] * trade_shares_arr[i] * slippage / (1 - slippage), 2)) if ta_labels[i] == "平多" and trade_shares_arr[i] > 0 else 0.0),
+            "slippage": abs(round((tp_slip[i] - tp_vals[i]) * trade_shares_arr[i], 2)) if tp_vals[i] is not None and trade_shares_arr[i] > 0 else 0.0,
             "held_shares": float(held_shares_arr[i]),
             "account_value": float(account_value_arr[i]),
             "account_value_change": float(acc_change[i]),
