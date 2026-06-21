@@ -296,18 +296,17 @@ def _build_stats_for_window(df, mask, ma_len, ktype, ha_ma_val, direction, signa
 
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
-    """工作进程：计算一只股票的所有MA+窗口，返回 (code, df, err)"""
-    for _attempt in range(5):
-        try:
-            df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
-            return code, df, None
-        except Exception as e:
-            _err = str(e)
-            if "另一个程序正在使用" in _err or "Cannot open file" in _err:
-                time.sleep(1 * (_attempt + 1))  # 退避重试
-                continue
-            return code, None, _err
-    return code, None, "多次重试后仍无法访问数据库"
+    """工作进程：计算一只股票的所有MA+窗口，保存到临时 parquet 返回路径。"""
+    try:
+        df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
+        if df is None or df.empty:
+            return code, None, None
+        _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}.parquet")
+        os.makedirs(os.path.dirname(_tmp), exist_ok=True)
+        df.to_parquet(_tmp, index=False)
+        return code, _tmp, None
+    except Exception as e:
+        return code, None, str(e)
 
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
@@ -353,6 +352,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     except: pass
     _cw.close()
 
+    _tmp_files = []
     _cols = ["code","stock_name","market","ktype","window_label","datetime",
         "open","high","low","close","volume","turnover","turnover_amount","source",
         "ha_close","ma_len","ha_ma_value","trend_direction","signal",
@@ -363,31 +363,37 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "change_from_initial","change_from_initial_pct","created_at"]
     _sel = ",".join(_cols)
 
+    # 子进程全部结束后再统一写入（避免多进程锁冲突）
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
                                    trade_mode, slippage, fee_rate): code for code in codes}
         with tqdm(total=len(futures), desc="  回测", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(futures):
                 try:
-                    _code, df, err = future.result()
+                    _code, _path, err = future.result()
                 except Exception as e:
                     print(f"\n  进程异常: {e}")
                     pbar.update(1); continue
                 if err:
                     print(f"\n  {_code} 失败: {err}")
                     pbar.update(1); continue
-                if df is None or df.empty:
+                if not _path:
                     pbar.update(1); continue
-
-                # 并行写入（每完成一只立即写入）
-                try:
-                    _cw2 = duckdb.connect(DB_PATH)
-                    _cw2.execute(f"INSERT INTO backtest_stats ({_sel}) SELECT {_sel} FROM df")
-                    _cw2.close()
-                    total_rows += len(df)
-                except Exception as e:
-                    print(f"\n  {_code} 写入失败: {e}")
+                # 记录临时文件路径
+                _tmp_files.append(_path)
                 pbar.update(1)
+
+    # 所有子进程结束→统一从 parquet 读取并写入 DuckDB（无锁冲突）
+    for _path in _tmp_files:
+        try:
+            _df = pd.read_parquet(_path)
+            _cw = duckdb.connect(DB_PATH)
+            _cw.execute(f"INSERT INTO backtest_stats ({_sel}) SELECT {_sel} FROM _df")
+            _cw.close()
+            total_rows += len(_df)
+            os.remove(_path)
+        except Exception as e:
+            print(f"\n  写入失败 ({_path}): {e}")
 
     # 全局排序
     if total_rows > 0:
