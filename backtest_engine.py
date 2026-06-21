@@ -184,9 +184,15 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
                 elif signal[i - 1] == "卖出":
                     trade_actions[i] = 2; trade_prices[i] = opens_arr[i]
 
-        ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices)
+        # 全量 numba（一次算完，所有窗口共用）
+        (ac_arr, hs_arr, ts_arr, _, _, av_arr) = _numba_account_loop(
+            closes, trade_actions, trade_prices, n, INITIAL_CASH, slippage, fee_rate,
+            allow_fractional=_is_cc
+        )
+        ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
+                        ac_arr, hs_arr, ts_arr, av_arr)
 
-    # 逐窗口切片，只跑 numba 账户循环 + 构建结果
+    # 逐窗口切片构建结果（不再跑 numba）
     all_dfs = []
     for ws, we in windows:
         window_label = f"{ws.date()}~{we.date()}"
@@ -196,10 +202,12 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             continue
 
         for ma in ma_range:
-            ha_ma_val, direction, signal, trade_actions, trade_prices = ma_cache[ma]
-            df = _build_stats_for_window(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
-                                         trade_actions, trade_prices, ha_close, closes,
-                                         slippage, fee_rate, _is_cc)
+            (ha_ma_val, direction, signal, trade_actions, trade_prices,
+             ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
+            df = _build_slice_rows(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
+                                   trade_actions, trade_prices, ha_close, closes,
+                                   ac_arr, hs_arr, ts_arr, av_arr,
+                                   slippage, fee_rate)
             if df is not None and not df.empty:
                 df["window_label"] = window_label
                 all_dfs.append(df)
@@ -211,37 +219,34 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             return pd.concat(all_dfs, ignore_index=True)
     return pd.DataFrame()
 
-def _build_stats_for_window(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
-                            trade_actions, trade_prices, ha_close, closes,
-                            slippage, fee_rate, is_cc):
-    """根据切片后的数组执行 numba 账户循环并构建结果行。"""
+def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
+                      trade_actions, trade_prices, ha_close, closes,
+                      ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate):
+    """对切片后的预计算结果构建行（不跑 numba）。"""
     idx = np.where(mask.values)[0]
     if len(idx) == 0:
         return None
-    sl = slice(idx[0], idx[-1] + 1)
 
-    # 切片
+    # 切片（用 idx 索引，保持日期对齐）
+    c_sl = closes[idx]
+    ha_close_sl = ha_close[idx]
+    ha_ma_sl = ha_ma_val[idx]
+    dir_sl = direction[idx]
+    sig_sl = signal[idx]
+
+    # 变动指标（基于切片后的 av_arr）
     n_sl = len(idx)
-    c_sl = closes[sl]
-    ta_sl = trade_actions[sl]
-    tp_sl_arr = trade_prices[sl]
-    ha_close_sl = ha_close[sl]
-    ha_ma_sl = ha_ma_val[sl]
-    dir_sl = direction[sl]
-    sig_sl = signal[sl]
+    av_sl = av_arr[idx]
+    ac_sl = ac_arr[idx]
+    hs_sl = hs_arr[idx]
+    ts_sl = ts_arr[idx]
 
-    # @njit 账户计算
-    (ac_arr, hs_arr, ts_arr, _comm_a, _slip_a, av_arr) = _numba_account_loop(
-        c_sl, ta_sl, tp_sl_arr, n_sl, INITIAL_CASH, slippage, fee_rate, allow_fractional=is_cc
-    )
-
-    # 变动指标
     acc_chg = np.zeros(n_sl, dtype=np.float64)
     acc_chg_pct = np.zeros(n_sl, dtype=np.float64)
-    acc_chg[1:] = av_arr[1:] - av_arr[:-1]
-    acc_chg_pct[1:] = np.divide(acc_chg[1:], av_arr[:-1], out=np.zeros_like(acc_chg[1:]),
-                                where=av_arr[:-1] != 0)
-    chg_init = av_arr - INITIAL_CASH
+    acc_chg[1:] = av_sl[1:] - av_sl[:-1]
+    acc_chg_pct[1:] = np.divide(acc_chg[1:], av_sl[:-1], out=np.zeros_like(acc_chg[1:]),
+                                where=av_sl[:-1] != 0)
+    chg_init = av_sl - INITIAL_CASH
     chg_init_pct = np.divide(chg_init, INITIAL_CASH, out=np.zeros_like(chg_init),
                              where=INITIAL_CASH != 0)
 
@@ -250,14 +255,16 @@ def _build_stats_for_window(df, mask, ma_len, ktype, ha_ma_val, direction, signa
     tp_val = np.full(n_sl, None, dtype=object)
     tp_slip_val = np.full(n_sl, None, dtype=object)
     for j in range(n_sl):
-        if ta_sl[j] == 1:
-            ta_lbl[j] = "开多"; _t = tp_sl_arr[j]
-            if not np.isnan(_t):
-                tp_val[j] = float(_t); tp_slip_val[j] = float(_t * (1 + slippage))
-        elif ta_sl[j] == 2:
-            ta_lbl[j] = "平多"; _t = tp_sl_arr[j]
-            if not np.isnan(_t):
-                tp_val[j] = float(_t); tp_slip_val[j] = float(_t * (1 - slippage))
+        ta = trade_actions[idx[j]]
+        tp = trade_prices[idx[j]]
+        if ta == 1:
+            ta_lbl[j] = "开多"
+            if not np.isnan(tp):
+                tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 + slippage))
+        elif ta == 2:
+            ta_lbl[j] = "平多"
+            if not np.isnan(tp):
+                tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 - slippage))
 
     rows = []
     for j in range(n_sl):
@@ -277,14 +284,14 @@ def _build_stats_for_window(df, mask, ma_len, ktype, ha_ma_val, direction, signa
             "trade_action": str(ta_lbl[j]) if ta_lbl[j] is not None else None,
             "trade_price": float(tp_val[j]) if tp_val[j] is not None else None,
             "trade_price_after_slippage": float(tp_slip_val[j]) if tp_slip_val[j] is not None else None,
-            "available_cash": float(ac_arr[j]),
-            "trade_shares": float(ts_arr[j]),
-            "trade_amount": float(tp_slip_val[j] * ts_arr[j]) if tp_slip_val[j] is not None and ts_arr[j] > 0 else None,
-            "commission": float(tp_slip_val[j] * ts_arr[j] * fee_rate) if tp_slip_val[j] is not None and ts_arr[j] > 0 else None,
-            "actual_trade_amount": float(tp_slip_val[j] * ts_arr[j] * (1 + fee_rate)) if tp_slip_val[j] is not None and ts_arr[j] > 0 else None,
-            "slippage": float(abs((tp_slip_val[j] - tp_val[j]) * ts_arr[j])) if tp_val[j] is not None and ts_arr[j] > 0 else 0.0,
-            "held_shares": float(hs_arr[j]),
-            "account_value": float(av_arr[j]),
+            "available_cash": float(ac_sl[j]),
+            "trade_shares": float(ts_sl[j]),
+            "trade_amount": float(tp_slip_val[j] * ts_sl[j]) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
+            "commission": float(tp_slip_val[j] * ts_sl[j] * fee_rate) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
+            "actual_trade_amount": float(tp_slip_val[j] * ts_sl[j] * (1 + fee_rate)) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
+            "slippage": float(abs((tp_slip_val[j] - tp_val[j]) * ts_sl[j])) if tp_val[j] is not None and ts_sl[j] > 0 else 0.0,
+            "held_shares": float(hs_sl[j]),
+            "account_value": float(av_sl[j]),
             "account_value_change": float(acc_chg[j]),
             "account_value_change_pct": float(acc_chg_pct[j]),
             "change_from_initial": float(chg_init[j]),
