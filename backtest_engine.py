@@ -252,6 +252,9 @@ def generate_windows(step_months, end_date=None):
     while cur <= end_date:
         windows.append((start, cur))
         cur += pd.DateOffset(months=step_months)
+    # 如果末窗未覆盖到 end_date，追加一个延伸到 end_date 的窗口
+    if not windows or windows[-1][1] < end_date:
+        windows.append((start, end_date))
     return windows
 
 
@@ -281,7 +284,7 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
     for ws, we in windows:
         window_label = f"{ws.date()}~{we.date()}"
         df_w = df_k[(pd.to_datetime(df_k["datetime"]) >= ws) &
-                    (pd.to_datetime(df_k["datetime"]) < we)]
+                    (pd.to_datetime(df_k["datetime"]) <= we)]
         if df_w.empty:
             continue
 
