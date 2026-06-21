@@ -252,9 +252,9 @@ def generate_windows(step_months, end_date=None):
     while cur <= end_date:
         windows.append((start, cur))
         cur += pd.DateOffset(months=step_months)
-    # 如果末窗未覆盖到 end_date，追加一个延伸到 end_date 的窗口
+    # 如果末窗未覆盖到 end_date，追加一个完整步长窗口
     if not windows or windows[-1][1] < end_date:
-        windows.append((start, end_date))
+        windows.append((start, cur))
     return windows
 
 
