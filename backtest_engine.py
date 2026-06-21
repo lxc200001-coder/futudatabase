@@ -27,7 +27,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 
 INITIAL_CASH = 10000
-FEE_RATE = 0.002
+FEE_RATE = 0.001
 SLIPPAGE = 0.001
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
@@ -224,10 +224,10 @@ def process_stock(df, ma_len, trade_mode, slippage, fee_rate, ktype):
             "trade_price_after_slippage": float(tp_slip[i]) if tp_slip[i] is not None else None,
             "available_cash": float(available_cash_arr[i]),
             "trade_shares": float(trade_shares_arr[i]),
-            "trade_amount": float(round(tp_slip[i] * trade_shares_arr[i], 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
-            "commission": float(round(tp_slip[i] * trade_shares_arr[i] * fee_rate, 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
-            "actual_trade_amount": float(round(tp_slip[i] * trade_shares_arr[i] * (1 + fee_rate), 2)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
-            "slippage": abs(round((tp_slip[i] - tp_vals[i]) * trade_shares_arr[i], 2)) if tp_vals[i] is not None and trade_shares_arr[i] > 0 else 0.0,
+            "trade_amount": float(tp_slip[i] * trade_shares_arr[i]) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
+            "commission": float(tp_slip[i] * trade_shares_arr[i] * fee_rate) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
+            "actual_trade_amount": float(tp_slip[i] * trade_shares_arr[i] * (1 + fee_rate)) if tp_slip[i] is not None and trade_shares_arr[i] > 0 else None,
+            "slippage": float(abs((tp_slip[i] - tp_vals[i]) * trade_shares_arr[i])) if tp_vals[i] is not None and trade_shares_arr[i] > 0 else 0.0,
             "held_shares": float(held_shares_arr[i]),
             "account_value": float(account_value_arr[i]),
             "account_value_change": float(acc_change[i]),
