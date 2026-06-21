@@ -259,7 +259,7 @@ def generate_windows(step_months, end_date=None):
 
 
 def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
-    """对一只股票加载K线，按窗口运行所有 MA 参数。"""
+    """对一只股票加载K线，先算全量 MA 再按窗口切片（减少96%冗余）。"""
     _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
     con = duckdb.connect(DB_PATH, read_only=True)
     try:
@@ -269,28 +269,81 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
         """, [code]).fetchdf()
     finally:
         con.close()
-
     if df_k.empty:
         return pd.DataFrame()
-
-    # 补齐缺失列
     for c in ["code", "stock_name", "market", "ktype", "datetime",
               "open", "high", "low", "close", "volume", "turnover",
               "turnover_amount", "source"]:
         if c not in df_k.columns:
             df_k[c] = "" if c in ("code", "stock_name", "market", "ktype", "source") else 0.0
 
+    n = len(df_k)
+    closes = df_k["close"].values.astype(np.float64)
+    ha_close = (df_k["open"].values + df_k["high"].values + df_k["low"].values + closes) / 4.0
+    _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
+    opens_arr = df_k["open"].values.astype(np.float64)
+
+    # 全量计算每个 MA 的信号数组（避免对每个窗口重复计算）
+    ma_cache = {}  # ma → {ha_ma_val, direction, signal, trade_actions, trade_prices}
+    for ma in ma_range:
+        # ha_ma_val (全量)
+        ha_ma_val = np.full(n, np.nan, dtype=np.float64)
+        for i in range(ma - 1, n):
+            ha_ma_val[i] = ha_close[i - ma + 1:i + 1].mean()
+
+        # direction (全量)
+        direction = np.full(n, "空头", dtype=object)
+        for i in range(1, n):
+            if not np.isnan(ha_ma_val[i]) and not np.isnan(ha_ma_val[i - 1]):
+                direction[i] = "多头" if ha_ma_val[i] > ha_ma_val[i - 1] else "空头"
+
+        # signal (全量)
+        signal = np.full(n, "", dtype=object)
+        for i in range(1, n):
+            if direction[i] == "多头" and direction[i - 1] == "空头":
+                signal[i] = "买入"
+            elif direction[i] == "多头" and direction[i - 1] == "多头":
+                signal[i] = "持有"
+            elif direction[i] == "空头" and direction[i - 1] == "多头":
+                signal[i] = "卖出"
+            elif direction[i] == "空头" and direction[i - 1] == "空头":
+                signal[i] = "等待"
+        if n > 0:
+            signal[0] = "等待"
+
+        # trade_actions / trade_prices (全量)
+        trade_actions = np.zeros(n, dtype=np.int64)
+        trade_prices = np.full(n, np.nan, dtype=np.float64)
+        if trade_mode == "close":
+            for i in range(n):
+                if signal[i] == "买入":
+                    trade_actions[i] = 1; trade_prices[i] = closes[i]
+                elif signal[i] == "卖出":
+                    trade_actions[i] = 2; trade_prices[i] = closes[i]
+        else:
+            for i in range(1, n):
+                if signal[i - 1] == "买入":
+                    trade_actions[i] = 1; trade_prices[i] = opens_arr[i]
+                elif signal[i - 1] == "卖出":
+                    trade_actions[i] = 2; trade_prices[i] = opens_arr[i]
+
+        ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices)
+
+    # 逐窗口切片，只跑 numba 账户循环 + 构建结果
     all_dfs = []
     for ws, we in windows:
         window_label = f"{ws.date()}~{we.date()}"
-        df_w = df_k[(pd.to_datetime(df_k["datetime"]) >= ws) &
-                    (pd.to_datetime(df_k["datetime"]) <= we)]
-        if df_w.empty:
+        mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
+               (pd.to_datetime(df_k["datetime"]) <= we)
+        if not mask.any():
             continue
 
         for ma in ma_range:
-            df = process_stock(df_w, ma, trade_mode, slippage, fee_rate, ktype)
-            if not df.empty:
+            ha_ma_val, direction, signal, trade_actions, trade_prices = ma_cache[ma]
+            df = _build_stats_for_window(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
+                                         trade_actions, trade_prices, ha_close, closes,
+                                         slippage, fee_rate, _is_cc)
+            if df is not None and not df.empty:
                 df["window_label"] = window_label
                 all_dfs.append(df)
 
@@ -300,6 +353,89 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             _w.simplefilter("ignore", FutureWarning)
             return pd.concat(all_dfs, ignore_index=True)
     return pd.DataFrame()
+
+def _build_stats_for_window(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
+                            trade_actions, trade_prices, ha_close, closes,
+                            slippage, fee_rate, is_cc):
+    """根据切片后的数组执行 numba 账户循环并构建结果行。"""
+    idx = np.where(mask.values)[0]
+    if len(idx) == 0:
+        return None
+    sl = slice(idx[0], idx[-1] + 1)
+
+    # 切片
+    n_sl = len(idx)
+    c_sl = closes[sl]
+    ta_sl = trade_actions[sl]
+    tp_sl_arr = trade_prices[sl]
+    ha_close_sl = ha_close[sl]
+    ha_ma_sl = ha_ma_val[sl]
+    dir_sl = direction[sl]
+    sig_sl = signal[sl]
+
+    # @njit 账户计算
+    (ac_arr, hs_arr, ts_arr, _comm_a, _slip_a, av_arr) = _numba_account_loop(
+        c_sl, ta_sl, tp_sl_arr, n_sl, INITIAL_CASH, slippage, fee_rate, allow_fractional=is_cc
+    )
+
+    # 变动指标
+    acc_chg = np.zeros(n_sl, dtype=np.float64)
+    acc_chg_pct = np.zeros(n_sl, dtype=np.float64)
+    acc_chg[1:] = av_arr[1:] - av_arr[:-1]
+    acc_chg_pct[1:] = np.divide(acc_chg[1:], av_arr[:-1], out=np.zeros_like(acc_chg[1:]),
+                                where=av_arr[:-1] != 0)
+    chg_init = av_arr - INITIAL_CASH
+    chg_init_pct = np.divide(chg_init, INITIAL_CASH, out=np.zeros_like(chg_init),
+                             where=INITIAL_CASH != 0)
+
+    # 中文字段映射
+    ta_lbl = np.full(n_sl, None, dtype=object)
+    tp_val = np.full(n_sl, None, dtype=object)
+    tp_slip_val = np.full(n_sl, None, dtype=object)
+    for j in range(n_sl):
+        if ta_sl[j] == 1:
+            ta_lbl[j] = "开多"; _t = tp_sl_arr[j]
+            if not np.isnan(_t):
+                tp_val[j] = float(_t); tp_slip_val[j] = float(_t * (1 + slippage))
+        elif ta_sl[j] == 2:
+            ta_lbl[j] = "平多"; _t = tp_sl_arr[j]
+            if not np.isnan(_t):
+                tp_val[j] = float(_t); tp_slip_val[j] = float(_t * (1 - slippage))
+
+    rows = []
+    for j in range(n_sl):
+        i = idx[j]
+        rows.append({
+            "code": str(df["code"].iloc[i]), "stock_name": str(df["stock_name"].iloc[i]) if "stock_name" in df.columns else "",
+            "market": str(df["market"].iloc[i]) if "market" in df.columns else "", "ktype": ktype,
+            "datetime": df["datetime"].iloc[i],
+            "open": float(df["open"].iloc[i]), "high": float(df["high"].iloc[i]), "low": float(df["low"].iloc[i]),
+            "close": float(c_sl[j]), "volume": float(df["volume"].iloc[i]),
+            "turnover": float(df["turnover"].iloc[i]) if "turnover" in df.columns else 0.0,
+            "turnover_amount": float(df["turnover_amount"].iloc[i]) if "turnover_amount" in df.columns else 0.0,
+            "source": str(df["source"].iloc[i]) if "source" in df.columns else "",
+            "ha_close": float(ha_close_sl[j]), "ma_len": ma_len,
+            "ha_ma_value": float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None,
+            "trend_direction": dir_sl[j], "signal": sig_sl[j],
+            "trade_action": str(ta_lbl[j]) if ta_lbl[j] is not None else None,
+            "trade_price": float(tp_val[j]) if tp_val[j] is not None else None,
+            "trade_price_after_slippage": float(tp_slip_val[j]) if tp_slip_val[j] is not None else None,
+            "available_cash": float(ac_arr[j]),
+            "trade_shares": float(ts_arr[j]),
+            "trade_amount": float(tp_slip_val[j] * ts_arr[j]) if tp_slip_val[j] is not None and ts_arr[j] > 0 else None,
+            "commission": float(tp_slip_val[j] * ts_arr[j] * fee_rate) if tp_slip_val[j] is not None and ts_arr[j] > 0 else None,
+            "actual_trade_amount": float(tp_slip_val[j] * ts_arr[j] * (1 + fee_rate)) if tp_slip_val[j] is not None and ts_arr[j] > 0 else None,
+            "slippage": float(abs((tp_slip_val[j] - tp_val[j]) * ts_arr[j])) if tp_val[j] is not None and ts_arr[j] > 0 else 0.0,
+            "held_shares": float(hs_arr[j]),
+            "account_value": float(av_arr[j]),
+            "account_value_change": float(acc_chg[j]),
+            "account_value_change_pct": float(acc_chg_pct[j]),
+            "change_from_initial": float(chg_init[j]),
+            "change_from_initial_pct": float(chg_init_pct[j]),
+            "created_at": pd.Timestamp.now(),
+        })
+
+    return pd.DataFrame(rows)
 
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
