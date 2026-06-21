@@ -354,7 +354,22 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     total_rows = 0
     print(f"  并行: {_n_workers}进程 | 股票: {len(codes)} | 窗口: {len(windows)} | MA: {total_ma}")
 
-    all_results = []
+    # 提前清空旧数据
+    _cw = duckdb.connect(DB_PATH)
+    try: _cw.execute("DELETE FROM backtest_stats")
+    except: pass
+    _cw.close()
+
+    _cols = ["code","stock_name","market","ktype","window_label","datetime",
+        "open","high","low","close","volume","turnover","turnover_amount","source",
+        "ha_close","ma_len","ha_ma_value","trend_direction","signal",
+        "trade_action","trade_price","trade_price_after_slippage","available_cash",
+        "trade_shares","trade_amount","commission","actual_trade_amount",
+        "slippage","held_shares","account_value",
+        "account_value_change","account_value_change_pct",
+        "change_from_initial","change_from_initial_pct","created_at"]
+    _sel = ",".join(_cols)
+
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
                                    trade_mode, slippage, fee_rate): code for code in codes}
@@ -364,38 +379,26 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     _code, df, err = future.result()
                 except Exception as e:
                     print(f"\n  进程异常: {e}")
-                    pbar.update(1)
-                    continue
+                    pbar.update(1); continue
                 if err:
                     print(f"\n  {_code} 失败: {err}")
-                elif df is not None and not df.empty:
-                    all_results.append((_code, df))
+                    pbar.update(1); continue
+                if df is None or df.empty:
+                    pbar.update(1); continue
+
+                # 并行写入（每完成一只立即写入）
+                try:
+                    _cw2 = duckdb.connect(DB_PATH)
+                    _cw2.execute(f"INSERT INTO backtest_stats ({_sel}) SELECT {_sel} FROM df")
+                    _cw2.close()
+                    total_rows += len(df)
+                except Exception as e:
+                    print(f"\n  {_code} 写入失败: {e}")
                 pbar.update(1)
 
-    # 全表清空后统一写入
-    if all_results:
+    # 全局排序
+    if total_rows > 0:
         _cw = duckdb.connect(DB_PATH)
-        try:
-            _cw.execute("DELETE FROM backtest_stats")
-        except Exception:
-            pass
-        for _code, df in all_results:
-            try:
-                # 按表字段顺序排列后写入
-                _cols = ["code","stock_name","market","ktype","window_label","datetime",
-                    "open","high","low","close","volume","turnover","turnover_amount","source",
-                    "ha_close","ma_len","ha_ma_value","trend_direction","signal",
-                    "trade_action","trade_price","trade_price_after_slippage","available_cash",
-                    "trade_shares","trade_amount","commission","actual_trade_amount",
-                    "slippage","held_shares","account_value",
-                    "account_value_change","account_value_change_pct",
-                    "change_from_initial","change_from_initial_pct","created_at"]
-                _sel = ",".join(_cols)
-                _cw.execute(f"INSERT INTO backtest_stats ({_sel}) SELECT {_sel} FROM df")
-                total_rows += len(df)
-                print(f"  {_code}: {len(df)} 行")
-            except Exception as e:
-                print(f"\n  {_code} 写入失败: {e}")
         _cw.execute(f"""
             CREATE TABLE backtest_stats_sorted AS
             SELECT * FROM backtest_stats
