@@ -297,6 +297,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "ha_close": float(ha_close_sl[j]), "ma_len": ma_len,
             "ha_ma_value": float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None,
             "trend_direction": dir_sl[j], "signal": sig_sl[j],
+            "trade_id": int(trade_id_arr[j]) if trade_id_arr[j] is not None else None,
             "trade_action": str(ta_lbl[j]) if ta_lbl[j] is not None else None,
             "trade_price": float(tp_val[j]) if tp_val[j] is not None else None,
             "trade_price_after_slippage": float(tp_slip_val[j]) if tp_slip_val[j] is not None else None,
@@ -307,13 +308,12 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "actual_trade_amount": float(tp_slip_val[j] * ts_sl[j] * (1 + fee_rate)) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
             "slippage": float(abs((tp_slip_val[j] - tp_val[j]) * ts_sl[j])) if tp_val[j] is not None and ts_sl[j] > 0 else 0.0,
             "held_shares": float(hs_sl[j]),
+            "trade_status": str(trade_status_arr[j]) if trade_status_arr[j] is not None else None,
             "account_value": float(av_sl[j]),
             "account_value_change": float(acc_chg[j]),
             "account_value_change_pct": float(acc_chg_pct[j]),
             "change_from_initial": float(chg_init[j]),
             "change_from_initial_pct": float(chg_init_pct[j]),
-            "trade_id": int(trade_id_arr[j]) if trade_id_arr[j] is not None else None,
-            "trade_status": str(trade_status_arr[j]) if trade_status_arr[j] is not None else None,
             "created_at": pd.Timestamp.now(),
         })
 
@@ -380,13 +380,13 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     _tmp_files = []
     _cols = ["code","stock_name","market","ktype","window_label","datetime",
         "open","high","low","close","volume","turnover","turnover_amount","source",
-        "ha_close","ma_len","ha_ma_value","trend_direction","signal",
+        "ha_close","ma_len","ha_ma_value","trend_direction","signal","trade_id",
         "trade_action","trade_price","trade_price_after_slippage","available_cash",
         "trade_shares","trade_amount","commission","actual_trade_amount",
-        "slippage","held_shares","account_value",
+        "slippage","held_shares","trade_status","account_value",
         "account_value_change","account_value_change_pct",
         "change_from_initial","change_from_initial_pct",
-        "trade_id","trade_status","created_at"]
+        "created_at"]
     _sel = ",".join(_cols)
 
     # 子进程全部结束后再统一写入（避免多进程锁冲突）
