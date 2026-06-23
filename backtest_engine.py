@@ -212,7 +212,7 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             df = _build_slice_rows(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
                                    trade_actions, trade_prices, ha_close, closes,
                                    ac_arr, hs_arr, ts_arr, av_arr,
-                                   slippage, fee_rate, _wl_cache)
+                                   slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
             if df is not None and not df.empty:
                 all_dfs.append(df)
 
@@ -226,7 +226,7 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
 def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
                       ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
-                      wl_cache=None):
+                      trade_mode="close", wl_cache=None):
     """对切片后的预计算结果构建行（不跑 numba）。"""
     idx = np.where(mask.values)[0]
     if len(idx) == 0:
@@ -289,6 +289,39 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             trade_id_arr[j] = _tid if _tid > 0 else None
             trade_status_arr[j] = "持仓中"
 
+    # 虚拟平仓（持仓中逐K线模拟平仓）
+    _vp_price = np.full(n_sl, None, dtype=object)
+    _vp_price_slip = np.full(n_sl, None, dtype=object)
+    _vp_amt = np.full(n_sl, None, dtype=object)
+    _vp_comm = np.full(n_sl, None, dtype=object)
+    _vp_pnl = np.full(n_sl, None, dtype=object)
+    _entry_tp_slip = None
+    _entry_comm = None
+    for j in range(n_sl):
+        ta = trade_actions[idx[j]]
+        tp = trade_prices[idx[j]]
+        hs = hs_sl[j]
+        ts_val = ts_sl[j]
+
+        if ta == 1 and not np.isnan(tp):  # 开多：记录入场价
+            _entry_tp_slip = float(tp * (1 + slippage))
+            _entry_comm = float(_entry_tp_slip * ts_val * fee_rate) if ts_val > 0 else 0.0
+        elif ta == 2:  # 平多：清零
+            _entry_tp_slip = None
+            _entry_comm = None
+
+        if _entry_tp_slip is not None and hs > 0:
+            vp = closes[j] if trade_mode == "close" else float(df["open"].iloc[idx[j]])
+            vp_slip = vp * (1 - slippage)
+            vp_amt = vp_slip * hs
+            vp_comm = vp_amt * fee_rate
+            vp_pnl = (vp_slip - _entry_tp_slip) * hs - vp_comm - (_entry_comm or 0)
+            _vp_price[j] = float(vp)
+            _vp_price_slip[j] = float(vp_slip)
+            _vp_amt[j] = float(vp_amt)
+            _vp_comm[j] = float(vp_comm)
+            _vp_pnl[j] = float(vp_pnl)
+
     rows = []
     for j in range(n_sl):
         i = idx[j]
@@ -321,6 +354,11 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "account_value": float(av_sl[j]),
             "account_value_change": float(acc_chg[j]),
             "account_value_change_pct": float(acc_chg_pct[j]),
+            "virtual_close_price": float(_vp_price[j]) if _vp_price[j] is not None else None,
+            "virtual_close_price_after_slippage": float(_vp_price_slip[j]) if _vp_price_slip[j] is not None else None,
+            "virtual_close_amount": float(_vp_amt[j]) if _vp_amt[j] is not None else None,
+            "virtual_close_commission": float(_vp_comm[j]) if _vp_comm[j] is not None else None,
+            "virtual_close_pnl": float(_vp_pnl[j]) if _vp_pnl[j] is not None else None,
             "change_from_initial": float(chg_init[j]),
             "change_from_initial_pct": float(chg_init_pct[j]),
             "created_at": pd.Timestamp.now(),
@@ -396,6 +434,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "slippage","held_shares","trade_status","account_value",
         "account_value_change","account_value_change_pct",
         "change_from_initial","change_from_initial_pct",
+        "virtual_close_price","virtual_close_price_after_slippage",
+        "virtual_close_amount","virtual_close_commission","virtual_close_pnl",
         "created_at"]
     _sel = ",".join(_cols)
 
