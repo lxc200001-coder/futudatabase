@@ -32,7 +32,7 @@ SLIPPAGE = 0.001
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -547,7 +547,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
                 )
                 SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
-                       s.ma_len, s.trade_id, s.trade_action,
+                       s.ma_len, s.trade_id, '平多',
                        s.close_price_after_slippage,
                        s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
                        s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓',
