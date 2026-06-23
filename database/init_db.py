@@ -372,6 +372,7 @@ def create_tables(con):
         ("trade_id","交易编号"),
         ("trade_action","交易动作"),("trade_price","交易价格"),("trade_price_after_slippage","扣除滑点后的成交价"),
         ("available_cash","可用现金"),("trade_shares","交易股数"),
+        ("slippage","交易滑点"),
         ("trade_amount","交易金额(扣除滑点后的成交价×交易股数)"),
         ("commission","佣金(交易金额×佣金费率)"),
         ("actual_trade_amount","实际发生交易金额(交易金额+佣金)"),
@@ -412,13 +413,17 @@ def create_tables(con):
             trade_id                INTEGER,
             trade_action            VARCHAR,
             trade_price_after_slippage DOUBLE,
-            available_cash          DOUBLE,
             trade_shares            DOUBLE,
+            slippage                DOUBLE,
             trade_amount            DOUBLE,
             commission              DOUBLE,
             actual_trade_amount     DOUBLE,
             trade_status            VARCHAR,
+            close_pnl               DOUBLE,
             close_type              VARCHAR,
+            cash_before_trade       DOUBLE,
+            cash_after_trade        DOUBLE,
+            available_cash          DOUBLE,
             created_at              TIMESTAMP
         )
     """)
@@ -428,9 +433,13 @@ def create_tables(con):
         ("ma_len","均线周期"),("trade_id","交易编号"),("trade_action","交易动作"),
         ("trade_price_after_slippage","扣除滑点后的成交价"),
         ("available_cash","可用现金"),("trade_shares","交易股数"),
+        ("slippage","交易滑点"),
         ("trade_amount","交易金额"),("commission","佣金"),
         ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态"),
-        ("close_type","平仓类型: 虚拟平仓/真实平仓")]:
+        ("close_pnl","平仓交易盈利"),
+        ("close_type","平仓类型: 虚拟平仓/真实平仓"),
+        ("cash_before_trade","交易前可用现金"),
+        ("cash_after_trade","交易后可用现金")]:
         con.execute(f"COMMENT ON COLUMN backtest_trades.{_c} IS '{_d}'")
 
     # 表描述

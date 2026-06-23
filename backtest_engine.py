@@ -521,16 +521,17 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 INSERT INTO backtest_trades (
                     code, stock_name, market, ktype, window_label, datetime,
                     ma_len, trade_id, trade_action, trade_price_after_slippage,
-                    available_cash, trade_shares, trade_amount, commission,
-                    actual_trade_amount, trade_status, close_type, created_at
+                    trade_shares, slippage, trade_amount, commission,
+                    actual_trade_amount, trade_status, close_pnl, close_type,
+                    cash_before_trade, cash_after_trade, available_cash, created_at
                 )
                 SELECT
                     code, stock_name, market, ktype, w, datetime,
                     ma_len, trade_id, trade_action, trade_price_after_slippage,
-                    available_cash, trade_shares, trade_amount, commission,
-                    actual_trade_amount, trade_status,
+                    trade_shares, slippage, trade_amount, commission,
+                    actual_trade_amount, trade_status, close_pnl,
                     CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
-                    created_at
+                    cash_before_trade, cash_after_trade, available_cash, created_at
                 FROM backtest_stats,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
                 WHERE trade_action IS NOT NULL
@@ -540,14 +541,16 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 INSERT INTO backtest_trades (
                     code, stock_name, market, ktype, window_label, datetime,
                     ma_len, trade_id, trade_action, trade_price_after_slippage,
-                    available_cash, trade_shares, trade_amount, commission,
-                    actual_trade_amount, trade_status, close_type, created_at
+                    trade_shares, slippage, trade_amount, commission,
+                    actual_trade_amount, trade_status, close_pnl, close_type,
+                    cash_before_trade, cash_after_trade, available_cash, created_at
                 )
                 SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
                        s.ma_len, s.trade_id, s.trade_action,
-                       s.close_price_after_slippage, s.cash_after_trade,
-                       s.close_shares, s.close_amount, s.close_commission,
-                       s.actual_close_amount, s.trade_status, '虚拟平仓', s.created_at
+                       s.close_price_after_slippage,
+                       s.close_shares, s.close_slippage, s.close_amount, s.close_commission,
+                       s.actual_close_amount, s.trade_status, s.close_pnl, '虚拟平仓',
+                       s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.created_at
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
