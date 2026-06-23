@@ -421,6 +421,38 @@ def create_tables(con):
         ("trade_status","交易状态: 持仓中/已平仓")]:
         con.execute(f"COMMENT ON COLUMN backtest_stats.{_c} IS '{_d}'")
 
+    # ── 交易记录表（从 backtest_stats 派生） ──
+    con.execute("DROP TABLE IF EXISTS backtest_trades")
+    con.execute("""
+        CREATE TABLE backtest_trades (
+            code                    VARCHAR,
+            stock_name              VARCHAR,
+            market                  VARCHAR,
+            ktype                   VARCHAR,
+            window_label            VARCHAR,
+            datetime                TIMESTAMP,
+            trade_id                INTEGER,
+            trade_action            VARCHAR,
+            trade_price_after_slippage DOUBLE,
+            available_cash          DOUBLE,
+            trade_shares            DOUBLE,
+            trade_amount            DOUBLE,
+            commission              DOUBLE,
+            actual_trade_amount     DOUBLE,
+            trade_status            VARCHAR,
+            created_at              TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_trades IS '交易记录（仅含 trade_action 非空的行）'")
+    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
+        ("ktype","K线周期"),("window_label","窗口标签"),("datetime","K线时间"),
+        ("trade_id","交易编号"),("trade_action","交易动作"),
+        ("trade_price_after_slippage","扣除滑点后的成交价"),
+        ("available_cash","可用现金"),("trade_shares","交易股数"),
+        ("trade_amount","交易金额"),("commission","佣金"),
+        ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态")]:
+        con.execute(f"COMMENT ON COLUMN backtest_trades.{_c} IS '{_d}'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -565,7 +597,8 @@ def list_all(con):
              "klines_1d", "klines_1w",
              "v_klines_1d", "v_klines_1w",
              "backtest_trades", "backtest_summary", "backtest_scores",
-             "backtest_stability", "backtest_signals", "backtest_stats"]
+             "backtest_stability", "backtest_signals", "backtest_stats",
+             "backtest_trades"]
     for name in names:
         try:
             _type = {"BASE TABLE": "T", "VIEW": "V"}.get(

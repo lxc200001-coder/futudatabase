@@ -439,6 +439,32 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         _cw.execute("ALTER TABLE backtest_stats_sorted RENAME TO backtest_stats")
         _cw.close()
 
+    # 派生交易记录表
+    if total_rows > 0:
+        try:
+            _cw = duckdb.connect(DB_PATH)
+            _cw.execute("DELETE FROM backtest_trades")
+            _cw.execute("""
+                INSERT INTO backtest_trades (
+                    code, stock_name, market, ktype, window_label, datetime,
+                    trade_id, trade_action, trade_price_after_slippage,
+                    available_cash, trade_shares, trade_amount, commission,
+                    actual_trade_amount, trade_status, created_at
+                )
+                SELECT
+                    code, stock_name, market, ktype, window_label, datetime,
+                    trade_id, trade_action, trade_price_after_slippage,
+                    available_cash, trade_shares, trade_amount, commission,
+                    actual_trade_amount, trade_status, created_at
+                FROM backtest_stats
+                WHERE trade_action IS NOT NULL
+            """)
+            _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
+            _cw.close()
+            print(f"  交易记录: {_cnt:,} 行")
+        except Exception as e:
+            print(f"  交易记录派生失败: {e}")
+
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
 
 
