@@ -390,7 +390,6 @@ def create_tables(con):
         ("close_pnl","平仓交易盈利"),
         ("close_type","平仓类型: 虚拟平仓/真实平仓"),
         ("pnl_type","盈亏类型: 盈利/亏损"),
-        ("pnl_type","盈亏类型: 盈利/亏损"),
         ("cash_before_trade","交易前可用现金"),
         ("cash_after_trade","交易后可用现金"),
         ("account_value","账户价值"),
@@ -442,7 +441,6 @@ def create_tables(con):
         ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态"),
         ("close_pnl","平仓交易盈利"),
         ("close_type","平仓类型: 虚拟平仓/真实平仓"),
-        ("pnl_type","盈亏类型: 盈利/亏损"),
         ("pnl_type","盈亏类型: 盈利/亏损"),
         ("cash_before_trade","交易前可用现金"),
         ("cash_after_trade","交易后可用现金")]:
