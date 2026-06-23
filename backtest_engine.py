@@ -32,7 +32,7 @@ SLIPPAGE = 0.001
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -566,14 +566,6 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     ) s
                     WHERE s.rn = 1
                 """, [_wl, f"%{_wl}%"])
-            # 全局排序
-            _cw.execute("""
-                CREATE TABLE backtest_trades_sorted AS
-                SELECT * FROM backtest_trades
-                ORDER BY code, ktype, window_label, ma_len, datetime
-            """)
-            _cw.execute("DROP TABLE backtest_trades")
-            _cw.execute("ALTER TABLE backtest_trades_sorted RENAME TO backtest_trades")
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
             _cw.close()
             print(f"  交易记录: {_cnt:,} 行")
