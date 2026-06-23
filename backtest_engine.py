@@ -374,7 +374,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "actual_close_amount": float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None,
             "close_pnl": float(_vp_pnl[j]) if _vp_pnl[j] is not None else None,
             "close_type": "真实平仓" if trade_status_arr[j] == "已平仓" else ("虚拟平仓" if trade_status_arr[j] == "持仓中" else None),
-            "pnl_type": "盈利" if (_vp_pnl[j] is not None and _vp_pnl[j] > 0) else ("亏损" if _vp_pnl[j] is not None else None),
+            "close_pnl_type": "盈利" if (_vp_pnl[j] is not None and _vp_pnl[j] > 0) else ("亏损" if _vp_pnl[j] is not None else None),
             "cash_before_trade": float(_cash_bt[j]) if _cash_bt[j] is not None else None,
             "cash_after_trade": float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None,
             "account_value": float(av_sl[j]),
@@ -453,7 +453,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "trade_shares","slippage","trade_amount","commission","actual_trade_amount",
         "available_cash","held_shares","trade_status",
         "close_price","close_price_after_slippage","close_shares","close_slippage",
-        "close_amount","close_commission","actual_close_amount","close_pnl","close_type","pnl_type",
+        "close_amount","close_commission","actual_close_amount","close_pnl","close_type","close_pnl_type",
         "cash_before_trade","cash_after_trade",
         "account_value","account_value_change","account_value_change_pct",
         "change_from_initial","change_from_initial_pct",
@@ -524,7 +524,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     ma_len, trade_id, trade_action, trade_price_after_slippage,
                     trade_shares, slippage, trade_amount, commission,
                     actual_trade_amount, trade_status, close_pnl, close_type,
-                    cash_before_trade, cash_after_trade, available_cash, pnl_type, created_at
+                    cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
                 )
                 SELECT
                     code, stock_name, market, ktype, w, datetime,
@@ -532,7 +532,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     trade_shares, slippage, trade_amount, commission,
                     actual_trade_amount, trade_status, close_pnl,
                     CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
-                    pnl_type,
+                    close_pnl_type,
                     cash_before_trade, cash_after_trade, available_cash, created_at
                 FROM backtest_stats,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
@@ -545,13 +545,13 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     ma_len, trade_id, trade_action, trade_price_after_slippage,
                     trade_shares, slippage, trade_amount, commission,
                     actual_trade_amount, trade_status, close_pnl, close_type,
-                    cash_before_trade, cash_after_trade, available_cash, pnl_type, created_at
+                    cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
                 )
                 SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
                        s.ma_len, s.trade_id, s.trade_action,
                        s.close_price_after_slippage,
                        s.close_shares, s.close_slippage, s.close_amount, s.close_commission,
-                       s.actual_close_amount, s.trade_status, s.close_pnl, '虚拟平仓', s.pnl_type,
+                       s.actual_close_amount, s.trade_status, s.close_pnl, '虚拟平仓', s.close_pnl_type,
                        s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.created_at
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
