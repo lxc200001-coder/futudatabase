@@ -32,7 +32,7 @@ SLIPPAGE = 0.001
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -532,8 +532,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     trade_shares, slippage, trade_amount, commission,
                     actual_trade_amount, trade_status, close_pnl,
                     CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
-                    close_pnl_type,
-                    cash_before_trade, cash_after_trade, available_cash, created_at
+                    cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
                 FROM backtest_stats,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
                 WHERE trade_action IS NOT NULL
@@ -551,8 +550,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                        s.ma_len, s.trade_id, s.trade_action,
                        s.close_price_after_slippage,
                        s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
-                       s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓', s.close_pnl_type,
-                       s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.created_at
+                       s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓',
+                       s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.close_pnl_type, s.created_at
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
