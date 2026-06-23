@@ -192,23 +192,28 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
         ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
                         ac_arr, hs_arr, ts_arr, av_arr)
 
-    # 逐窗口切片构建结果（numba 已全量算完，仅切片）
+    # 预计算每根K线所属的所有窗口标签
+    _w_labels = [f"{ws.date()}~{we.date()}" for ws, we in windows]
+    _dt_arr = pd.to_datetime(df_k["datetime"]).values
+    _wl_cache = {}
+    for _i, _dt in enumerate(_dt_arr):
+        _belongs = [_w_labels[_j] for _j in range(len(windows)) if windows[_j][1] >= _dt]
+        _wl_cache[_i] = ",".join(_belongs)
+
+    # 仅末窗切片构建结果（window_label 标注所有所属窗口）
+    ws, we = windows[-1]
+    mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
+           (pd.to_datetime(df_k["datetime"]) <= we)
     all_dfs = []
-    for ws, we in windows:
-        window_label = f"{ws.date()}~{we.date()}"
-        mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
-               (pd.to_datetime(df_k["datetime"]) <= we)
-        if not mask.any():
-            continue
+    if mask.any():
         for ma in ma_range:
             (ha_ma_val, direction, signal, trade_actions, trade_prices,
              ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
             df = _build_slice_rows(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
                                    trade_actions, trade_prices, ha_close, closes,
                                    ac_arr, hs_arr, ts_arr, av_arr,
-                                   slippage, fee_rate)
+                                   slippage, fee_rate, _wl_cache)
             if df is not None and not df.empty:
-                df["window_label"] = window_label
                 all_dfs.append(df)
 
     if all_dfs:
@@ -220,7 +225,8 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
 
 def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
-                      ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate):
+                      ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
+                      wl_cache=None):
     """对切片后的预计算结果构建行（不跑 numba）。"""
     idx = np.where(mask.values)[0]
     if len(idx) == 0:
@@ -289,6 +295,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         rows.append({
             "code": str(df["code"].iloc[i]), "stock_name": str(df["stock_name"].iloc[i]) if "stock_name" in df.columns else "",
             "market": str(df["market"].iloc[i]) if "market" in df.columns else "", "ktype": ktype,
+            "window_label": wl_cache[i] if wl_cache is not None else "",
             "datetime": df["datetime"].iloc[i],
             "open": float(df["open"].iloc[i]), "high": float(df["high"].iloc[i]), "low": float(df["low"].iloc[i]),
             "close": float(c_sl[j]), "volume": float(df["volume"].iloc[i]),
