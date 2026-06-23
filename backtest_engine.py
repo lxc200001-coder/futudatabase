@@ -198,7 +198,7 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
     _wl_cache = {}
     for _i, _dt in enumerate(_dt_arr):
         _belongs = [_w_labels[_j] for _j in range(len(windows)) if windows[_j][1] >= _dt]
-        _wl_cache[_i] = ",".join(_belongs)
+        _wl_cache[_i] = (",".join(_belongs), len(_belongs))
 
     # 仅末窗切片构建结果（window_label 标注所有所属窗口）
     ws, we = windows[-1]
@@ -295,7 +295,8 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         rows.append({
             "code": str(df["code"].iloc[i]), "stock_name": str(df["stock_name"].iloc[i]) if "stock_name" in df.columns else "",
             "market": str(df["market"].iloc[i]) if "market" in df.columns else "", "ktype": ktype,
-            "window_label": wl_cache[i] if wl_cache is not None else "",
+            "window_label": wl_cache[i][0] if wl_cache is not None else "",
+            "window_count": wl_cache[i][1] if wl_cache is not None else 0,
             "datetime": df["datetime"].iloc[i],
             "open": float(df["open"].iloc[i]), "high": float(df["high"].iloc[i]), "low": float(df["low"].iloc[i]),
             "close": float(c_sl[j]), "volume": float(df["volume"].iloc[i]),
@@ -388,7 +389,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     _tmp_files = []
     _cols = ["code","stock_name","market","ktype","window_label","datetime",
         "open","high","low","close","volume","turnover","turnover_amount","source",
-        "ha_close","ma_len","ha_ma_value","trend_direction","signal","trade_id",
+        "ha_close","ma_len","ha_ma_value","trend_direction","signal",
+        "window_count","trade_id",
         "trade_action","trade_price","trade_price_after_slippage","available_cash",
         "trade_shares","trade_amount","commission","actual_trade_amount",
         "slippage","held_shares","trade_status","account_value",
