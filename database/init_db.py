@@ -386,7 +386,7 @@ def create_tables(con):
         ("close_trade_amount","平仓交易金额"),
         ("close_commission","平仓交易佣金"),
         ("close_commission","平仓交易佣金"),
-        ("close_actual_trade_amount","实际平仓交易金额(close_price_after_slippage×close_shares+close_commission)"),
+        ("close_actual_trade_amount","平仓实际交易金额"),
         ("close_pnl","平仓交易盈利"),
         ("close_type","平仓类型: 虚拟平仓/真实平仓"),
         ("close_pnl_type","盈亏类型: 盈利/亏损"),
