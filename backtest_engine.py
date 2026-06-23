@@ -472,7 +472,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 FROM backtest_stats,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
                 WHERE trade_action IS NOT NULL
-                ORDER BY code, ktype, ma_len, w, datetime, trade_id
+                ORDER BY code, ktype, w, ma_len, datetime, trade_id
             """)
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
             _cw.close()
