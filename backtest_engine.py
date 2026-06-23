@@ -584,11 +584,18 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _cw.execute("DELETE FROM backtest_performance")
             _cw.execute("""
                 INSERT INTO backtest_performance
-                WITH closes AS (
+                WITH bs_win AS (
+                    SELECT s.code, s.ktype, s.ma_len, w AS window_label,
+                           s.datetime, s.close, s.account_value, s.stock_name, s.market
+                    FROM backtest_stats s,
+                         UNNEST(STRING_SPLIT(s.window_label, ',')) AS t(w)
+                    WHERE s.datetime <= STRPTIME(SPLIT_PART(w, '~', 2), '%Y-%m-%d')
+                ),
+                closes AS (
                     SELECT code, ktype, ma_len, window_label,
                            MIN(datetime) AS first_dt, MAX(datetime) AS last_dt,
                            MIN(close) AS first_close, MAX(close) AS last_close
-                    FROM backtest_stats
+                    FROM bs_win
                     GROUP BY code, ktype, ma_len, window_label
                 ),
                 equity AS (
@@ -597,11 +604,11 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                            (array_agg(account_value ORDER BY datetime))[-1] AS final_ac,
                            COUNT(*) AS n_bars,
                            MIN(account_value) FILTER (
-                               WHERE datetime = (SELECT MIN(datetime) FROM backtest_stats s2
+                               WHERE datetime = (SELECT MIN(datetime) FROM bs_win s2
                                                   WHERE s2.code = s.code AND s2.ktype = s.ktype
                                                     AND s2.ma_len = s.ma_len AND s2.window_label = s.window_label)
                            ) AS first_ac
-                    FROM backtest_stats s
+                    FROM bs_win s
                     GROUP BY code, ktype, ma_len, window_label
                 ),
                 trades_summary AS (
@@ -656,7 +663,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     FROM (
                         SELECT *,
                                MAX(account_value) OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY datetime) AS running_max
-                        FROM backtest_stats
+                        FROM bs_win
                     ) s
                     GROUP BY code, ktype, ma_len, window_label
                 ),
@@ -666,7 +673,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     FROM (
                         SELECT *,
                                (account_value / LAG(account_value) OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY datetime) - 1) AS ret
-                        FROM backtest_stats
+                        FROM bs_win
                     ) s
                     WHERE ret IS NOT NULL
                     GROUP BY code, ktype, ma_len, window_label
@@ -728,7 +735,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     COALESCE(hb.avg_bars, 0) AS avg_hold_bars,
                     r.init_cash, r.final_cash, CURRENT_TIMESTAMP
                 FROM returns_calc r
-                LEFT JOIN (SELECT DISTINCT code, ktype, ma_len, window_label, stock_name, market FROM backtest_stats) bs
+                LEFT JOIN (SELECT DISTINCT code, ktype, ma_len, window_label, stock_name, market FROM bs_win) bs
                     ON r.code = bs.code AND r.ktype = bs.ktype AND r.ma_len = bs.ma_len AND r.window_label = bs.window_label
                 LEFT JOIN trades_summary ts ON r.code = ts.code AND r.ktype = ts.ktype AND r.ma_len = ts.ma_len AND r.window_label = ts.window_label
                 LEFT JOIN streaks st ON r.code = st.code AND r.ktype = st.ktype AND r.ma_len = st.ma_len AND r.window_label = st.window_label
