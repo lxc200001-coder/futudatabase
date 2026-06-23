@@ -370,6 +370,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "virtual_close_commission": float(_vp_comm[j]) if _vp_comm[j] is not None else None,
             "virtual_close_pnl": float(_vp_pnl[j]) if _vp_pnl[j] is not None else None,
             "cash_before_trade": float(_cash_bt[j]) if _cash_bt[j] is not None else None,
+            "cash_after_trade": float(_cash_bt[j] + _vp_pnl[j]) if _cash_bt[j] is not None and _vp_pnl[j] is not None else None,
             "change_from_initial": float(chg_init[j]),
             "change_from_initial_pct": float(chg_init_pct[j]),
             "created_at": pd.Timestamp.now(),
@@ -447,7 +448,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "change_from_initial","change_from_initial_pct",
         "virtual_close_price","virtual_close_price_after_slippage",
         "virtual_close_amount","virtual_close_commission","virtual_close_pnl",
-        "cash_before_trade",
+        "cash_before_trade","cash_after_trade",
         "created_at"]
     _sel = ",".join(_cols)
 
