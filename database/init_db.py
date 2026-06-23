@@ -418,6 +418,7 @@ def create_tables(con):
             commission              DOUBLE,
             actual_trade_amount     DOUBLE,
             trade_status            VARCHAR,
+            close_type              VARCHAR,
             created_at              TIMESTAMP
         )
     """)
@@ -428,7 +429,8 @@ def create_tables(con):
         ("trade_price_after_slippage","扣除滑点后的成交价"),
         ("available_cash","可用现金"),("trade_shares","交易股数"),
         ("trade_amount","交易金额"),("commission","佣金"),
-        ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态")]:
+        ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态"),
+        ("close_type","平仓类型: 虚拟平仓/真实平仓")]:
         con.execute(f"COMMENT ON COLUMN backtest_trades.{_c} IS '{_d}'")
 
     # 表描述
