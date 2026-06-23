@@ -446,6 +446,57 @@ def create_tables(con):
         ("cash_after_trade","交易后可用现金")]:
         con.execute(f"COMMENT ON COLUMN backtest_trades.{_c} IS '{_d}'")
 
+    # ── 策略表现表（从 backtest_stats + backtest_trades 派生）──
+    con.execute("DROP TABLE IF EXISTS backtest_performance")
+    con.execute("""
+        CREATE TABLE backtest_performance (
+            code                    VARCHAR,
+            stock_name              VARCHAR,
+            market                  VARCHAR,
+            ktype                   VARCHAR,
+            window_label            VARCHAR,
+            ma_len                  INTEGER,
+            total_return            DOUBLE,
+            cagr                    DOUBLE,
+            buy_hold_return         DOUBLE,
+            excess_return           DOUBLE,
+            avg_trade_return        DOUBLE,
+            max_drawdown            DOUBLE,
+            sharpe_ratio            DOUBLE,
+            calmar_ratio            DOUBLE,
+            trade_count             INTEGER,
+            win_rate                DOUBLE,
+            profit_factor           DOUBLE,
+            payoff_ratio            DOUBLE,
+            avg_win                 DOUBLE,
+            avg_win_pct             DOUBLE,
+            avg_loss                DOUBLE,
+            avg_loss_pct            DOUBLE,
+            max_win                 DOUBLE,
+            max_loss                DOUBLE,
+            max_win_streak          INTEGER,
+            max_loss_streak         INTEGER,
+            avg_hold_days           DOUBLE,
+            avg_hold_bars           DOUBLE,
+            initial_cash            DOUBLE,
+            final_cash              DOUBLE,
+            created_at              TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_performance IS '策略表现汇总'")
+    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
+        ("ktype","K线周期"),("window_label","窗口标签"),("ma_len","均线周期"),
+        ("total_return","收益率"),("cagr","年化收益率"),("buy_hold_return","买入持有收益率"),
+        ("excess_return","超额收益率"),("avg_trade_return","平均每笔收益率"),
+        ("max_drawdown","最大回撤"),("sharpe_ratio","夏普比率"),("calmar_ratio","卡尔玛比率"),
+        ("trade_count","交易次数"),("win_rate","盈利交易率"),("profit_factor","盈利因子"),
+        ("payoff_ratio","盈亏比"),("avg_win","平均盈利"),("avg_win_pct","平均盈利比"),
+        ("avg_loss","平均亏损"),("avg_loss_pct","平均亏损比"),("max_win","最大单笔盈利"),
+        ("max_loss","最大单笔亏损"),("max_win_streak","最大连续盈利次数"),
+        ("max_loss_streak","最大连续亏损次数"),("avg_hold_days","平均持仓天数"),
+        ("avg_hold_bars","平均持仓K线数"),("initial_cash","初始资金"),("final_cash","最终资金")]:
+        con.execute(f"COMMENT ON COLUMN backtest_performance.{_c} IS '{_d}'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -589,7 +640,7 @@ def list_all(con):
     names = ["watchlist",
              "klines_1d", "klines_1w",
              "v_klines_1d", "v_klines_1w",
-             "backtest_trades", "backtest_summary", "backtest_scores",
+             "backtest_trades", "backtest_performance", "backtest_summary", "backtest_scores",
              "backtest_stability", "backtest_signals", "backtest_stats"]
     for name in names:
         try:
@@ -628,7 +679,7 @@ if __name__ == "__main__":
 
     if args.reset:
         for tbl in ["watchlist", "plates", "turnover_rankings", "stooq_local_all_us_stocks",
-                     "backtest_trades", "backtest_summary", "backtest_scores",
+                     "backtest_trades", "backtest_performance", "backtest_summary", "backtest_scores",
                      "backtest_stability", "backtest_signals", "backtest_stats",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",

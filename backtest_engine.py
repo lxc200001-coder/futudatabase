@@ -578,10 +578,133 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _cw.execute("DROP TABLE backtest_trades")
             _cw.execute("ALTER TABLE backtest_trades_sorted RENAME TO backtest_trades")
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
-            _cw.close()
             print(f"  交易记录: {_cnt:,} 行")
+
+            # 派生策略表现表
+            _cw.execute("DELETE FROM backtest_performance")
+            _cw.execute("""
+                INSERT INTO backtest_performance
+                WITH closes AS (
+                    SELECT code, ktype, ma_len, window_label,
+                           MIN(datetime) AS first_dt, MAX(datetime) AS last_dt,
+                           MIN(close) AS first_close, MAX(close) AS last_close
+                    FROM backtest_stats
+                    GROUP BY code, ktype, ma_len, window_label
+                ),
+                equity AS (
+                    SELECT code, ktype, ma_len, window_label,
+                           MIN(account_value) AS min_ac, MAX(account_value) AS max_ac,
+                           (array_agg(account_value ORDER BY datetime))[-1] AS final_ac,
+                           COUNT(*) AS n_bars,
+                           MIN(account_value) FILTER (
+                               WHERE datetime = (SELECT MIN(datetime) FROM backtest_stats s2
+                                                  WHERE s2.code = s.code AND s2.ktype = s.ktype
+                                                    AND s2.ma_len = s.ma_len AND s2.window_label = s.window_label)
+                           ) AS first_ac
+                    FROM backtest_stats s
+                    GROUP BY code, ktype, ma_len, window_label
+                ),
+                trades_summary AS (
+                    SELECT t.code, t.ktype, t.ma_len, t.window_label,
+                           COUNT(DISTINCT t.trade_id) FILTER (WHERE t.trade_action = '开多') AS n_trades,
+                           COUNT(*) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl IS NOT NULL) AS n_closed,
+                           COUNT(*) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl > 0) AS n_wins,
+                           COUNT(*) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS n_losses,
+                           SUM(t.close_pnl) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl > 0) AS total_win,
+                           SUM(t.close_pnl) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS total_loss,
+                           AVG(t.close_pnl) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl > 0) AS avg_win,
+                           AVG(t.close_pnl) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS avg_loss,
+                           MAX(t.close_pnl) FILTER (WHERE t.trade_action = '平多') AS max_win,
+                           MIN(t.close_pnl) FILTER (WHERE t.trade_action = '平多') AS max_loss,
+                           AVG(t.close_amount) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl > 0) AS avg_win_amt,
+                           AVG(t.close_amount) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS avg_loss_amt,
+                           SUM(t.cash_before_trade) FILTER (WHERE t.trade_action = '开多') AS total_cash_before,
+                           SUM(t.close_pnl) FILTER (WHERE t.trade_action = '平多') AS total_pnl
+                    FROM backtest_trades t
+                    GROUP BY t.code, t.ktype, t.ma_len, t.window_label
+                ),
+                streaks AS (
+                    SELECT code, ktype, ma_len, window_label,
+                           MAX(CASE WHEN close_pnl > 0 THEN streak_len ELSE 0 END) AS max_win_streak,
+                           MAX(CASE WHEN close_pnl < 0 THEN streak_len ELSE 0 END) AS max_loss_streak
+                    FROM (
+                        SELECT *, COUNT(*) OVER (PARTITION BY code, ktype, ma_len, window_label, grp) AS streak_len
+                        FROM (
+                            SELECT *,
+                                   ROW_NUMBER() OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY trade_id)
+                                   - ROW_NUMBER() OVER (PARTITION BY code, ktype, ma_len, window_label,
+                                                         CASE WHEN close_pnl > 0 THEN 1 ELSE 0 END ORDER BY trade_id) AS grp
+                            FROM backtest_trades
+                            WHERE trade_action = '平多' AND close_pnl IS NOT NULL
+                        ) s
+                    ) s
+                    GROUP BY code, ktype, ma_len, window_label
+                ),
+                hold_times AS (
+                    SELECT o.code, o.ktype, o.ma_len, o.window_label,
+                           AVG(c.datetime - o.datetime) AS avg_hold_time
+                    FROM backtest_trades o
+                    JOIN backtest_trades c ON o.code = c.code AND o.ktype = c.ktype
+                        AND o.ma_len = c.ma_len AND o.window_label = c.window_label
+                        AND o.trade_id = c.trade_id
+                    WHERE o.trade_action = '开多' AND c.trade_action = '平多'
+                    GROUP BY o.code, o.ktype, o.ma_len, o.window_label
+                ),
+                dd AS (
+                    SELECT code, ktype, ma_len, window_label,
+                           MAX((running_max - account_value) / running_max * 100) AS max_dd
+                    FROM (
+                        SELECT *,
+                               MAX(account_value) OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY datetime) AS running_max
+                        FROM backtest_stats
+                    ) s
+                    GROUP BY code, ktype, ma_len, window_label
+                ),
+                returns_calc AS (
+                    SELECT code, ktype, ma_len, window_label,
+                           (final_ac / first_ac - 1) * 100 AS total_ret,
+                           EXTRACT(EPOCH FROM (last_dt - first_dt)) / 86400 / 365.0 AS years,
+                           last_close / NULLIF(first_close, 0) * 100 AS buy_hold,
+                           first_ac AS init_cash,
+                           final_ac AS final_cash
+                    FROM equity JOIN closes USING (code, ktype, ma_len, window_label)
+                )
+                SELECT
+                    r.code, '', '', '', r.window_label, r.ma_len,
+                    r.total_ret,
+                    CASE WHEN r.years > 0 THEN (POWER(r.final_cash / NULLIF(r.init_cash, 0), 1.0 / r.years) - 1) * 100 ELSE 0 END AS cagr,
+                    r.buy_hold - 100 AS buy_hold_return,
+                    r.total_ret - (r.buy_hold - 100) AS excess_return,
+                    CASE WHEN ts.n_trades > 0 THEN ts.total_pnl / NULLIF(ts.total_cash_before, 0) * 100 ELSE 0 END AS avg_trade_return,
+                    COALESCE(dd.max_dd, 0) AS max_drawdown,
+                    0 AS sharpe_ratio,
+                    0 AS calmar_ratio,
+                    COALESCE(ts.n_trades, 0) AS trade_count,
+                    CASE WHEN ts.n_closed > 0 THEN ts.n_wins * 100.0 / ts.n_closed ELSE 0 END AS win_rate,
+                    CASE WHEN ts.total_loss < 0 THEN ts.total_win / ABS(ts.total_loss) ELSE 0 END AS profit_factor,
+                    CASE WHEN ts.avg_loss > 0 THEN ABS(ts.avg_win) / ABS(ts.avg_loss) ELSE 0 END AS payoff_ratio,
+                    COALESCE(ts.avg_win, 0) AS avg_win,
+                    COALESCE(ts.avg_win_amt, 0) AS avg_win_pct,
+                    COALESCE(ts.avg_loss, 0) AS avg_loss,
+                    COALESCE(ts.avg_loss_amt, 0) AS avg_loss_pct,
+                    COALESCE(ts.max_win, 0) AS max_win,
+                    COALESCE(ts.max_loss, 0) AS max_loss,
+                    COALESCE(st.max_win_streak, 0) AS max_win_streak,
+                    COALESCE(st.max_loss_streak, 0) AS max_loss_streak,
+                    EXTRACT(EPOCH FROM ht.avg_hold_time) / 86400 AS avg_hold_days,
+                    EXTRACT(EPOCH FROM ht.avg_hold_time) / 86400 / 7 AS avg_hold_bars,
+                    r.init_cash, r.final_cash, CURRENT_TIMESTAMP
+                FROM returns_calc r
+                LEFT JOIN trades_summary ts ON r.code = ts.code AND r.ktype = ts.ktype AND r.ma_len = ts.ma_len AND r.window_label = ts.window_label
+                LEFT JOIN streaks st ON r.code = st.code AND r.ktype = st.ktype AND r.ma_len = st.ma_len AND r.window_label = st.window_label
+                LEFT JOIN hold_times ht ON r.code = ht.code AND r.ktype = ht.ktype AND r.ma_len = ht.ma_len AND r.window_label = ht.window_label
+                LEFT JOIN dd ON r.code = dd.code AND r.ktype = dd.ktype AND r.ma_len = dd.ma_len AND r.window_label = dd.window_label
+            """)
+            _cw.close()
+            print(f"  策略表现: 已生成")
         except Exception as e:
-            print(f"  交易记录派生失败: {e}")
+            print(f"  派生失败: {e}")
+            _cw.close()
 
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
 
