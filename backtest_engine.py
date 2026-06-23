@@ -29,7 +29,7 @@ DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 SLIPPAGE = 0.001
-TRADE_MODE = "open"   # close / open
+TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
 DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
@@ -292,6 +292,8 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     # 虚拟平仓（持仓中逐K线模拟平仓）
     _vp_price = np.full(n_sl, None, dtype=object)
     _vp_price_slip = np.full(n_sl, None, dtype=object)
+    _vp_shares = np.full(n_sl, None, dtype=object)
+    _vp_slip_cost = np.full(n_sl, None, dtype=object)
     _vp_amt = np.full(n_sl, None, dtype=object)
     _vp_comm = np.full(n_sl, None, dtype=object)
     _vp_pnl = np.full(n_sl, None, dtype=object)
@@ -314,12 +316,14 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         if _entry_tp_slip is not None and _eff_hs > 0:
             vp = c_sl[j] if trade_mode == "close" else float(df["open"].iloc[idx[j]])
             vp_slip = vp * (1 - slippage)
-            vp_amt = vp_slip * _eff_hs
-            vp_comm = vp_amt * fee_rate
+            vp_slip_amt = vp_slip * _eff_hs
+            vp_comm = vp_slip_amt * fee_rate
             vp_pnl = (vp_slip - _entry_tp_slip) * _eff_hs - vp_comm - (_entry_comm or 0)
             _vp_price[j] = float(vp)
             _vp_price_slip[j] = float(vp_slip)
-            _vp_amt[j] = float(vp_amt)
+            _vp_shares[j] = float(_eff_hs)
+            _vp_slip_cost[j] = float(abs(vp_slip - vp) * _eff_hs)
+            _vp_amt[j] = float(vp_slip_amt)
             _vp_comm[j] = float(vp_comm)
             _vp_pnl[j] = float(vp_pnl)
 
@@ -366,6 +370,8 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "account_value_change_pct": float(acc_chg_pct[j]),
             "virtual_close_price": float(_vp_price[j]) if _vp_price[j] is not None else None,
             "virtual_close_price_after_slippage": float(_vp_price_slip[j]) if _vp_price_slip[j] is not None else None,
+            "virtual_close_shares": float(_vp_shares[j]) if _vp_shares[j] is not None else None,
+            "virtual_close_slippage": float(_vp_slip_cost[j]) if _vp_slip_cost[j] is not None else None,
             "virtual_close_amount": float(_vp_amt[j]) if _vp_amt[j] is not None else None,
             "virtual_close_commission": float(_vp_comm[j]) if _vp_comm[j] is not None else None,
             "virtual_close_pnl": float(_vp_pnl[j]) if _vp_pnl[j] is not None else None,
@@ -447,6 +453,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "account_value_change","account_value_change_pct",
         "change_from_initial","change_from_initial_pct",
         "virtual_close_price","virtual_close_price_after_slippage",
+        "virtual_close_shares","virtual_close_slippage",
         "virtual_close_amount","virtual_close_commission","virtual_close_pnl",
         "cash_before_trade","cash_after_trade",
         "created_at"]
