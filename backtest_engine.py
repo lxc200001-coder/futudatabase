@@ -412,6 +412,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
     # 所有子进程结束→DuckDB 原生批量读 parquet（比逐行快 100 倍）
     if _tmp_files:
+        print("  写入中...", end=" ", flush=True)
         _cw = duckdb.connect(DB_PATH)
         _plist = ",".join(f"'{p}'" for p in _tmp_files)
         _cw.execute(f"""
@@ -427,6 +428,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
     # 全局排序（设置临时目录避免 OOM）
     if total_rows > 0:
+        print("  排序中...", end=" ", flush=True)
         _tmp_dir = os.path.join(PROJECT_ROOT, "results_uscncc", "_duckdb_tmp")
         os.makedirs(_tmp_dir, exist_ok=True)
         _cw = duckdb.connect(DB_PATH)
@@ -442,6 +444,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
     # 派生交易记录表
     if total_rows > 0:
+        print("  派生交易记录...", end=" ", flush=True)
         try:
             _cw = duckdb.connect(DB_PATH)
             _cw.execute("DELETE FROM backtest_trades")
