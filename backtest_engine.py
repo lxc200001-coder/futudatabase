@@ -147,41 +147,35 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
         # ha_ma_val (全量，bottleneck 加速)
         ha_ma_val = bn.move_mean(ha_close, window=ma, min_count=ma)
 
-        # direction (全量)
-        direction = np.full(n, "空头", dtype=object)
-        for i in range(1, n):
-            if not np.isnan(ha_ma_val[i]) and not np.isnan(ha_ma_val[i - 1]):
-                direction[i] = "多头" if ha_ma_val[i] > ha_ma_val[i - 1] else "空头"
+        # direction / signal（全量，向量化）
+        _up = np.zeros(n, dtype=np.int8)
+        _valid = ~np.isnan(ha_ma_val)
+        _up[1:] = np.where(_valid[1:] & _valid[:-1] & (ha_ma_val[1:] > ha_ma_val[:-1]), 1, 0)
+        _up[:1] = 0
 
-        # signal (全量)
+        direction = np.where(_up == 1, "多头", "空头")
         signal = np.full(n, "", dtype=object)
-        for i in range(1, n):
-            if direction[i] == "多头" and direction[i - 1] == "空头":
-                signal[i] = "买入"
-            elif direction[i] == "多头" and direction[i - 1] == "多头":
-                signal[i] = "持有"
-            elif direction[i] == "空头" and direction[i - 1] == "多头":
-                signal[i] = "卖出"
-            elif direction[i] == "空头" and direction[i - 1] == "空头":
-                signal[i] = "等待"
-        if n > 0:
-            signal[0] = "等待"
+        signal[0] = "等待"
+        _du = _up[1:] == 1; _dd = _up[1:] == 0
+        _pu = _up[:-1] == 1; _pd = _up[:-1] == 0
+        signal[1:][_du & _pd] = "买入"    # 多头←空头
+        signal[1:][_du & _pu] = "持有"    # 多头→多头
+        signal[1:][_dd & _pu] = "卖出"    # 空头←多头
+        signal[1:][_dd & _pd] = "等待"    # 空头→空头
 
-        # trade_actions / trade_prices (全量)
+        # trade_actions / trade_prices（向量化）
         trade_actions = np.zeros(n, dtype=np.int64)
         trade_prices = np.full(n, np.nan, dtype=np.float64)
+        _buy = np.char.equal(signal, "买入")
+        _sell = np.char.equal(signal, "卖出")
         if trade_mode == "close":
-            for i in range(n):
-                if signal[i] == "买入":
-                    trade_actions[i] = 1; trade_prices[i] = closes[i]
-                elif signal[i] == "卖出":
-                    trade_actions[i] = 2; trade_prices[i] = closes[i]
+            trade_actions[_buy] = 1; trade_prices[_buy] = closes[_buy]
+            trade_actions[_sell] = 2; trade_prices[_sell] = closes[_sell]
         else:
-            for i in range(1, n):
-                if signal[i - 1] == "买入":
-                    trade_actions[i] = 1; trade_prices[i] = opens_arr[i]
-                elif signal[i - 1] == "卖出":
-                    trade_actions[i] = 2; trade_prices[i] = opens_arr[i]
+            _buy1 = np.roll(_buy, 1); _buy1[0] = False
+            _sell1 = np.roll(_sell, 1); _sell1[0] = False
+            trade_actions[_buy1] = 1; trade_prices[_buy1] = opens_arr[_buy1]
+            trade_actions[_sell1] = 2; trade_prices[_sell1] = opens_arr[_sell1]
 
         # 全量 numba（一次算完，所有窗口共用）
         (ac_arr, hs_arr, ts_arr, _, _, av_arr) = _numba_account_loop(
