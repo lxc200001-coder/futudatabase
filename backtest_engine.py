@@ -699,7 +699,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     FROM equity JOIN closes USING (code, ktype, ma_len, window_label)
                 )
                 SELECT
-                    r.code, '', '', '', r.window_label, r.ma_len,
+                    r.code, bs.stock_name, bs.market, bs.ktype, r.window_label, r.ma_len,
                     r.total_ret,
                     CASE WHEN r.years > 0 THEN (POWER(r.final_cash / NULLIF(r.init_cash, 0), 1.0 / r.years) - 1) * 100 ELSE 0 END AS cagr,
                     r.buy_hold - 100 AS buy_hold_return,
@@ -728,6 +728,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     COALESCE(hb.avg_bars, 0) AS avg_hold_bars,
                     r.init_cash, r.final_cash, CURRENT_TIMESTAMP
                 FROM returns_calc r
+                LEFT JOIN (SELECT DISTINCT code, ktype, ma_len, window_label, stock_name, market FROM backtest_stats) bs
+                    ON r.code = bs.code AND r.ktype = bs.ktype AND r.ma_len = bs.ma_len AND r.window_label = bs.window_label
                 LEFT JOIN trades_summary ts ON r.code = ts.code AND r.ktype = ts.ktype AND r.ma_len = ts.ma_len AND r.window_label = ts.window_label
                 LEFT JOIN streaks st ON r.code = st.code AND r.ktype = st.ktype AND r.ma_len = st.ma_len AND r.window_label = st.window_label
                 LEFT JOIN hold_times ht ON r.code = ht.code AND r.ktype = ht.ktype AND r.ma_len = ht.ma_len AND r.window_label = ht.window_label
