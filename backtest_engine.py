@@ -21,6 +21,7 @@ from tqdm import tqdm
 import duckdb
 import pandas as pd
 import numpy as np
+import bottleneck as bn
 from numba import njit
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -143,10 +144,8 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
     # 全量计算每个 MA 的信号数组（避免对每个窗口重复计算）
     ma_cache = {}  # ma → {ha_ma_val, direction, signal, trade_actions, trade_prices}
     for ma in ma_range:
-        # ha_ma_val (全量)
-        ha_ma_val = np.full(n, np.nan, dtype=np.float64)
-        for i in range(ma - 1, n):
-            ha_ma_val[i] = ha_close[i - ma + 1:i + 1].mean()
+        # ha_ma_val (全量，bottleneck 加速)
+        ha_ma_val = bn.move_mean(ha_close, window=ma, min_count=ma)
 
         # direction (全量)
         direction = np.full(n, "空头", dtype=object)
