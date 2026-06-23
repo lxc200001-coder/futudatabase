@@ -303,24 +303,27 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         hs = hs_sl[j]
         ts_val = ts_sl[j]
 
-        if ta == 1 and not np.isnan(tp):  # 开多：记录入场价
+        if ta == 1 and not np.isnan(tp):  # 开多
             _entry_tp_slip = float(tp * (1 + slippage))
             _entry_comm = float(_entry_tp_slip * ts_val * fee_rate) if ts_val > 0 else 0.0
-        elif ta == 2:  # 平多：清零
-            _entry_tp_slip = None
-            _entry_comm = None
 
-        if _entry_tp_slip is not None and hs > 0:
+        # 虚拟平仓计算（持仓中/hs>0 或 平多行都算）
+        _eff_hs = hs if hs > 0 else (ts_val if ta == 2 else 0)
+        if _entry_tp_slip is not None and _eff_hs > 0:
             vp = closes[j] if trade_mode == "close" else float(df["open"].iloc[idx[j]])
             vp_slip = vp * (1 - slippage)
-            vp_amt = vp_slip * hs
+            vp_amt = vp_slip * _eff_hs
             vp_comm = vp_amt * fee_rate
-            vp_pnl = (vp_slip - _entry_tp_slip) * hs - vp_comm - (_entry_comm or 0)
+            vp_pnl = (vp_slip - _entry_tp_slip) * _eff_hs - vp_comm - (_entry_comm or 0)
             _vp_price[j] = float(vp)
             _vp_price_slip[j] = float(vp_slip)
             _vp_amt[j] = float(vp_amt)
             _vp_comm[j] = float(vp_comm)
             _vp_pnl[j] = float(vp_pnl)
+
+        if ta == 2:  # 平多：清零（在虚拟平仓计算之后）
+            _entry_tp_slip = None
+            _entry_comm = None
 
     rows = []
     for j in range(n_sl):
