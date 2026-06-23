@@ -32,7 +32,7 @@ SLIPPAGE = 0.001
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -472,7 +472,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 FROM backtest_stats,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
                 WHERE trade_action IS NOT NULL
-                ORDER BY code, ktype, w, ma_len, datetime, trade_id
+                ORDER BY code, ktype, w, ma_len
             """)
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
             _cw.close()
