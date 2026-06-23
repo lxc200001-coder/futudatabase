@@ -312,7 +312,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         # 虚拟平仓计算（持仓中/hs>0 或 平多行都算）
         _eff_hs = hs if hs > 0 else (ts_val if ta == 2 else 0)
         if _entry_tp_slip is not None and _eff_hs > 0:
-            vp = closes[j] if trade_mode == "close" else float(df["open"].iloc[idx[j]])
+            vp = c_sl[j] if trade_mode == "close" else float(df["open"].iloc[idx[j]])
             vp_slip = vp * (1 - slippage)
             vp_amt = vp_slip * _eff_hs
             vp_comm = vp_amt * fee_rate
