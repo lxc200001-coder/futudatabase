@@ -660,6 +660,35 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     ) s
                     GROUP BY code, ktype, ma_len, window_label
                 ),
+                returns AS (
+                    SELECT code, ktype, ma_len, window_label,
+                           STDDEV_SAMP(ret) AS ret_std, AVG(ret) AS ret_avg
+                    FROM (
+                        SELECT *,
+                               (account_value / LAG(account_value) OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY datetime) - 1) AS ret
+                        FROM backtest_stats
+                    ) s
+                    WHERE ret IS NOT NULL
+                    GROUP BY code, ktype, ma_len, window_label
+                ),
+                hold_bars AS (
+                    SELECT o.code, o.ktype, o.ma_len, o.window_label,
+                           AVG(o.hold_bars) AS avg_bars
+                    FROM (
+                        SELECT o.code, o.ktype, o.ma_len, o.window_label, o.trade_id,
+                               c.rn - o.rn AS hold_bars
+                        FROM (
+                            SELECT *, ROW_NUMBER() OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY datetime) AS rn
+                            FROM backtest_trades WHERE trade_action = '开多'
+                        ) o
+                        JOIN (
+                            SELECT *, ROW_NUMBER() OVER (PARTITION BY code, ktype, ma_len, window_label ORDER BY datetime) AS rn
+                            FROM backtest_trades WHERE trade_action = '平多'
+                        ) c ON o.code = c.code AND o.ktype = c.ktype AND o.ma_len = c.ma_len
+                            AND o.window_label = c.window_label AND o.trade_id = c.trade_id
+                    ) o
+                    GROUP BY o.code, o.ktype, o.ma_len, o.window_label
+                ),
                 returns_calc AS (
                     SELECT code, ktype, ma_len, window_label,
                            (final_ac / first_ac - 1) * 100 AS total_ret,
@@ -677,8 +706,12 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     r.total_ret - (r.buy_hold - 100) AS excess_return,
                     CASE WHEN ts.n_trades > 0 THEN ts.total_pnl / NULLIF(ts.total_cash_before, 0) * 100 ELSE 0 END AS avg_trade_return,
                     COALESCE(dd.max_dd, 0) AS max_drawdown,
-                    0 AS sharpe_ratio,
-                    0 AS calmar_ratio,
+                    CASE WHEN returns.ret_std > 0
+                         THEN returns.ret_avg / returns.ret_std * SQRT(CASE WHEN r.ktype = '1d' THEN 252 ELSE 52 END)
+                         ELSE 0 END AS sharpe_ratio,
+                    CASE WHEN COALESCE(dd.max_dd, 0) > 0
+                         THEN CASE WHEN r.years > 0 THEN (POWER(r.final_cash / NULLIF(r.init_cash, 0), 1.0 / r.years) - 1) * 100 ELSE 0 END
+                              / ABS(dd.max_dd) ELSE 0 END AS calmar_ratio,
                     COALESCE(ts.n_trades, 0) AS trade_count,
                     CASE WHEN ts.n_closed > 0 THEN ts.n_wins * 100.0 / ts.n_closed ELSE 0 END AS win_rate,
                     CASE WHEN ts.total_loss < 0 THEN ts.total_win / ABS(ts.total_loss) ELSE 0 END AS profit_factor,
@@ -692,13 +725,15 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     COALESCE(st.max_win_streak, 0) AS max_win_streak,
                     COALESCE(st.max_loss_streak, 0) AS max_loss_streak,
                     EXTRACT(EPOCH FROM ht.avg_hold_time) / 86400 AS avg_hold_days,
-                    EXTRACT(EPOCH FROM ht.avg_hold_time) / 86400 / 7 AS avg_hold_bars,
+                    COALESCE(hb.avg_bars, 0) AS avg_hold_bars,
                     r.init_cash, r.final_cash, CURRENT_TIMESTAMP
                 FROM returns_calc r
                 LEFT JOIN trades_summary ts ON r.code = ts.code AND r.ktype = ts.ktype AND r.ma_len = ts.ma_len AND r.window_label = ts.window_label
                 LEFT JOIN streaks st ON r.code = st.code AND r.ktype = st.ktype AND r.ma_len = st.ma_len AND r.window_label = st.window_label
                 LEFT JOIN hold_times ht ON r.code = ht.code AND r.ktype = ht.ktype AND r.ma_len = ht.ma_len AND r.window_label = ht.window_label
                 LEFT JOIN dd ON r.code = dd.code AND r.ktype = dd.ktype AND r.ma_len = dd.ma_len AND r.window_label = dd.window_label
+                LEFT JOIN returns ON r.code = returns.code AND r.ktype = returns.ktype AND r.ma_len = returns.ma_len AND r.window_label = returns.window_label
+                LEFT JOIN hold_bars hb ON r.code = hb.code AND r.ktype = hb.ktype AND r.ma_len = hb.ma_len AND r.window_label = hb.window_label
             """)
             _cw.close()
             print(f"  策略表现: 已生成")
