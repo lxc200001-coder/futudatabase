@@ -511,61 +511,59 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         _cw.execute("ALTER TABLE backtest_stats_sorted RENAME TO backtest_stats")
         _cw.close()
 
-    # 派生交易记录表（逐窗口筛选）
+    # 派生交易记录表
     if total_rows > 0:
         print("  派生交易记录...", end=" ", flush=True)
         try:
             _cw = duckdb.connect(DB_PATH)
             _cw.execute("DELETE FROM backtest_trades")
-            for _ws, _we in windows:
-                _wl = f"{_ws.date()}~{_we.date()}"
-                # 实际交易
-                _cw.execute("""
-                    INSERT INTO backtest_trades (
-                        code, stock_name, market, ktype, window_label, datetime,
-                        ma_len, trade_id, trade_action, trade_price_after_slippage,
-                        available_cash, trade_shares, trade_amount, commission,
-                        actual_trade_amount, trade_status, close_type, created_at
-                    )
-                    SELECT code, stock_name, market, ktype, ?, datetime,
-                           ma_len, trade_id, trade_action, trade_price_after_slippage,
-                           available_cash, trade_shares, trade_amount, commission,
-                           actual_trade_amount, trade_status,
-                           CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
-                           created_at
-                    FROM backtest_stats
-                    WHERE trade_action IS NOT NULL
-                      AND window_label LIKE ?
-                """, [_wl, f"%{_wl}%"])
-                # 虚拟平仓
-                _cw.execute("""
-                    INSERT INTO backtest_trades (
-                        code, stock_name, market, ktype, window_label, datetime,
-                        ma_len, trade_id, trade_action, trade_price_after_slippage,
-                        available_cash, trade_shares, trade_amount, commission,
-                        actual_trade_amount, trade_status, close_type, created_at
-                    )
-                    SELECT s.code, s.stock_name, s.market, s.ktype, ?, s.datetime,
-                           s.ma_len, s.trade_id, '平多',
-                           s.close_price_after_slippage, s.cash_after_trade,
-                           s.close_shares, s.close_amount, s.close_commission,
-                           s.actual_close_amount, '已平仓', '虚拟平仓', s.created_at
-                    FROM (
-                        SELECT *, ROW_NUMBER() OVER (
-                            PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
-                        ) AS rn
-                        FROM backtest_stats s
-                        WHERE trade_status = '持仓中'
-                          AND window_label LIKE ?
-                          AND NOT EXISTS (
-                            SELECT 1 FROM backtest_stats s2
-                            WHERE s2.code = s.code AND s2.ktype = s.ktype
-                              AND s2.ma_len = s.ma_len AND s2.trade_id = s.trade_id
-                              AND s2.trade_action = '平多'
-                          )
-                    ) s
-                    WHERE s.rn = 1
-                """, [_wl, f"%{_wl}%"])
+            _cw.execute("""
+                INSERT INTO backtest_trades (
+                    code, stock_name, market, ktype, window_label, datetime,
+                    ma_len, trade_id, trade_action, trade_price_after_slippage,
+                    available_cash, trade_shares, trade_amount, commission,
+                    actual_trade_amount, trade_status, close_type, created_at
+                )
+                SELECT
+                    code, stock_name, market, ktype, w, datetime,
+                    ma_len, trade_id, trade_action, trade_price_after_slippage,
+                    available_cash, trade_shares, trade_amount, commission,
+                    actual_trade_amount, trade_status,
+                    CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
+                    created_at
+                FROM backtest_stats,
+                     UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
+                WHERE trade_action IS NOT NULL
+            """)
+            # 为未平仓交易补虚拟平仓行
+            _cw.execute("""
+                INSERT INTO backtest_trades (
+                    code, stock_name, market, ktype, window_label, datetime,
+                    ma_len, trade_id, trade_action, trade_price_after_slippage,
+                    available_cash, trade_shares, trade_amount, commission,
+                    actual_trade_amount, trade_status, close_type, created_at
+                )
+                SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
+                       s.ma_len, s.trade_id, '平多',
+                       s.close_price_after_slippage, s.cash_after_trade,
+                       s.close_shares, s.close_amount, s.close_commission,
+                       s.actual_close_amount, '已平仓', '虚拟平仓', s.created_at
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
+                    ) AS rn
+                    FROM backtest_stats s
+                    WHERE trade_status = '持仓中'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM backtest_stats s2
+                        WHERE s2.code = s.code AND s2.ktype = s.ktype
+                          AND s2.ma_len = s.ma_len AND s2.trade_id = s.trade_id
+                          AND s2.trade_action = '平多'
+                      )
+                ) s,
+                     UNNEST(STRING_SPLIT(s.window_label, ',')) AS t(w)
+                WHERE s.rn = 1
+            """)
             # 全局排序
             _cw.execute("""
                 CREATE TABLE backtest_trades_sorted AS
