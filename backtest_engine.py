@@ -295,8 +295,10 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     _vp_amt = np.full(n_sl, None, dtype=object)
     _vp_comm = np.full(n_sl, None, dtype=object)
     _vp_pnl = np.full(n_sl, None, dtype=object)
+    _cash_bt = np.full(n_sl, None, dtype=object)  # 交易前可用现金
     _entry_tp_slip = None
     _entry_comm = None
+    _virtual_cash = INITIAL_CASH
     for j in range(n_sl):
         ta = trade_actions[idx[j]]
         tp = trade_prices[idx[j]]
@@ -320,6 +322,13 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             _vp_amt[j] = float(vp_amt)
             _vp_comm[j] = float(vp_comm)
             _vp_pnl[j] = float(vp_pnl)
+
+        # 交易前可用现金
+        _cash_bt[j] = float(_virtual_cash)
+        if ta == 1 and ts_val > 0:  # 开多：扣减实际交易金额
+            _virtual_cash -= ts_val * float(tp * (1 + slippage)) * (1 + fee_rate)
+        elif ta == 2 and _vp_pnl[j] is not None:  # 平多：加上虚拟平仓盈利
+            _virtual_cash += float(_vp_pnl[j])
 
         if ta == 2:  # 平多：清零（在虚拟平仓计算之后）
             _entry_tp_slip = None
@@ -362,6 +371,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "virtual_close_amount": float(_vp_amt[j]) if _vp_amt[j] is not None else None,
             "virtual_close_commission": float(_vp_comm[j]) if _vp_comm[j] is not None else None,
             "virtual_close_pnl": float(_vp_pnl[j]) if _vp_pnl[j] is not None else None,
+            "cash_before_trade": float(_cash_bt[j]) if _cash_bt[j] is not None else None,
             "change_from_initial": float(chg_init[j]),
             "change_from_initial_pct": float(chg_init_pct[j]),
             "created_at": pd.Timestamp.now(),
@@ -439,6 +449,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "change_from_initial","change_from_initial_pct",
         "virtual_close_price","virtual_close_price_after_slippage",
         "virtual_close_amount","virtual_close_commission","virtual_close_pnl",
+        "cash_before_trade",
         "created_at"]
     _sel = ",".join(_cols)
 
