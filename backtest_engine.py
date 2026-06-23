@@ -535,6 +535,31 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 ORDER BY code, ktype, w, ma_len, datetime, trade_id
             """)
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
+            # 为未平仓交易补虚拟平仓行
+            _cw.execute("""
+                INSERT INTO backtest_trades (
+                    code, stock_name, market, ktype, window_label, datetime,
+                    ma_len, trade_id, trade_action, trade_price_after_slippage,
+                    available_cash, trade_shares, trade_amount, commission,
+                    actual_trade_amount, trade_status, created_at
+                )
+                SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
+                       s.ma_len, s.trade_id, '平多',
+                       s.close_price_after_slippage, s.cash_after_trade,
+                       s.close_shares, s.close_amount, s.close_commission,
+                       s.actual_close_amount, '已平仓', s.created_at
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
+                    ) AS rn
+                    FROM backtest_stats
+                    WHERE trade_status = '持仓中'
+                ) s,
+                     UNNEST(STRING_SPLIT(s.window_label, ',')) AS t(w)
+                WHERE s.rn = 1
+                ORDER BY code, ktype, w, ma_len, datetime, trade_id
+            """)
+            _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
             _cw.close()
             print(f"  交易记录: {_cnt:,} 行")
         except Exception as e:
