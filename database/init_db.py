@@ -384,6 +384,7 @@ def create_tables(con):
             ktype                   VARCHAR,
             window_label            VARCHAR,
             datetime                TIMESTAMP,
+            ma_len                  INTEGER,
             trade_id                INTEGER,
             trade_action            VARCHAR,
             trade_price_after_slippage DOUBLE,
@@ -399,7 +400,7 @@ def create_tables(con):
     con.execute("COMMENT ON TABLE backtest_trades IS '交易记录（仅含 trade_action 非空的行）'")
     for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
         ("ktype","K线周期"),("window_label","窗口标签"),("datetime","K线时间"),
-        ("trade_id","交易编号"),("trade_action","交易动作"),
+        ("ma_len","均线周期"),("trade_id","交易编号"),("trade_action","交易动作"),
         ("trade_price_after_slippage","扣除滑点后的成交价"),
         ("available_cash","可用现金"),("trade_shares","交易股数"),
         ("trade_amount","交易金额"),("commission","佣金"),
