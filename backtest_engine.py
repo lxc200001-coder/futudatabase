@@ -616,8 +616,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                            AVG(t.close_pnl) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS avg_loss,
                            MAX(t.close_pnl) FILTER (WHERE t.trade_action = '平多') AS max_win,
                            MIN(t.close_pnl) FILTER (WHERE t.trade_action = '平多') AS max_loss,
-                           AVG(t.close_trade_amount) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl > 0) AS avg_win_amt,
-                           AVG(t.close_trade_amount) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS avg_loss_amt,
+                           AVG(t.trade_amount) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl > 0) AS avg_win_amt,
+                           AVG(t.trade_amount) FILTER (WHERE t.trade_action = '平多' AND t.close_pnl < 0) AS avg_loss_amt,
                            SUM(t.cash_before_trade) FILTER (WHERE t.trade_action = '开多') AS total_cash_before,
                            SUM(t.close_pnl) FILTER (WHERE t.trade_action = '平多') AS total_pnl
                     FROM backtest_trades t
