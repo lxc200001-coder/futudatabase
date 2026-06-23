@@ -547,7 +547,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                        s.ma_len, s.trade_id, '平多',
                        s.close_price_after_slippage, s.cash_after_trade,
                        s.close_shares, s.close_amount, s.close_commission,
-                       s.actual_close_amount, '已平仓', '虚拟平仓', s.created_at
+                       s.actual_close_amount, s.trade_status, '虚拟平仓', s.created_at
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
