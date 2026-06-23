@@ -323,12 +323,10 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             _vp_comm[j] = float(vp_comm)
             _vp_pnl[j] = float(vp_pnl)
 
-        # 交易前可用现金
+        # 交易前可用现金（持仓期间不变，平仓后加上已实现盈亏）
         _cash_bt[j] = float(_virtual_cash)
-        if ta == 1 and ts_val > 0:  # 开多：扣减实际金额(含滑点佣金)
-            _virtual_cash -= ts_val * float(tp * (1 + slippage)) * (1 + fee_rate)
-        elif ta == 2 and ts_val > 0 and _vp_price_slip[j] is not None:  # 平多：加回平仓净收入
-            _virtual_cash += float(_vp_price_slip[j]) * ts_val * (1 - fee_rate)
+        if ta == 2 and _vp_pnl[j] is not None:
+            _virtual_cash += float(_vp_pnl[j])
 
         if ta == 2:  # 平多：清零（在虚拟平仓计算之后）
             _entry_tp_slip = None
