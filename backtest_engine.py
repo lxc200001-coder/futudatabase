@@ -744,6 +744,13 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 LEFT JOIN returns ON r.code = returns.code AND r.ktype = returns.ktype AND r.ma_len = returns.ma_len AND r.window_label = returns.window_label
                 LEFT JOIN hold_bars hb ON r.code = hb.code AND r.ktype = hb.ktype AND r.ma_len = hb.ma_len AND r.window_label = hb.window_label
             """)
+            _cw.execute("""
+                CREATE TABLE backtest_performance_sorted AS
+                SELECT * FROM backtest_performance
+                ORDER BY code, ktype, window_label, ma_len
+            """)
+            _cw.execute("DROP TABLE backtest_performance")
+            _cw.execute("ALTER TABLE backtest_performance_sorted RENAME TO backtest_performance")
             _cw.close()
             print(f"  策略表现: 已生成")
         except Exception as e:
