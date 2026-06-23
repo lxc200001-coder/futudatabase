@@ -336,56 +336,72 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             _entry_tp_slip = None
             _entry_comm = None
 
-    rows = []
-    for j in range(n_sl):
-        i = idx[j]
-        rows.append({
-            "code": str(df["code"].iloc[i]), "stock_name": str(df["stock_name"].iloc[i]) if "stock_name" in df.columns else "",
-            "market": str(df["market"].iloc[i]) if "market" in df.columns else "", "ktype": ktype,
-            "window_label": wl_cache[i][0] if wl_cache is not None else "",
-            "window_count": wl_cache[i][1] if wl_cache is not None else 0,
-            "datetime": df["datetime"].iloc[i],
-            "open": float(df["open"].iloc[i]), "high": float(df["high"].iloc[i]), "low": float(df["low"].iloc[i]),
-            "close": float(c_sl[j]), "volume": float(df["volume"].iloc[i]),
-            "turnover": float(df["turnover"].iloc[i]) if "turnover" in df.columns else 0.0,
-            "turnover_amount": float(df["turnover_amount"].iloc[i]) if "turnover_amount" in df.columns else 0.0,
-            "source": str(df["source"].iloc[i]) if "source" in df.columns else "",
-            "ha_close": float(ha_close_sl[j]), "ma_len": ma_len,
-            "ha_ma_value": float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None,
-            "trend_direction": dir_sl[j], "signal": sig_sl[j],
-            "trade_id": int(trade_id_arr[j]) if trade_id_arr[j] is not None else None,
-            "trade_action": str(ta_lbl[j]) if ta_lbl[j] is not None else None,
-            "trade_price": float(tp_val[j]) if tp_val[j] is not None else None,
-            "trade_price_after_slippage": float(tp_slip_val[j]) if tp_slip_val[j] is not None else None,
-            "trade_shares": float(ts_sl[j]),
-            "slippage": float(abs((tp_slip_val[j] - tp_val[j]) * ts_sl[j])) if tp_val[j] is not None and ts_sl[j] > 0 else 0.0,
-            "trade_amount": float(tp_slip_val[j] * ts_sl[j]) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
-            "commission": float(tp_slip_val[j] * ts_sl[j] * fee_rate) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
-            "actual_trade_amount": float(tp_slip_val[j] * ts_sl[j] * (1 + fee_rate)) if tp_slip_val[j] is not None and ts_sl[j] > 0 else None,
-            "available_cash": float(ac_sl[j]),
-            "held_shares": float(hs_sl[j]),
-            "trade_status": str(trade_status_arr[j]) if trade_status_arr[j] is not None else None,
-            "close_price": float(_vp_price[j]) if _vp_price[j] is not None else None,
-            "close_price_after_slippage": float(_vp_price_slip[j]) if _vp_price_slip[j] is not None else None,
-            "close_shares": float(_vp_shares[j]) if _vp_shares[j] is not None else None,
-            "close_slippage": float(_vp_slip_cost[j]) if _vp_slip_cost[j] is not None else None,
-            "close_trade_amount": float(_vp_amt[j]) if _vp_amt[j] is not None else None,
-            "close_commission": float(_vp_comm[j]) if _vp_comm[j] is not None else None,
-            "close_actual_trade_amount": float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None,
-            "close_pnl": float(_vp_pnl[j]) if _vp_pnl[j] is not None else None,
-            "close_type": "真实平仓" if trade_status_arr[j] == "已平仓" else ("虚拟平仓" if trade_status_arr[j] == "持仓中" else None),
-            "close_pnl_type": None if ta_lbl[j] == "开多" else ("盈利" if (_vp_pnl[j] is not None and _vp_pnl[j] > 0) else ("亏损" if _vp_pnl[j] is not None else None)),
-            "cash_before_trade": float(_cash_bt[j]) if _cash_bt[j] is not None else None,
-            "cash_after_trade": float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None,
-            "account_value": float(av_sl[j]),
-            "account_value_change": float(acc_chg[j]),
-            "account_value_change_pct": float(acc_chg_pct[j]),
-            "change_from_initial": float(chg_init[j]),
-            "change_from_initial_pct": float(chg_init_pct[j]),
-            "created_at": pd.Timestamp.now(),
-        })
+    # 列式构造（替代逐行 dict，快 10-50 倍）
+    _has_sn = "stock_name" in df.columns
+    _has_mkt = "market" in df.columns
+    _has_tv = "turnover" in df.columns
+    _has_tv_amt = "turnover_amount" in df.columns
+    _has_src = "source" in df.columns
+    _ts_nonzero = ts_sl > 0
+    _ts_g0 = _ts_nonzero
+    _is_open = np.array([ta_lbl[j] == "开多" for j in range(n_sl)], dtype=bool)
+    _closed = np.array([trade_status_arr[j] == "已平仓" for j in range(n_sl)], dtype=bool)
+    _holding = np.array([trade_status_arr[j] == "持仓中" for j in range(n_sl)], dtype=bool)
+    _vp_valid = np.array([_vp_pnl[j] is not None for j in range(n_sl)], dtype=bool)
+    _vp_gt0 = np.array([_vp_pnl[j] is not None and _vp_pnl[j] > 0 for j in range(n_sl)], dtype=bool)
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame({
+        "code": [str(df["code"].iloc[i]) for i in idx],
+        "stock_name": [str(df["stock_name"].iloc[i]) if _has_sn else "" for i in idx],
+        "market": [str(df["market"].iloc[i]) if _has_mkt else "" for i in idx],
+        "ktype": ktype,
+        "window_label": [wl_cache[i][0] if wl_cache is not None else "" for i in idx],
+        "window_count": [wl_cache[i][1] if wl_cache is not None else 0 for i in idx],
+        "datetime": [df["datetime"].iloc[i] for i in idx],
+        "open": [float(df["open"].iloc[i]) for i in idx],
+        "high": [float(df["high"].iloc[i]) for i in idx],
+        "low": [float(df["low"].iloc[i]) for i in idx],
+        "close": [float(c_sl[j]) for j in range(n_sl)],
+        "volume": [float(df["volume"].iloc[i]) for i in idx],
+        "turnover": [float(df["turnover"].iloc[i]) if _has_tv else 0.0 for i in idx],
+        "turnover_amount": [float(df["turnover_amount"].iloc[i]) if _has_tv_amt else 0.0 for i in idx],
+        "source": [str(df["source"].iloc[i]) if _has_src else "" for i in idx],
+        "ha_close": [float(ha_close_sl[j]) for j in range(n_sl)],
+        "ma_len": ma_len,
+        "ha_ma_value": [float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None for j in range(n_sl)],
+        "trend_direction": list(dir_sl),
+        "signal": list(sig_sl),
+        "trade_id": [int(trade_id_arr[j]) if trade_id_arr[j] is not None else None for j in range(n_sl)],
+        "trade_action": [str(ta_lbl[j]) if ta_lbl[j] is not None else None for j in range(n_sl)],
+        "trade_price": [float(tp_val[j]) if tp_val[j] is not None else None for j in range(n_sl)],
+        "trade_price_after_slippage": [float(tp_slip_val[j]) if tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "trade_shares": [float(ts_sl[j]) for j in range(n_sl)],
+        "slippage": [float(abs((tp_slip_val[j] - tp_val[j]) * ts_sl[j])) if tp_val[j] is not None and ts_sl[j] > 0 else 0.0 for j in range(n_sl)],
+        "trade_amount": [float(tp_slip_val[j] * ts_sl[j]) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "commission": [float(tp_slip_val[j] * ts_sl[j] * fee_rate) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "actual_trade_amount": [float(tp_slip_val[j] * ts_sl[j] * (1 + fee_rate)) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "available_cash": [float(ac_sl[j]) for j in range(n_sl)],
+        "held_shares": [float(hs_sl[j]) for j in range(n_sl)],
+        "trade_status": [str(trade_status_arr[j]) if trade_status_arr[j] is not None else None for j in range(n_sl)],
+        "close_price": [float(_vp_price[j]) if _vp_price[j] is not None else None for j in range(n_sl)],
+        "close_price_after_slippage": [float(_vp_price_slip[j]) if _vp_price_slip[j] is not None else None for j in range(n_sl)],
+        "close_shares": [float(_vp_shares[j]) if _vp_shares[j] is not None else None for j in range(n_sl)],
+        "close_slippage": [float(_vp_slip_cost[j]) if _vp_slip_cost[j] is not None else None for j in range(n_sl)],
+        "close_trade_amount": [float(_vp_amt[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
+        "close_commission": [float(_vp_comm[j]) if _vp_comm[j] is not None else None for j in range(n_sl)],
+        "close_actual_trade_amount": [float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
+        "close_pnl": [float(_vp_pnl[j]) if _vp_pnl[j] is not None else None for j in range(n_sl)],
+        "close_type": ["真实平仓" if _closed[j] else ("虚拟平仓" if _holding[j] else None) for j in range(n_sl)],
+        "close_pnl_type": [None if _is_open[j] else ("盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None)) for j in range(n_sl)],
+        "cash_before_trade": [float(_cash_bt[j]) if _cash_bt[j] is not None else None for j in range(n_sl)],
+        "cash_after_trade": [float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None for j in range(n_sl)],
+        "account_value": [float(av_sl[j]) for j in range(n_sl)],
+        "account_value_change": [float(acc_chg[j]) for j in range(n_sl)],
+        "account_value_change_pct": [float(acc_chg_pct[j]) for j in range(n_sl)],
+        "change_from_initial": [float(chg_init[j]) for j in range(n_sl)],
+        "change_from_initial_pct": [float(chg_init_pct[j]) for j in range(n_sl)],
+        "created_at": pd.Timestamp.now(),
+    })
 
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
