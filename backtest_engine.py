@@ -544,7 +544,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     actual_trade_amount, trade_status, close_type, created_at
                 )
                 SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
-                       s.ma_len, s.trade_id, '平多',
+                       s.ma_len, s.trade_id, s.trade_action,
                        s.close_price_after_slippage, s.cash_after_trade,
                        s.close_shares, s.close_amount, s.close_commission,
                        s.actual_close_amount, s.trade_status, '虚拟平仓', s.created_at
