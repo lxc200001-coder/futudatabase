@@ -154,53 +154,6 @@ def create_tables(con):
     con.execute("COMMENT ON COLUMN plates.created_at IS '入库时间'")
 
     # ── 回测输出表 ──
-    # 1. backtest_trades：逐笔交易
-    con.execute("DROP TABLE IF EXISTS backtest_trades")
-    con.execute("""
-        CREATE TABLE backtest_trades (
-            code            VARCHAR,
-            stock_name      VARCHAR,
-            market          VARCHAR,
-            ktype           VARCHAR,
-            ma              INTEGER,
-            window_label    VARCHAR,
-            window_idx      INTEGER,
-            trade_id        INTEGER,
-            entry_time      TIMESTAMP,
-            entry_price     DOUBLE,
-            buy_shares      DOUBLE,
-            exit_time       TIMESTAMP,
-            exit_price      DOUBLE,
-            sell_shares     DOUBLE,
-            trade_status    VARCHAR,
-            pnl_type        VARCHAR,
-            pnl             DOUBLE,
-            return_pct      DOUBLE,
-            buy_fee         DOUBLE,
-            sell_fee        DOUBLE,
-            total_fee       DOUBLE,
-            cash_before_entry DOUBLE,
-            cash_after_entry  DOUBLE,
-            cash_before_exit  DOUBLE,
-            cash_after_exit   DOUBLE,
-            hold_bars       INTEGER,
-            hold_days       INTEGER,
-            created_at      TIMESTAMP
-        )
-    """)
-    con.execute("COMMENT ON TABLE backtest_trades IS '逐笔交易明细'")
-    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
-        ("ktype","K线周期"),("ma","均线周期"),("window_label","窗口标签"),
-        ("window_idx","窗口序号"),("trade_id","交易序号"),("entry_time","开仓时间"),
-        ("entry_price","开仓价格"),("buy_shares","买入股数"),("exit_time","平仓时间"),
-        ("exit_price","平仓价格"),("sell_shares","卖出股数"),("trade_status","交易状态"),
-        ("pnl_type","订单盈亏类型"),("pnl","收益金额"),("return_pct","收益率(%)"),
-        ("buy_fee","买入手续费"),("sell_fee","卖出手续费"),("total_fee","总手续费"),
-        ("cash_before_entry","开仓前可用现金"),("cash_after_entry","开仓后可用现金"),
-        ("cash_before_exit","平仓前可用现金"),("cash_after_exit","平仓后可用现金"),
-        ("hold_bars","持仓K线数"),("hold_days","持仓天数")]:
-        con.execute(f"COMMENT ON COLUMN backtest_trades.{_c} IS '{_d}'")
-
     # 2. backtest_summary：回测指标
     con.execute("DROP TABLE IF EXISTS backtest_summary")
     con.execute("""
@@ -597,8 +550,7 @@ def list_all(con):
              "klines_1d", "klines_1w",
              "v_klines_1d", "v_klines_1w",
              "backtest_trades", "backtest_summary", "backtest_scores",
-             "backtest_stability", "backtest_signals", "backtest_stats",
-             "backtest_trades"]
+             "backtest_stability", "backtest_signals", "backtest_stats"]
     for name in names:
         try:
             _type = {"BASE TABLE": "T", "VIEW": "V"}.get(
