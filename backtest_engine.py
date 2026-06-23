@@ -264,6 +264,24 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             if not np.isnan(tp):
                 tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 - slippage))
 
+    # 交易编号 / 交易状态
+    trade_id_arr = np.full(n_sl, None, dtype=object)
+    trade_status_arr = np.full(n_sl, None, dtype=object)
+    _tid = 0
+    for j in range(n_sl):
+        ta = trade_actions[idx[j]]
+        hs = hs_sl[j]
+        if ta == 1:
+            _tid += 1
+            trade_id_arr[j] = _tid
+            trade_status_arr[j] = "持仓中"
+        elif ta == 2:
+            trade_id_arr[j] = _tid if _tid > 0 else None
+            trade_status_arr[j] = "已平仓"
+        elif hs > 0:
+            trade_id_arr[j] = _tid if _tid > 0 else None
+            trade_status_arr[j] = "持仓中"
+
     rows = []
     for j in range(n_sl):
         i = idx[j]
@@ -294,6 +312,8 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "account_value_change_pct": float(acc_chg_pct[j]),
             "change_from_initial": float(chg_init[j]),
             "change_from_initial_pct": float(chg_init_pct[j]),
+            "trade_id": int(trade_id_arr[j]) if trade_id_arr[j] is not None else None,
+            "trade_status": str(trade_status_arr[j]) if trade_status_arr[j] is not None else None,
             "created_at": pd.Timestamp.now(),
         })
 
@@ -365,7 +385,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "trade_shares","trade_amount","commission","actual_trade_amount",
         "slippage","held_shares","account_value",
         "account_value_change","account_value_change_pct",
-        "change_from_initial","change_from_initial_pct","created_at"]
+        "change_from_initial","change_from_initial_pct",
+        "trade_id","trade_status","created_at"]
     _sel = ",".join(_cols)
 
     # 子进程全部结束后再统一写入（避免多进程锁冲突）

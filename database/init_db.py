@@ -391,6 +391,8 @@ def create_tables(con):
             account_value_change_pct DOUBLE,
             change_from_initial     DOUBLE,
             change_from_initial_pct DOUBLE,
+            trade_id                INTEGER,
+            trade_status            VARCHAR,
             created_at              TIMESTAMP
         )
     """)
@@ -412,7 +414,9 @@ def create_tables(con):
         ("account_value_change","账户价值变动数"),
         ("account_value_change_pct","账户价值变动比"),
         ("change_from_initial","自初始账户价值变动数"),
-        ("change_from_initial_pct","自初始账户价值变动比")]:
+        ("change_from_initial_pct","自初始账户价值变动比"),
+        ("trade_id","交易编号"),
+        ("trade_status","交易状态: 持仓中/已平仓")]:
         con.execute(f"COMMENT ON COLUMN backtest_stats.{_c} IS '{_d}'")
 
     # 表描述
