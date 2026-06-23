@@ -351,6 +351,7 @@ def create_tables(con):
             actual_close_amount     DOUBLE,
             close_pnl               DOUBLE,
             close_type              VARCHAR,
+            pnl_type                VARCHAR,
             cash_before_trade       DOUBLE,
             cash_after_trade        DOUBLE,
             account_value           DOUBLE,
@@ -388,6 +389,8 @@ def create_tables(con):
         ("actual_close_amount","实际平仓交易金额(close_price_after_slippage×close_shares+close_commission)"),
         ("close_pnl","平仓交易盈利"),
         ("close_type","平仓类型: 虚拟平仓/真实平仓"),
+        ("pnl_type","盈亏类型: 盈利/亏损"),
+        ("pnl_type","盈亏类型: 盈利/亏损"),
         ("cash_before_trade","交易前可用现金"),
         ("cash_after_trade","交易后可用现金"),
         ("account_value","账户价值"),
@@ -421,6 +424,7 @@ def create_tables(con):
             trade_status            VARCHAR,
             close_pnl               DOUBLE,
             close_type              VARCHAR,
+            pnl_type                VARCHAR,
             cash_before_trade       DOUBLE,
             cash_after_trade        DOUBLE,
             available_cash          DOUBLE,
@@ -438,6 +442,8 @@ def create_tables(con):
         ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态"),
         ("close_pnl","平仓交易盈利"),
         ("close_type","平仓类型: 虚拟平仓/真实平仓"),
+        ("pnl_type","盈亏类型: 盈利/亏损"),
+        ("pnl_type","盈亏类型: 盈利/亏损"),
         ("cash_before_trade","交易前可用现金"),
         ("cash_after_trade","交易后可用现金")]:
         con.execute(f"COMMENT ON COLUMN backtest_trades.{_c} IS '{_d}'")
