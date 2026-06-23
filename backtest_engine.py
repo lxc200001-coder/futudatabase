@@ -558,15 +558,16 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     ) AS rn
                     FROM backtest_stats s
                     WHERE trade_status = '持仓中'
-                      AND NOT EXISTS (
-                        SELECT 1 FROM backtest_stats s2
-                        WHERE s2.code = s.code AND s2.ktype = s.ktype
-                          AND s2.ma_len = s.ma_len AND s2.trade_id = s.trade_id
-                          AND s2.trade_action = '平多'
-                      )
                 ) s,
                      UNNEST(STRING_SPLIT(s.window_label, ',')) AS t(w)
                 WHERE s.rn = 1
+                  AND NOT EXISTS (
+                    SELECT 1 FROM backtest_stats s2
+                    WHERE s2.code = s.code AND s2.ktype = s.ktype
+                      AND s2.ma_len = s.ma_len AND s2.trade_id = s.trade_id
+                      AND s2.trade_action = '平多'
+                      AND s2.window_label LIKE '%' || w || '%'
+                  )
             """)
             # 全局排序
             _cw.execute("""
