@@ -219,8 +219,10 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             return pd.concat(all_dfs, ignore_index=True), pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
     return pd.DataFrame(), pd.DataFrame()
 
-def _calc_perf(av_arr, closes, first_dt, last_dt, n_trades, ktype):
-    """从内存 arrays 计算策略表现指标（不写 DB）。"""
+def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
+               _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
+               trade_id_arr, ta_lbl):
+    """从内存 arrays 计算全部策略表现指标。"""
     first_ac, final_ac = float(av_arr[0]), float(av_arr[-1])
     first_close, last_close = float(closes[0]), float(closes[-1])
     years = max((last_dt - first_dt).days / 365.0, 1 / 365.0)
@@ -230,13 +232,12 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, n_trades, ktype):
     cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) * 100 if first_ac > 0 else 0.0
     buy_hold = (last_close / first_close - 1) * 100 if first_close > 0 else 0.0
 
-    # Sharpe（逐K线收益率）
+    # Sharpe
     rets = np.diff(av_arr) / av_arr[:-1]
     rets = rets[~np.isnan(rets) & ~np.isinf(rets)]
     periods = 252 if ktype == "1d" else 52
     if len(rets) > 1:
-        ret_avg = np.mean(rets)
-        ret_std = np.std(rets, ddof=1)
+        ret_avg = np.mean(rets); ret_std = np.std(rets, ddof=1)
         sharpe = (ret_avg - risk_free / periods) / ret_std * np.sqrt(periods) if ret_std > 1e-10 else 0.0
     else:
         sharpe = 0.0
@@ -246,11 +247,70 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, n_trades, ktype):
     max_dd = float(np.max((running_max - av_arr) / running_max)) * 100 if running_max[-1] > 0 else 0.0
     calmar = cagr / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
 
+    # 交易统计（从 _vp_pnl 中提取平多行）
+    close_pnls = [_vp_pnl[j] for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
+    close_amts = [_vp_amt[j] for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
+    n_closed = len(close_pnls)
+    trade_count = int(np.max([t for t in trade_id_arr if t is not None])) if any(t is not None for t in trade_id_arr) else 0
+    wins = [p for p in close_pnls if p > 0]
+    losses = [p for p in close_pnls if p < 0]
+    n_wins, n_losses = len(wins), len(losses)
+    total_win = sum(wins) if wins else 0
+    total_loss = sum(losses) if losses else 0.0
+    avg_win = (sum(wins) / n_wins) if n_wins else 0
+    avg_loss = (sum(losses) / n_losses) if n_losses else 0.0
+    max_win = max(wins) if wins else 0
+    max_loss = min(losses) if losses else 0.0
+    avg_win_amt = (sum(close_amts[i] for i in range(n_closed) if close_pnls[i] > 0) / n_wins) if n_wins else 0
+    avg_loss_amt = (sum(close_amts[i] for i in range(n_closed) if close_pnls[i] < 0) / n_losses) if n_losses else 0
+    total_cash_before = sum(_vp_price_slip[j] * _vp_shares[j] for j in range(n_sl) if ta_lbl[j] == "开多" and _vp_shares[j] is not None)
+
+    win_rate = (n_wins / n_closed * 100) if n_closed > 0 else 0
+    profit_factor = total_win / abs(total_loss) if total_loss < 0 else 0
+    payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
+    avg_trade_return = (sum(close_pnls) / total_cash_before * 100) if total_cash_before > 0 and n_closed > 0 else 0
+
+    # 连续盈亏次数
+    signs = [1 if p > 0 else -1 for p in close_pnls]
+    max_win_streak = max_loss_streak = 0
+    cur_streak = 0; cur_sign = 0
+    for s in signs:
+        if s == cur_sign:
+            cur_streak += 1
+        else:
+            if cur_sign == 1: max_win_streak = max(max_win_streak, cur_streak)
+            elif cur_sign == -1: max_loss_streak = max(max_loss_streak, cur_streak)
+            cur_streak = 1; cur_sign = s
+    if cur_sign == 1: max_win_streak = max(max_win_streak, cur_streak)
+    elif cur_sign == -1: max_loss_streak = max(max_loss_streak, cur_streak)
+
+    # 平均持仓K线数/天数（开多→平多 datetime diff）
+    hold_bars_list = []; hold_days_list = []
+    for j in range(n_sl):
+        if ta_lbl[j] == "开多":
+            open_dt = df["datetime"].iloc[idx[j]]
+            for k in range(j + 1, n_sl):
+                if ta_lbl[k] == "平多" and trade_id_arr[k] == trade_id_arr[j]:
+                    close_dt = df["datetime"].iloc[idx[k]]
+                    hold_bars_list.append(k - j)
+                    hold_days_list.append((close_dt - open_dt).days)
+                    break
+    avg_hold_days = (sum(hold_days_list) / len(hold_days_list)) if hold_days_list else 0
+    avg_hold_bars = (sum(hold_bars_list) / len(hold_bars_list)) if hold_bars_list else 0
+
     return {
         "total_return": round(total_ret, 4), "cagr": round(cagr, 4),
         "buy_hold_return": round(buy_hold, 4), "excess_return": round(total_ret - buy_hold, 4),
+        "avg_trade_return": round(avg_trade_return, 4),
         "max_drawdown": round(max_dd, 4), "sharpe_ratio": round(sharpe, 4),
-        "calmar_ratio": round(calmar, 4), "trade_count": int(n_trades or 0),
+        "calmar_ratio": round(calmar, 4),
+        "trade_count": trade_count, "win_rate": round(win_rate, 4),
+        "profit_factor": round(profit_factor, 4), "payoff_ratio": round(payoff_ratio, 4),
+        "avg_win": round(avg_win, 4), "avg_win_pct": round(avg_win_amt, 4),
+        "avg_loss": round(avg_loss, 4), "avg_loss_pct": round(avg_loss_amt, 4),
+        "max_win": round(max_win, 4), "max_loss": round(max_loss, 4),
+        "max_win_streak": max_win_streak, "max_loss_streak": max_loss_streak,
+        "avg_hold_days": round(avg_hold_days, 2), "avg_hold_bars": round(avg_hold_bars, 2),
         "initial_cash": float(first_ac), "final_cash": float(final_ac),
     }
 
@@ -385,8 +445,9 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     # 策略表现（直接从内存 arrays 计算，不依赖 SQL）
     _first_dt = df["datetime"].iloc[idx[0]]
     _last_dt = df["datetime"].iloc[idx[-1]]
-    _n_trades = int(np.max(trade_id_arr)) if np.any([t is not None for t in trade_id_arr]) else 0
-    _perf = _calc_perf(av_sl, c_sl, _first_dt, _last_dt, _n_trades, ktype)
+    _perf = _calc_perf(av_sl, c_sl, _first_dt, _last_dt, ktype, df, idx, n_sl,
+                       _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
+                       trade_id_arr, ta_lbl)
 
     return pd.DataFrame({
         "code": [str(df["code"].iloc[i]) for i in idx],
@@ -565,12 +626,12 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _cw.execute(f"""
                 INSERT INTO backtest_performance
                 SELECT code, '' AS stock_name, '' AS market, ktype, window_label, ma_len,
-                       total_return, cagr, buy_hold_return, excess_return, 0 AS avg_trade_return,
+                       total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
                        max_drawdown, sharpe_ratio, calmar_ratio,
-                       trade_count, 0 AS win_rate, 0 AS profit_factor, 0 AS payoff_ratio,
-                       0 AS avg_win, 0 AS avg_win_pct, 0 AS avg_loss, 0 AS avg_loss_pct,
-                       0 AS max_win, 0 AS max_loss, 0 AS max_win_streak, 0 AS max_loss_streak,
-                       0 AS avg_hold_days, 0 AS avg_hold_bars,
+                       trade_count, win_rate, profit_factor, payoff_ratio,
+                       avg_win, avg_win_pct, avg_loss, avg_loss_pct,
+                       max_win, max_loss, max_win_streak, max_loss_streak,
+                       avg_hold_days, avg_hold_bars,
                        initial_cash, final_cash, CURRENT_TIMESTAMP
                 FROM read_parquet([{_plist2}])
             """)
