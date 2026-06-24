@@ -195,6 +195,7 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
 
     # 仅末窗切片构建结果（window_label 标注所有所属窗口）
     ws, we = windows[-1]
+    window_label = f"{ws.date()}~{we.date()}"
     mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
            (pd.to_datetime(df_k["datetime"]) <= we)
     all_dfs = []
