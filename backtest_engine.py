@@ -198,23 +198,62 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
     mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
            (pd.to_datetime(df_k["datetime"]) <= we)
     all_dfs = []
+    all_perf = []
     if mask.any():
         for ma in ma_range:
             (ha_ma_val, direction, signal, trade_actions, trade_prices,
              ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
-            df = _build_slice_rows(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
-                                   trade_actions, trade_prices, ha_close, closes,
-                                   ac_arr, hs_arr, ts_arr, av_arr,
-                                   slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
+            df, _perf = _build_slice_rows(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
+                                          trade_actions, trade_prices, ha_close, closes,
+                                          ac_arr, hs_arr, ts_arr, av_arr,
+                                          slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
             if df is not None and not df.empty:
+                df["window_label"] = window_label
                 all_dfs.append(df)
+                all_perf.append({**{"code": code, "ktype": ktype, "ma_len": ma, "window_label": window_label}, **_perf})
 
     if all_dfs:
         import warnings as _w
         with _w.catch_warnings():
             _w.simplefilter("ignore", FutureWarning)
-            return pd.concat(all_dfs, ignore_index=True)
-    return pd.DataFrame()
+            return pd.concat(all_dfs, ignore_index=True), pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
+    return pd.DataFrame(), pd.DataFrame()
+
+def _calc_perf(av_arr, closes, first_dt, last_dt, n_trades, ktype):
+    """从内存 arrays 计算策略表现指标（不写 DB）。"""
+    first_ac, final_ac = float(av_arr[0]), float(av_arr[-1])
+    first_close, last_close = float(closes[0]), float(closes[-1])
+    years = max((last_dt - first_dt).days / 365.0, 1 / 365.0)
+    risk_free = 0.02
+
+    total_ret = (final_ac / first_ac - 1) * 100 if first_ac > 0 else 0.0
+    cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) * 100 if first_ac > 0 else 0.0
+    buy_hold = (last_close / first_close - 1) * 100 if first_close > 0 else 0.0
+
+    # Sharpe（逐K线收益率）
+    rets = np.diff(av_arr) / av_arr[:-1]
+    rets = rets[~np.isnan(rets) & ~np.isinf(rets)]
+    periods = 252 if ktype == "1d" else 52
+    if len(rets) > 1:
+        ret_avg = np.mean(rets)
+        ret_std = np.std(rets, ddof=1)
+        sharpe = (ret_avg - risk_free / periods) / ret_std * np.sqrt(periods) if ret_std > 1e-10 else 0.0
+    else:
+        sharpe = 0.0
+
+    # 最大回撤
+    running_max = np.maximum.accumulate(av_arr)
+    max_dd = float(np.max((running_max - av_arr) / running_max)) * 100 if running_max[-1] > 0 else 0.0
+    calmar = cagr / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
+
+    return {
+        "total_return": round(total_ret, 4), "cagr": round(cagr, 4),
+        "buy_hold_return": round(buy_hold, 4), "excess_return": round(total_ret - buy_hold, 4),
+        "max_drawdown": round(max_dd, 4), "sharpe_ratio": round(sharpe, 4),
+        "calmar_ratio": round(calmar, 4), "trade_count": int(n_trades or 0),
+        "initial_cash": float(first_ac), "final_cash": float(final_ac),
+    }
+
 
 def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
@@ -343,6 +382,12 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     _vp_valid = np.array([_vp_pnl[j] is not None for j in range(n_sl)], dtype=bool)
     _vp_gt0 = np.array([_vp_pnl[j] is not None and _vp_pnl[j] > 0 for j in range(n_sl)], dtype=bool)
 
+    # 策略表现（直接从内存 arrays 计算，不依赖 SQL）
+    _first_dt = df["datetime"].iloc[idx[0]]
+    _last_dt = df["datetime"].iloc[idx[-1]]
+    _n_trades = int(np.max(trade_id_arr)) if np.any([t is not None for t in trade_id_arr]) else 0
+    _perf = _calc_perf(av_sl, c_sl, _first_dt, _last_dt, _n_trades, ktype)
+
     return pd.DataFrame({
         "code": [str(df["code"].iloc[i]) for i in idx],
         "stock_name": [str(df["stock_name"].iloc[i]) if _has_sn else "" for i in idx],
@@ -394,21 +439,25 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         "change_from_initial": [float(chg_init[j]) for j in range(n_sl)],
         "change_from_initial_pct": [float(chg_init_pct[j]) for j in range(n_sl)],
         "created_at": pd.Timestamp.now(),
-    })
+    }), _perf
 
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
-    """工作进程：计算一只股票的所有MA+窗口，保存到临时 parquet 返回路径。"""
+    """工作进程：计算一只股票的所有MA+窗口。返回 (code, stats_path, perf_path, err)"""
     try:
-        df = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
-        if df is None or df.empty:
-            return code, None, None
-        _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}.parquet")
+        df_stats, df_perf = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
+        if df_stats is None or df_stats.empty:
+            return code, None, None, None
+        _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}")
         os.makedirs(os.path.dirname(_tmp), exist_ok=True)
-        df.to_parquet(_tmp, index=False)
-        return code, _tmp, None
+        _p_stats = _tmp + "_stats.parquet"
+        _p_perf = _tmp + "_perf.parquet"
+        df_stats.to_parquet(_p_stats, index=False)
+        if not df_perf.empty:
+            df_perf.to_parquet(_p_perf, index=False)
+        return code, _p_stats, _p_perf, None
     except Exception as e:
-        return code, None, str(e)
+        return code, None, None, str(e)
 
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
@@ -469,14 +518,15 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         "created_at"]
     _sel = ",".join(_cols)
 
-    # 子进程全部结束后再统一写入（避免多进程锁冲突）
+    _tmp_perf_files = []
+    # 子进程全部结束后再统一写入
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
                                    trade_mode, slippage, fee_rate): code for code in codes}
         with tqdm(total=len(futures), desc="  回测", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(futures):
                 try:
-                    _code, _path, err = future.result()
+                    _code, _path, _perf_path, err = future.result()
                 except Exception as e:
                     print(f"\n  进程异常: {e}")
                     pbar.update(1); continue
@@ -485,8 +535,9 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     pbar.update(1); continue
                 if not _path:
                     pbar.update(1); continue
-                # 记录临时文件路径
                 _tmp_files.append(_path)
+                if _perf_path:
+                    _tmp_perf_files.append(_perf_path)
                 pbar.update(1)
 
     # 所有子进程结束→DuckDB 原生批量读 parquet（比逐行快 100 倍）
@@ -504,6 +555,31 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         for _p in _tmp_files:
             try: os.remove(_p)
             except: pass
+
+    # 写入策略表现表
+    if _tmp_perf_files:
+        try:
+            _cw = duckdb.connect(DB_PATH)
+            _cw.execute("DELETE FROM backtest_performance")
+            _plist2 = ",".join(f"'{p}'" for p in _tmp_perf_files)
+            _cw.execute(f"""
+                INSERT INTO backtest_performance
+                SELECT code, '' AS stock_name, '' AS market, ktype, window_label, ma_len,
+                       total_return, cagr, buy_hold_return, excess_return, 0 AS avg_trade_return,
+                       max_drawdown, sharpe_ratio, calmar_ratio,
+                       trade_count, 0 AS win_rate, 0 AS profit_factor, 0 AS payoff_ratio,
+                       0 AS avg_win, 0 AS avg_win_pct, 0 AS avg_loss, 0 AS avg_loss_pct,
+                       0 AS max_win, 0 AS max_loss, 0 AS max_win_streak, 0 AS max_loss_streak,
+                       0 AS avg_hold_days, 0 AS avg_hold_bars,
+                       initial_cash, final_cash, CURRENT_TIMESTAMP
+                FROM read_parquet([{_plist2}])
+            """)
+            _cw.close()
+            for _p in _tmp_perf_files:
+                try: os.remove(_p)
+                except: pass
+        except Exception as e:
+            print(f"  策略表现写入失败: {e}")
 
     # 全局排序（设置临时目录避免 OOM）
     if total_rows > 0:
