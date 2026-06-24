@@ -33,7 +33,7 @@ SLIPPAGE = 0.001
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -166,8 +166,8 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
         # trade_actions / trade_prices（向量化）
         trade_actions = np.zeros(n, dtype=np.int64)
         trade_prices = np.full(n, np.nan, dtype=np.float64)
-        _buy = np.char.equal(signal, "买入")
-        _sell = np.char.equal(signal, "卖出")
+        _buy = signal == "买入"
+        _sell = signal == "卖出"
         if trade_mode == "close":
             trade_actions[_buy] = 1; trade_prices[_buy] = closes[_buy]
             trade_actions[_sell] = 2; trade_prices[_sell] = closes[_sell]
