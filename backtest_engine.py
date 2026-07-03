@@ -454,7 +454,6 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     _has_src = "source" in df.columns
     _ts_nonzero = ts_sl > 0
     _ts_g0 = _ts_nonzero
-    _is_open = np.array([ta_lbl[j] == "开多" for j in range(n_sl)], dtype=bool)
     _closed = np.array([trade_status_arr[j] == "已平仓" for j in range(n_sl)], dtype=bool)
     _holding = np.array([trade_status_arr[j] == "持仓中" for j in range(n_sl)], dtype=bool)
     _vp_valid = np.array([_vp_pnl[j] is not None for j in range(n_sl)], dtype=bool)
@@ -511,7 +510,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         "close_actual_trade_amount": [float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
         "close_pnl": [float(_vp_pnl[j]) if _vp_pnl[j] is not None else None for j in range(n_sl)],
         "close_type": ["真实平仓" if _closed[j] else ("虚拟平仓" if _holding[j] else None) for j in range(n_sl)],
-        "close_pnl_type": [None if _is_open[j] else ("盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None)) for j in range(n_sl)],
+        "close_pnl_type": ["盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None) for j in range(n_sl)],
         "cash_before_trade": [float(_cash_bt[j]) if _cash_bt[j] is not None else None for j in range(n_sl)],
         "cash_after_trade": [float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None for j in range(n_sl)],
         "account_value": [float(av_sl[j]) for j in range(n_sl)],
