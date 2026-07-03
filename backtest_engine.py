@@ -262,6 +262,42 @@ def _calc_strategy_score(cagr, sharpe_ratio, max_drawdown, profit_factor, win_ra
     )
 
 
+def build_score_matrix(summary_rows):
+    """从 window_label 回测汇总行构建评分明细和排名透视表（与 backtest_uscncc.py 逻辑一致）。"""
+    df = pd.DataFrame(summary_rows)
+
+    # 排除评分全为 0 的 window_label
+    valid = df.groupby("window_label")["strategy_score"].transform("max") > 0
+    df = df[valid]
+
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # 评分明细透视
+    score_pivot = df.pivot_table(
+        index=["code", "ktype", "ma_len"],
+        columns="window_label",
+        values="strategy_score",
+        aggfunc="first"
+    )
+    score_pivot = score_pivot[sorted(score_pivot.columns)]
+    score_pivot = score_pivot.reset_index()
+
+    # 评分排名（每股票每 window_label 内独立排名）
+    df["window_rank"] = df.groupby(["code", "window_label"])["strategy_score"].rank(ascending=False, method="min")
+
+    rank_pivot = df.pivot_table(
+        index=["code", "ktype", "ma_len"],
+        columns="window_label",
+        values="window_rank",
+        aggfunc="first"
+    )
+    rank_pivot = rank_pivot[sorted(rank_pivot.columns)]
+    rank_pivot = rank_pivot.reset_index()
+
+    return score_pivot, rank_pivot
+
+
 def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
                _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
                trade_id_arr, ta_lbl):
@@ -691,6 +727,51 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 except: pass
         except Exception as e:
             print(f"  策略表现写入失败: {e}")
+
+    # 构建 strategy_score 明细 / 排名表（从 backtest_performance 查询后写入两个新表）
+    try:
+        _qc = duckdb.connect(DB_PATH)
+        _perf_df = _qc.execute("""
+            SELECT code, ktype, ma_len, window_label, strategy_score
+            FROM backtest_performance
+        """).fetchdf()
+        if not _perf_df.empty:
+            _score_pivot, _rank_pivot = build_score_matrix(_perf_df.to_dict("records"))
+
+            if not _score_pivot.empty:
+                # 透视表 melt 回长格式
+                _score_long = _score_pivot.melt(
+                    id_vars=["code", "ktype", "ma_len"],
+                    var_name="window_label", value_name="strategy_score"
+                ).dropna(subset=["strategy_score"])
+                _score_long["created_at"] = datetime.now()
+
+                # 清空旧数据并写入
+                _qc.execute("DELETE FROM strategy_score_detail")
+                _qc.register("_s", _score_long)
+                _qc.execute("""
+                    INSERT INTO strategy_score_detail
+                    SELECT code, ktype, ma_len, window_label, strategy_score, created_at
+                    FROM _s
+                """)
+
+            if not _rank_pivot.empty:
+                _rank_long = _rank_pivot.melt(
+                    id_vars=["code", "ktype", "ma_len"],
+                    var_name="window_label", value_name="window_rank"
+                ).dropna(subset=["window_rank"])
+                _rank_long["created_at"] = datetime.now()
+
+                _qc.execute("DELETE FROM strategy_score_rank")
+                _qc.register("_r", _rank_long)
+                _qc.execute("""
+                    INSERT INTO strategy_score_rank
+                    SELECT code, ktype, ma_len, window_label, window_rank, created_at
+                    FROM _r
+                """)
+        _qc.close()
+    except Exception as e:
+        print(f"  strategy_score 透视表构建失败: {e}")
 
     # 全局排序（设置临时目录避免 OOM）
     if total_rows > 0:

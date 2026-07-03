@@ -499,6 +499,42 @@ def create_tables(con):
         ("avg_hold_bars","平均持仓K线数"),("initial_cash","初始资金"),("final_cash","最终资金")]:
         con.execute(f"COMMENT ON COLUMN backtest_performance.{_c} IS '{_d}'")
 
+    # ── strategy_score 评分明细表 ──
+    con.execute("DROP TABLE IF EXISTS strategy_score_detail")
+    con.execute("""
+        CREATE TABLE strategy_score_detail (
+            code            VARCHAR,
+            ktype           VARCHAR,
+            ma_len          INTEGER,
+            window_label    VARCHAR,
+            strategy_score  DOUBLE,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE strategy_score_detail IS '策略评分明细（每股每ma每窗口的strategy_score）'")
+    for _c, _d in [("code","股票代码"),("ktype","K线周期"),("ma_len","均线周期"),
+        ("window_label","窗口标签"),("strategy_score","策略综合评分"),
+        ("created_at","创建时间")]:
+        con.execute(f"COMMENT ON COLUMN strategy_score_detail.{_c} IS '{_d}'")
+
+    # ── strategy_score 评分排名表 ──
+    con.execute("DROP TABLE IF EXISTS strategy_score_rank")
+    con.execute("""
+        CREATE TABLE strategy_score_rank (
+            code            VARCHAR,
+            ktype           VARCHAR,
+            ma_len          INTEGER,
+            window_label    VARCHAR,
+            window_rank     DOUBLE,
+            created_at      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE strategy_score_rank IS '策略评分排名（每股每窗口内ma按strategy_score降序排名）'")
+    for _c, _d in [("code","股票代码"),("ktype","K线周期"),("ma_len","均线周期"),
+        ("window_label","窗口标签"),("window_rank","窗口内排名"),
+        ("created_at","创建时间")]:
+        con.execute(f"COMMENT ON COLUMN strategy_score_rank.{_c} IS '{_d}'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -683,6 +719,7 @@ if __name__ == "__main__":
         for tbl in ["watchlist", "plates", "turnover_rankings", "stooq_local_all_us_stocks",
                      "backtest_trades", "backtest_performance", "backtest_summary", "backtest_scores",
                      "backtest_stability", "backtest_signals", "backtest_stats",
+                     "strategy_score_detail", "strategy_score_rank",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
