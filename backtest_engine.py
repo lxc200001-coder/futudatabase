@@ -674,9 +674,11 @@ def _build_wf_slice_rows(df, idx, ma_len, ktype,
                           trade_actions_sl, trade_prices_sl, ha_close_sl, closes,
                           ac_sl, hs_sl, ts_sl, av_sl, slippage, fee_rate,
                           trade_mode="close", wl_cache=None,
-                          carry_trade_id=0, carry_cash=0.0):
+                          carry_trade_id=0, carry_cash=0.0,
+                          carry_entry_slip=None):
     """Walk Forward 版本：接收预切片数组，增加 signal_exec 和账户接续。
-    所有 `_sl` 后缀的参数已是当前窗口的预切片数组，不再用 idx 二次索引。"""
+    所有 `_sl` 后缀的参数已是当前窗口的预切片数组，不再用 idx 二次索引。
+    carry_entry_slip: 上段携带仓位的入场价（含滑点），供虚拟平仓用。"""
     n_sl = len(idx)
     if n_sl == 0:
         return None, None, None, None, None
@@ -735,8 +737,8 @@ def _build_wf_slice_rows(df, idx, ma_len, ktype,
     _vp_comm = np.full(n_sl, None, dtype=object)
     _vp_pnl = np.full(n_sl, None, dtype=object)
     _cash_bt = np.full(n_sl, None, dtype=object)
-    _entry_tp_slip = None
-    _entry_comm = None
+    _entry_tp_slip = carry_entry_slip  # 上段携带仓位的入场价（含滑点）
+    _entry_comm = None                  # 携带仓位的佣金在本段也需计算
     _virtual_cash = carry_cash
     for j in range(n_sl):
         ta = trade_actions_sl[j]
@@ -846,7 +848,8 @@ def _build_wf_slice_rows(df, idx, ma_len, ktype,
 
     next_trade_id = _tid
     next_has_position = hs_sl[-1] > 0 if n_sl > 0 else False
-    return _result_df, _perf, next_trade_id, next_has_position
+    next_entry_slip = _entry_tp_slip if next_has_position else None
+    return _result_df, _perf, next_trade_id, next_has_position, next_entry_slip
 
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
@@ -964,6 +967,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     carry_shares = 0.0
     carry_trade_id = 0
     carry_has_position = False
+    carry_entry_slip = None  # 上段携带的入场价（含滑点），供虚拟平仓用
 
     for i in range(1, len(windows)):
         prev_end = windows[i-1][1]
@@ -1026,17 +1030,18 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         )
 
         # 构建行数据（传入从 backtest_stats 查找的数组）
-        df_slice, _perf, carry_trade_id, carry_has_position = _build_wf_slice_rows(
+        df_slice, _perf, carry_trade_id, carry_has_position, carry_entry_slip = _build_wf_slice_rows(
             df_k, idx, prev_best_ma, ktype,
             _ha_ma_sl, _dir_sl, _sig_sl, signal_exec,
             filtered_ta, tp_sl, _ha_close_sl, closes,
             ac_arr, hs_arr, ts_arr, av_arr,
             slippage, fee_rate, trade_mode=trade_mode,
             wl_cache=_wl_cache,
-            carry_trade_id=carry_trade_id, carry_cash=carry_cash
+            carry_trade_id=carry_trade_id, carry_cash=carry_cash,
+            carry_entry_slip=carry_entry_slip
         )
 
-        carry_cash = ac_arr[-1]   # 可用现金接续，非账户总价值
+        carry_cash = ac_arr[-1]   # 可用现金接续
         carry_shares = hs_arr[-1] # 持股接续
 
         if df_slice is not None and not df_slice.empty:
