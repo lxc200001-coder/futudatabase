@@ -568,6 +568,187 @@ def create_tables(con):
         ("is_best","是否最优参数"),("created_at","创建时间")]:
         con.execute(f"COMMENT ON COLUMN strategy_score_stability.{_c} IS '{_d}'")
 
+    # ── Walk Forward 回测逐K线记录表 ──
+    con.execute("DROP TABLE IF EXISTS backtest_stats_walkforward")
+    con.execute("""
+        CREATE TABLE backtest_stats_walkforward (
+            code                            VARCHAR,
+            stock_name                      VARCHAR,
+            market                          VARCHAR,
+            ktype                           VARCHAR,
+            window_label                    VARCHAR,
+            window_count                    INTEGER,
+            datetime                        TIMESTAMP,
+            open                            DOUBLE,
+            high                            DOUBLE,
+            low                             DOUBLE,
+            close                           DOUBLE,
+            volume                          DOUBLE,
+            turnover                        DOUBLE,
+            turnover_amount                 DOUBLE,
+            source                          VARCHAR,
+            ha_close                        DOUBLE,
+            ma_len                          INTEGER,
+            ha_ma_value                     DOUBLE,
+            trend_direction                 VARCHAR,
+            signal                          VARCHAR,
+            signal_exec                     VARCHAR,
+            trade_id                        INTEGER,
+            trade_action                    VARCHAR,
+            trade_price                     DOUBLE,
+            trade_price_after_slippage      DOUBLE,
+            trade_shares                    DOUBLE,
+            slippage                        DOUBLE,
+            trade_amount                    DOUBLE,
+            commission                      DOUBLE,
+            actual_trade_amount             DOUBLE,
+            available_cash                  DOUBLE,
+            held_shares                     DOUBLE,
+            trade_status                    VARCHAR,
+            close_price                     DOUBLE,
+            close_price_after_slippage      DOUBLE,
+            close_shares                    DOUBLE,
+            close_slippage                  DOUBLE,
+            close_trade_amount              DOUBLE,
+            close_commission                DOUBLE,
+            close_actual_trade_amount       DOUBLE,
+            close_pnl                       DOUBLE,
+            close_type                      VARCHAR,
+            close_pnl_type                  VARCHAR,
+            cash_before_trade               DOUBLE,
+            cash_after_trade                DOUBLE,
+            account_value                   DOUBLE,
+            account_value_change            DOUBLE,
+            account_value_change_pct        DOUBLE,
+            change_from_initial             DOUBLE,
+            change_from_initial_pct         DOUBLE,
+            created_at                      TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_stats_walkforward IS 'Walk Forward 回测逐K线记录'")
+    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
+        ("ktype","K线周期"),("window_label","窗口标签"),("window_count","窗口数量"),("datetime","K线时间"),
+        ("open","开盘价"),("high","最高价"),("low","最低价"),("close","收盘价"),("volume","成交量"),
+        ("turnover","成交额(数据源原生)"),("turnover_amount","估算成交额"),("source","数据来源"),
+        ("ha_close","平均K线收盘价"),("ma_len","均线周期"),
+        ("ha_ma_value","根据平均K线收盘价计算的均线周期值"),
+        ("trend_direction","趋势方向"),("signal","信号"),
+        ("signal_exec","交易信号是否执行: 执行/忽略/NULL"),
+        ("trade_id","交易编号"),("trade_action","交易动作"),("trade_price","交易价格"),
+        ("trade_price_after_slippage","扣除滑点后的成交价"),
+        ("trade_shares","交易股数"),("slippage","交易滑点"),
+        ("trade_amount","交易金额"),("commission","佣金"),
+        ("actual_trade_amount","实际发生交易金额"),
+        ("available_cash","可用现金"),("held_shares","持有股数"),
+        ("trade_status","交易状态: 持仓中/已平仓"),
+        ("close_price","平仓交易价格"),("close_price_after_slippage","平仓扣除滑点后的交易价格"),
+        ("close_shares","平仓股数"),("close_slippage","平仓滑点"),
+        ("close_trade_amount","平仓交易金额"),("close_commission","平仓交易佣金"),
+        ("close_actual_trade_amount","平仓实际交易金额"),
+        ("close_pnl","平仓交易盈利"),("close_type","平仓类型: 虚拟平仓/真实平仓"),
+        ("close_pnl_type","盈亏类型: 盈利/亏损"),
+        ("cash_before_trade","交易前可用现金"),("cash_after_trade","交易后可用现金"),
+        ("account_value","账户价值"),("account_value_change","账户价值变动数"),
+        ("account_value_change_pct","账户价值变动比"),
+        ("change_from_initial","自初始账户价值变动数"),
+        ("change_from_initial_pct","自初始账户价值变动比")]:
+        con.execute(f"COMMENT ON COLUMN backtest_stats_walkforward.{_c} IS '{_d}'")
+
+    # ── Walk Forward 交易记录表 ──
+    con.execute("DROP TABLE IF EXISTS backtest_trades_walkforward")
+    con.execute("""
+        CREATE TABLE backtest_trades_walkforward (
+            code                    VARCHAR,
+            stock_name              VARCHAR,
+            market                  VARCHAR,
+            ktype                   VARCHAR,
+            window_label            VARCHAR,
+            datetime                TIMESTAMP,
+            ma_len                  INTEGER,
+            trade_id                INTEGER,
+            trade_action            VARCHAR,
+            trade_price_after_slippage DOUBLE,
+            trade_shares            DOUBLE,
+            slippage                DOUBLE,
+            trade_amount            DOUBLE,
+            commission              DOUBLE,
+            actual_trade_amount     DOUBLE,
+            trade_status            VARCHAR,
+            close_pnl               DOUBLE,
+            close_type              VARCHAR,
+            close_pnl_type                VARCHAR,
+            cash_before_trade       DOUBLE,
+            cash_after_trade        DOUBLE,
+            available_cash          DOUBLE,
+            created_at              TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_trades_walkforward IS 'Walk Forward 交易记录'")
+    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
+        ("ktype","K线周期"),("window_label","窗口标签"),("datetime","K线时间"),
+        ("ma_len","均线周期"),("trade_id","交易编号"),("trade_action","交易动作"),
+        ("trade_price_after_slippage","扣除滑点后的成交价"),
+        ("trade_shares","交易股数"),("slippage","交易滑点"),
+        ("trade_amount","交易金额"),("commission","佣金"),
+        ("actual_trade_amount","实际发生交易金额"),("trade_status","交易状态"),
+        ("close_pnl","平仓交易盈利"),("close_type","平仓类型"),
+        ("close_pnl_type","盈亏类型"),("cash_before_trade","交易前可用现金"),
+        ("cash_after_trade","交易后可用现金"),("available_cash","可用现金")]:
+        con.execute(f"COMMENT ON COLUMN backtest_trades_walkforward.{_c} IS '{_d}'")
+
+    # ── Walk Forward 策略表现表 ──
+    con.execute("DROP TABLE IF EXISTS backtest_performance_walkforward")
+    con.execute("""
+        CREATE TABLE backtest_performance_walkforward (
+            code                    VARCHAR,
+            stock_name              VARCHAR,
+            market                  VARCHAR,
+            ktype                   VARCHAR,
+            window_label            VARCHAR,
+            ma_len                  INTEGER,
+            total_return            DOUBLE,
+            cagr                    DOUBLE,
+            buy_hold_return         DOUBLE,
+            excess_return           DOUBLE,
+            avg_trade_return        DOUBLE,
+            strategy_score          DOUBLE,
+            max_drawdown            DOUBLE,
+            sharpe_ratio            DOUBLE,
+            calmar_ratio            DOUBLE,
+            trade_count             INTEGER,
+            win_rate                DOUBLE,
+            profit_factor           DOUBLE,
+            payoff_ratio            DOUBLE,
+            avg_win                 DOUBLE,
+            avg_win_pct             DOUBLE,
+            avg_loss                DOUBLE,
+            avg_loss_pct            DOUBLE,
+            max_win                 DOUBLE,
+            max_loss                DOUBLE,
+            max_win_streak          INTEGER,
+            max_loss_streak         INTEGER,
+            avg_hold_days           DOUBLE,
+            avg_hold_bars           DOUBLE,
+            initial_cash            DOUBLE,
+            final_cash              DOUBLE,
+            created_at              TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE backtest_performance_walkforward IS 'Walk Forward 策略表现汇总'")
+    for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
+        ("ktype","K线周期"),("window_label","窗口标签"),("ma_len","均线周期"),
+        ("total_return","收益率"),("cagr","年化收益率"),("buy_hold_return","买入持有收益率"),
+        ("excess_return","超额收益率"),("avg_trade_return","平均每笔收益率"),
+        ("strategy_score","策略综合评分"),
+        ("max_drawdown","最大回撤"),("sharpe_ratio","夏普比率"),("calmar_ratio","卡尔玛比率"),
+        ("trade_count","交易次数"),("win_rate","盈利交易率"),("profit_factor","盈利因子"),
+        ("payoff_ratio","盈亏比"),("avg_win","平均盈利"),("avg_win_pct","平均盈利比"),
+        ("avg_loss","平均亏损"),("avg_loss_pct","平均亏损比"),("max_win","最大单笔盈利"),
+        ("max_loss","最大单笔亏损"),("max_win_streak","最大连续盈利次数"),
+        ("max_loss_streak","最大连续亏损次数"),("avg_hold_days","平均持仓天数"),
+        ("avg_hold_bars","平均持仓K线数"),("initial_cash","初始资金"),("final_cash","最终资金")]:
+        con.execute(f"COMMENT ON COLUMN backtest_performance_walkforward.{_c} IS '{_d}'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -754,6 +935,8 @@ if __name__ == "__main__":
                      "backtest_stability", "backtest_signals", "backtest_stats",
                      "strategy_score_detail", "strategy_score_rank",
                      "strategy_score_stability",
+                     "backtest_stats_walkforward", "backtest_trades_walkforward",
+                     "backtest_performance_walkforward",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",

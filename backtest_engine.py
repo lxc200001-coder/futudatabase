@@ -667,6 +667,195 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     }), _perf
 
 
+def _build_wf_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
+                          signal_exec, trade_actions, trade_prices, ha_close, closes,
+                          ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
+                          trade_mode="close", wl_cache=None,
+                          carry_trade_id=0, carry_cash=0.0):
+    """Walk Forward 版本：在 _build_slice_rows 基础上增加 signal_exec 和账户接续。"""
+    idx = np.where(mask.values)[0]
+    if len(idx) == 0:
+        return None, None, None, None, None
+
+    c_sl = closes[idx]
+    ha_close_sl = ha_close[idx]
+    ha_ma_sl = ha_ma_val[idx]
+    dir_sl = direction[idx]
+    sig_sl = signal[idx]
+    sig_exec_sl = np.array(signal_exec, dtype=object) if isinstance(signal_exec, list) else signal_exec[idx]
+
+    n_sl = len(idx)
+    av_sl = av_arr[idx]
+    ac_sl = ac_arr[idx]
+    hs_sl = hs_arr[idx]
+    ts_sl = ts_arr[idx]
+
+    acc_chg = np.zeros(n_sl, dtype=np.float64)
+    acc_chg_pct = np.zeros(n_sl, dtype=np.float64)
+    acc_chg[1:] = av_sl[1:] - av_sl[:-1]
+    acc_chg_pct[1:] = np.divide(acc_chg[1:], av_sl[:-1], out=np.zeros_like(acc_chg[1:]),
+                                where=av_sl[:-1] != 0)
+    chg_init = av_sl - INITIAL_CASH
+    chg_init_pct = np.divide(chg_init, INITIAL_CASH, out=np.zeros_like(chg_init),
+                             where=INITIAL_CASH != 0)
+
+    # 中文字段映射（使用 filtered trade_actions）
+    ta_lbl = np.full(n_sl, None, dtype=object)
+    tp_val = np.full(n_sl, None, dtype=object)
+    tp_slip_val = np.full(n_sl, None, dtype=object)
+    for j in range(n_sl):
+        ta = trade_actions[idx[j]]
+        tp = trade_prices[idx[j]]
+        if ta == 1:
+            ta_lbl[j] = "开多"
+            if not np.isnan(tp):
+                tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 + slippage))
+        elif ta == 2:
+            ta_lbl[j] = "平多"
+            if not np.isnan(tp):
+                tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 - slippage))
+
+    # 交易编号（从 carry_trade_id 递增）
+    trade_id_arr = np.full(n_sl, None, dtype=object)
+    trade_status_arr = np.full(n_sl, None, dtype=object)
+    _tid = carry_trade_id
+    for j in range(n_sl):
+        ta = trade_actions[idx[j]]
+        hs = hs_sl[j]
+        if ta == 1:
+            _tid += 1
+            trade_id_arr[j] = _tid
+            trade_status_arr[j] = "持仓中"
+        elif ta == 2:
+            trade_id_arr[j] = _tid if _tid > carry_trade_id else None
+            trade_status_arr[j] = "已平仓"
+        elif hs > 0:
+            trade_id_arr[j] = _tid if _tid > carry_trade_id else None
+            trade_status_arr[j] = "持仓中"
+
+    # 虚拟平仓（从 carry_cash 接续）
+    _vp_price = np.full(n_sl, None, dtype=object)
+    _vp_price_slip = np.full(n_sl, None, dtype=object)
+    _vp_shares = np.full(n_sl, None, dtype=object)
+    _vp_slip_cost = np.full(n_sl, None, dtype=object)
+    _vp_amt = np.full(n_sl, None, dtype=object)
+    _vp_comm = np.full(n_sl, None, dtype=object)
+    _vp_pnl = np.full(n_sl, None, dtype=object)
+    _cash_bt = np.full(n_sl, None, dtype=object)
+    _entry_tp_slip = None
+    _entry_comm = None
+    _virtual_cash = carry_cash
+    for j in range(n_sl):
+        ta = trade_actions[idx[j]]
+        tp = trade_prices[idx[j]]
+        hs = hs_sl[j]
+        ts_val = ts_sl[j]
+
+        if ta == 1 and not np.isnan(tp):
+            _entry_tp_slip = float(tp * (1 + slippage))
+            _entry_comm = float(_entry_tp_slip * ts_val * fee_rate) if ts_val > 0 else 0.0
+
+        _eff_hs = hs if hs > 0 else (ts_val if ta == 2 else 0)
+        if _entry_tp_slip is not None and _eff_hs > 0:
+            vp = c_sl[j] if trade_mode == "close" else float(df["open"].iloc[idx[j]])
+            vp_slip = vp * (1 - slippage)
+            vp_slip_amt = vp_slip * _eff_hs
+            vp_comm = vp_slip_amt * fee_rate
+            vp_pnl = (vp_slip - _entry_tp_slip) * _eff_hs - vp_comm - (_entry_comm or 0)
+            _vp_price[j] = float(vp)
+            _vp_price_slip[j] = float(vp_slip)
+            _vp_shares[j] = float(_eff_hs)
+            _vp_slip_cost[j] = float(abs(vp_slip - vp) * _eff_hs)
+            _vp_amt[j] = float(vp_slip_amt)
+            _vp_comm[j] = float(vp_comm)
+            _vp_pnl[j] = float(vp_pnl)
+
+        _cash_bt[j] = float(_virtual_cash)
+        if ta == 2 and _vp_pnl[j] is not None:
+            _virtual_cash += float(_vp_pnl[j])
+
+        if ta == 2:
+            _entry_tp_slip = None
+            _entry_comm = None
+
+    # 列式构造
+    _has_sn = "stock_name" in df.columns
+    _has_mkt = "market" in df.columns
+    _has_tv = "turnover" in df.columns
+    _has_tv_amt = "turnover_amount" in df.columns
+    _has_src = "source" in df.columns
+    _ts_nonzero = ts_sl > 0
+    _ts_g0 = _ts_nonzero
+    _closed = np.array([trade_status_arr[j] == "已平仓" for j in range(n_sl)], dtype=bool)
+    _holding = np.array([trade_status_arr[j] == "持仓中" for j in range(n_sl)], dtype=bool)
+    _vp_valid = np.array([_vp_pnl[j] is not None for j in range(n_sl)], dtype=bool)
+    _vp_gt0 = np.array([_vp_pnl[j] is not None and _vp_pnl[j] > 0 for j in range(n_sl)], dtype=bool)
+
+    _first_dt = df["datetime"].iloc[idx[0]]
+    _last_dt = df["datetime"].iloc[idx[-1]]
+    _perf = _calc_perf(av_sl, c_sl, _first_dt, _last_dt, ktype, df, idx, n_sl,
+                       _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
+                       trade_id_arr, ta_lbl)
+
+    _result_df = pd.DataFrame({
+        "code": [str(df["code"].iloc[i]) for i in idx],
+        "stock_name": [str(df["stock_name"].iloc[i]) if _has_sn else "" for i in idx],
+        "market": [str(df["market"].iloc[i]) if _has_mkt else "" for i in idx],
+        "ktype": ktype,
+        "window_label": [wl_cache[i][0] if wl_cache is not None else "" for i in idx],
+        "window_count": [wl_cache[i][1] if wl_cache is not None else 0 for i in idx],
+        "datetime": [df["datetime"].iloc[i] for i in idx],
+        "open": [float(df["open"].iloc[i]) for i in idx],
+        "high": [float(df["high"].iloc[i]) for i in idx],
+        "low": [float(df["low"].iloc[i]) for i in idx],
+        "close": [float(c_sl[j]) for j in range(n_sl)],
+        "volume": [float(df["volume"].iloc[i]) for i in idx],
+        "turnover": [float(df["turnover"].iloc[i]) if _has_tv else 0.0 for i in idx],
+        "turnover_amount": [float(df["turnover_amount"].iloc[i]) if _has_tv_amt else 0.0 for i in idx],
+        "source": [str(df["source"].iloc[i]) if _has_src else "" for i in idx],
+        "ha_close": [float(ha_close_sl[j]) for j in range(n_sl)],
+        "ma_len": ma_len,
+        "ha_ma_value": [float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None for j in range(n_sl)],
+        "trend_direction": list(dir_sl),
+        "signal": list(sig_sl),
+        "signal_exec": list(sig_exec_sl),
+        "trade_id": [int(trade_id_arr[j]) if trade_id_arr[j] is not None else None for j in range(n_sl)],
+        "trade_action": [str(ta_lbl[j]) if ta_lbl[j] is not None else None for j in range(n_sl)],
+        "trade_price": [float(tp_val[j]) if tp_val[j] is not None else None for j in range(n_sl)],
+        "trade_price_after_slippage": [float(tp_slip_val[j]) if tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "trade_shares": [float(ts_sl[j]) for j in range(n_sl)],
+        "slippage": [float(abs((tp_slip_val[j] - tp_val[j]) * ts_sl[j])) if tp_val[j] is not None and ts_sl[j] > 0 else 0.0 for j in range(n_sl)],
+        "trade_amount": [float(tp_slip_val[j] * ts_sl[j]) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "commission": [float(tp_slip_val[j] * ts_sl[j] * fee_rate) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "actual_trade_amount": [float(tp_slip_val[j] * ts_sl[j] * (1 + fee_rate)) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
+        "available_cash": [float(ac_sl[j]) for j in range(n_sl)],
+        "held_shares": [float(hs_sl[j]) for j in range(n_sl)],
+        "trade_status": [str(trade_status_arr[j]) if trade_status_arr[j] is not None else None for j in range(n_sl)],
+        "close_price": [float(_vp_price[j]) if _vp_price[j] is not None else None for j in range(n_sl)],
+        "close_price_after_slippage": [float(_vp_price_slip[j]) if _vp_price_slip[j] is not None else None for j in range(n_sl)],
+        "close_shares": [float(_vp_shares[j]) if _vp_shares[j] is not None else None for j in range(n_sl)],
+        "close_slippage": [float(_vp_slip_cost[j]) if _vp_slip_cost[j] is not None else None for j in range(n_sl)],
+        "close_trade_amount": [float(_vp_amt[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
+        "close_commission": [float(_vp_comm[j]) if _vp_comm[j] is not None else None for j in range(n_sl)],
+        "close_actual_trade_amount": [float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
+        "close_pnl": [float(_vp_pnl[j]) if _vp_pnl[j] is not None else None for j in range(n_sl)],
+        "close_type": ["真实平仓" if _closed[j] else ("虚拟平仓" if _holding[j] else None) for j in range(n_sl)],
+        "close_pnl_type": ["盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None) for j in range(n_sl)],
+        "cash_before_trade": [float(_cash_bt[j]) if _cash_bt[j] is not None else None for j in range(n_sl)],
+        "cash_after_trade": [float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None for j in range(n_sl)],
+        "account_value": [float(av_sl[j]) for j in range(n_sl)],
+        "account_value_change": [float(acc_chg[j]) for j in range(n_sl)],
+        "account_value_change_pct": [float(acc_chg_pct[j]) for j in range(n_sl)],
+        "change_from_initial": [float(chg_init[j]) for j in range(n_sl)],
+        "change_from_initial_pct": [float(chg_init_pct[j]) for j in range(n_sl)],
+        "created_at": pd.Timestamp.now(),
+    })
+
+    next_trade_id = _tid
+    next_has_position = hs_sl[-1] > 0 if n_sl > 0 else False
+    return _result_df, _perf, next_trade_id, next_has_position
+
+
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
     """工作进程：计算一只股票的所有MA+窗口。返回 (code, stats_path, perf_path, err)"""
     try:
@@ -674,6 +863,180 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
         if df_stats is None or df_stats.empty:
             return code, None, None, None
         _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}")
+        os.makedirs(os.path.dirname(_tmp), exist_ok=True)
+        _p_stats = _tmp + "_stats.parquet"
+        _p_perf = _tmp + "_perf.parquet"
+        df_stats.to_parquet(_p_stats, index=False)
+        if not df_perf.empty:
+            df_perf.to_parquet(_p_perf, index=False)
+        return code, _p_stats, _p_perf, None
+    except Exception as e:
+        return code, None, None, str(e)
+
+
+def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan):
+    """Walk Forward 回测：用上个窗口的 is_best MA 作为当前窗口的交易参数。"""
+    _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
+    con = duckdb.connect(DB_PATH, read_only=True)
+    try:
+        df_k = con.execute(f"""
+            SELECT * FROM klines_{_kt}
+            WHERE code = ? ORDER BY datetime
+        """, [code]).fetchdf()
+    finally:
+        con.close()
+    if df_k.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    for c in ["code", "stock_name", "market", "ktype", "datetime",
+              "open", "high", "low", "close", "volume", "turnover",
+              "turnover_amount", "source"]:
+        if c not in df_k.columns:
+            df_k[c] = "" if c in ("code", "stock_name", "market", "ktype", "source") else 0.0
+
+    n = len(df_k)
+    closes = df_k["close"].values.astype(np.float64)
+    ha_close = (df_k["open"].values + df_k["high"].values + df_k["low"].values + closes) / 4.0
+    _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
+    opens_arr = df_k["open"].values.astype(np.float64)
+
+    # 全量计算所有 MA 的信号数组（与 run_stock 一致）
+    ma_cache = {}
+    for ma in ma_range:
+        ha_ma_val = bn.move_mean(ha_close, window=ma, min_count=ma)
+        _up = np.zeros(n, dtype=np.int8)
+        _valid = ~np.isnan(ha_ma_val)
+        _up[1:] = np.where(_valid[1:] & _valid[:-1] & (ha_ma_val[1:] > ha_ma_val[:-1]), 1, 0)
+        direction = np.where(_up == 1, "多头", "空头")
+        signal = np.full(n, "", dtype=object)
+        signal[0] = "等待"
+        _du = _up[1:] == 1; _dd = _up[1:] == 0
+        _pu = _up[:-1] == 1; _pd = _up[:-1] == 0
+        signal[1:][_du & _pd] = "买入"
+        signal[1:][_du & _pu] = "持有"
+        signal[1:][_dd & _pu] = "卖出"
+        signal[1:][_dd & _pd] = "等待"
+        trade_actions = np.zeros(n, dtype=np.int64)
+        trade_prices = np.full(n, np.nan, dtype=np.float64)
+        _buy = signal == "买入"
+        _sell = signal == "卖出"
+        if trade_mode == "close":
+            trade_actions[_buy] = 1; trade_prices[_buy] = closes[_buy]
+            trade_actions[_sell] = 2; trade_prices[_sell] = closes[_sell]
+        else:
+            _buy1 = np.roll(_buy, 1); _buy1[0] = False
+            _sell1 = np.roll(_sell, 1); _sell1[0] = False
+            trade_actions[_buy1] = 1; trade_prices[_buy1] = opens_arr[_buy1]
+            trade_actions[_sell1] = 2; trade_prices[_sell1] = opens_arr[_sell1]
+        # 全量 numba（仅用于信号/方向，WF 会重算账户）
+        (ac_arr, hs_arr, ts_arr, _, _, av_arr) = _numba_account_loop(
+            closes, trade_actions, trade_prices, n, INITIAL_CASH, slippage, fee_rate,
+            allow_fractional=_is_cc
+        )
+        ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
+                        ac_arr, hs_arr, ts_arr, av_arr)
+
+    # 预计算窗口归属缓存
+    _w_labels = [f"{ws.date()}~{we.date()}" for ws, we in windows]
+    _dt_arr = pd.to_datetime(df_k["datetime"]).values
+    _wl_cache = {}
+    for _i, _dt in enumerate(_dt_arr):
+        _belongs = [_w_labels[_j] for _j in range(len(windows)) if windows[_j][1] >= _dt]
+        _wl_cache[_i] = (",".join(_belongs), len(_belongs))
+
+    _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
+    _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
+
+    # 构建 WF 映射：{window_label → best_ma}
+    stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
+                if row["code"] == code}
+
+    all_dfs = []
+    all_perf = []
+    carry_cash = INITIAL_CASH
+    carry_trade_id = 0
+    carry_has_position = False
+
+    for i in range(1, len(windows)):
+        ws, we = windows[i]
+        _wl = f"{ws.date()}~{we.date()}"
+        _prev_wl = f"{windows[i-1][0].date()}~{windows[i-1][1].date()}"
+
+        # 获取上个窗口的 best_ma
+        prev_best_ma = stock_wf.get(_prev_wl)
+        if prev_best_ma is None:
+            continue  # 没有 is_best 数据，跳过
+
+        mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
+               (pd.to_datetime(df_k["datetime"]) <= we)
+        if not mask.any():
+            continue
+
+        idx = np.where(mask.values)[0]
+        # 从 ma_cache 获取信号（完全使用上个窗口的 best_ma）
+        ha_ma_val, direction, signal, trade_actions, trade_prices, \
+            _, _, _, _ = ma_cache[prev_best_ma]
+
+        sig_sl = signal[idx]
+        ta_sl = trade_actions[idx]   # 原始 0/1/2
+        tp_sl = trade_prices[idx]
+
+        # 信号冲突检测
+        signal_exec = [None] * len(idx)
+        filtered_ta = ta_sl.copy()
+        pos = carry_has_position
+        for j in range(len(idx)):
+            sig = sig_sl[j]
+            if sig == "买入":
+                if pos:
+                    signal_exec[j] = "忽略"; filtered_ta[j] = 0
+                else:
+                    signal_exec[j] = "执行"; pos = True
+            elif sig == "卖出":
+                if pos:
+                    signal_exec[j] = "执行"; filtered_ta[j] = 2; pos = False
+                else:
+                    signal_exec[j] = "忽略"; filtered_ta[j] = 0
+
+        # 用 filtered_ta 重算账户
+        (ac_arr, hs_arr, ts_arr, _, _, av_arr) = _numba_account_loop(
+            closes[idx], filtered_ta, tp_sl, len(idx), carry_cash, slippage, fee_rate,
+            allow_fractional=_is_cc
+        )
+
+        # 构建行数据
+        df_slice, _perf, carry_trade_id, carry_has_position = _build_wf_slice_rows(
+            df_k, mask, prev_best_ma, ktype,
+            ha_ma_val, direction, signal, signal_exec,
+            filtered_ta, tp_sl, ha_close, closes,
+            ac_arr, hs_arr, ts_arr, av_arr,
+            slippage, fee_rate, trade_mode=trade_mode,
+            wl_cache=_wl_cache,
+            carry_trade_id=carry_trade_id, carry_cash=carry_cash
+        )
+
+        carry_cash = av_arr[-1]
+
+        if df_slice is not None and not df_slice.empty:
+            all_dfs.append(df_slice)
+        if _perf:
+            all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt,
+                                "ktype": ktype, "ma_len": prev_best_ma, "window_label": _wl}, **_perf})
+
+    if all_dfs:
+        import warnings as _w
+        with _w.catch_warnings():
+            _w.simplefilter("ignore", FutureWarning)
+            return pd.concat(all_dfs, ignore_index=True), pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
+    return pd.DataFrame(), pd.DataFrame()
+
+
+def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan):
+    """WF 工作进程。返回 (code, stats_path, perf_path, err)"""
+    try:
+        df_stats, df_perf = run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan)
+        if df_stats is None or df_stats.empty:
+            return code, None, None, None
+        _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_wf_{code.replace('.','_')}_{ktype}")
         os.makedirs(os.path.dirname(_tmp), exist_ok=True)
         _p_stats = _tmp + "_stats.parquet"
         _p_perf = _tmp + "_perf.parquet"
@@ -966,6 +1329,157 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _cw.close()
 
     print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
+
+    # =========================================================
+    # Walk Forward 回测（使用 strategy_score_stability 的 is_best 计划）
+    # =========================================================
+    if _tmp_perf_files:
+        try:
+            _qc = duckdb.connect(DB_PATH)
+            _wf_plan = _qc.execute("""
+                SELECT code, window_label, ma_len AS best_ma
+                FROM strategy_score_stability
+                WHERE is_best = '最优'
+                ORDER BY code, window_label
+            """).fetchdf()
+            _qc.close()
+        except Exception as e:
+            print(f"  WF 计划读取失败: {e}")
+            _wf_plan = pd.DataFrame()
+
+        if not _wf_plan.empty and len(windows) >= 2:
+            print("  Walk Forward 回测...", end=" ", flush=True)
+            # 提前清空旧数据
+            _cw = duckdb.connect(DB_PATH)
+            for _wt in ["backtest_stats_walkforward", "backtest_trades_walkforward",
+                        "backtest_performance_walkforward"]:
+                try: _cw.execute(f"DELETE FROM {_wt}")
+                except: pass
+            _cw.close()
+
+            _wf_cols = ["code","stock_name","market","ktype","window_label","window_count","datetime",
+                "open","high","low","close","volume","turnover","turnover_amount","source",
+                "ha_close","ma_len","ha_ma_value","trend_direction","signal","signal_exec",
+                "trade_id","trade_action","trade_price","trade_price_after_slippage",
+                "trade_shares","slippage","trade_amount","commission","actual_trade_amount",
+                "available_cash","held_shares","trade_status",
+                "close_price","close_price_after_slippage","close_shares","close_slippage",
+                "close_trade_amount","close_commission","close_actual_trade_amount","close_pnl","close_type","close_pnl_type",
+                "cash_before_trade","cash_after_trade",
+                "account_value","account_value_change","account_value_change_pct",
+                "change_from_initial","change_from_initial_pct",
+                "created_at"]
+            _wf_sel = ",".join(_wf_cols)
+
+            _tmp_wf_files = []
+            _tmp_wf_perf = []
+            _n_workers = max(1, os.cpu_count() - 1)
+            with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
+                _wf_codes = _wf_plan["code"].unique()
+                _futures = {executor.submit(_worker_stock_walkforward, code, ktype, windows, ma_range,
+                                           trade_mode, slippage, fee_rate, _wf_plan): code for code in _wf_codes}
+                for _future in concurrent.futures.as_completed(_futures):
+                    try:
+                        _code, _path, _perf_path, err = _future.result()
+                    except Exception as e:
+                        continue
+                    if err or not _path:
+                        continue
+                    _tmp_wf_files.append(_path)
+                    if _perf_path:
+                        _tmp_wf_perf.append(_perf_path)
+
+            # 批量写入
+            if _tmp_wf_files:
+                _cw = duckdb.connect(DB_PATH)
+                _plist = ",".join(f"'{p}'" for p in _tmp_wf_files)
+                _cw.execute(f"""
+                    INSERT INTO backtest_stats_walkforward ({_wf_sel})
+                    SELECT {_wf_sel} FROM read_parquet([{_plist}])
+                """)
+                _cw.close()
+                for _p in _tmp_wf_files:
+                    try: os.remove(_p)
+                    except: pass
+
+            if _tmp_wf_perf:
+                try:
+                    _cw = duckdb.connect(DB_PATH)
+                    _plist2 = ",".join(f"'{p}'" for p in _tmp_wf_perf)
+                    _cw.execute(f"""
+                        INSERT INTO backtest_performance_walkforward
+                        SELECT code, stock_name, market, ktype, window_label, ma_len,
+                               total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
+                               strategy_score,
+                               max_drawdown, sharpe_ratio, calmar_ratio,
+                               trade_count, win_rate, profit_factor, payoff_ratio,
+                               avg_win, avg_win_pct, avg_loss, avg_loss_pct,
+                               max_win, max_loss, max_win_streak, max_loss_streak,
+                               avg_hold_days, avg_hold_bars,
+                               initial_cash, final_cash, CURRENT_TIMESTAMP
+                        FROM read_parquet([{_plist2}])
+                    """)
+                    _cw.close()
+                    for _p in _tmp_wf_perf:
+                        try: os.remove(_p)
+                        except: pass
+                except Exception as e:
+                    print(f"  WF 策略表现写入失败: {e}")
+
+            # 派生 WF 交易记录
+            _cw = duckdb.connect(DB_PATH)
+            try:
+                _cw.execute("DELETE FROM backtest_trades_walkforward")
+                _cw.execute("""
+                    INSERT INTO backtest_trades_walkforward
+                    SELECT code, stock_name, market, ktype, w, datetime,
+                           ma_len, trade_id, trade_action, trade_price_after_slippage,
+                           trade_shares, slippage, trade_amount, commission,
+                           actual_trade_amount, trade_status, close_pnl, close_type,
+                           close_pnl_type,
+                           cash_before_trade, cash_after_trade, available_cash, created_at
+                    FROM backtest_stats_walkforward,
+                         UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
+                    WHERE trade_action IS NOT NULL
+                """)
+                # 持仓未平仓补虚拟平仓
+                _cw.execute("""
+                    INSERT INTO backtest_trades_walkforward
+                    SELECT s.code, s.stock_name, s.market, s.ktype, s.ow, s.datetime,
+                           s.ma_len, s.trade_id, '平多',
+                           s.close_price_after_slippage,
+                           s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
+                           s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓',
+                           s.close_pnl_type,
+                           s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.created_at
+                    FROM (
+                        SELECT oww.w AS ow, s.*, ROW_NUMBER() OVER (
+                            PARTITION BY oww.code, oww.ktype, oww.ma_len, oww.trade_id, oww.w
+                            ORDER BY s.datetime DESC
+                        ) AS rn
+                        FROM (
+                            SELECT DISTINCT o.code, o.ktype, o.ma_len, o.trade_id, t.w
+                            FROM backtest_stats_walkforward o,
+                                 UNNEST(STRING_SPLIT(o.window_label, ',')) AS t(w)
+                            WHERE o.trade_action = '开多'
+                        ) oww
+                        JOIN backtest_stats_walkforward s ON s.code = oww.code AND s.ktype = oww.ktype
+                            AND s.ma_len = oww.ma_len AND s.trade_id = oww.trade_id
+                            AND s.trade_status = '持仓中'
+                            AND s.datetime <= STRPTIME(SPLIT_PART(oww.w, '~', 2), '%Y-%m-%d')
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM backtest_stats_walkforward s2
+                            WHERE s2.code = oww.code AND s2.ktype = oww.ktype
+                              AND s2.ma_len = oww.ma_len AND s2.trade_id = oww.trade_id
+                              AND s2.trade_action = '平多'
+                              AND s2.window_label LIKE '%' || oww.w || '%'
+                        )
+                    ) s
+                    WHERE s.rn = 1
+                """)
+            except Exception as e:
+                print(f"  WF 交易记录派生失败: {e}")
+            _cw.close()
 
 
 # =========================================================
