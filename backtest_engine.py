@@ -237,6 +237,31 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             return pd.concat(all_dfs, ignore_index=True), pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
     return pd.DataFrame(), pd.DataFrame()
 
+def _calc_strategy_score(cagr, sharpe_ratio, max_drawdown, profit_factor, win_rate, trade_count):
+    """计算策略综合评分（与 backtest_uscncc.py 中 calc_score_row 逻辑一致）。"""
+    def _normalize(x, lo, hi):
+        if x is None: return 0
+        if hi == lo: return 0
+        x = max(lo, min(x, hi))
+        return (x - lo) / (hi - lo)
+
+    cagr_score = _normalize(cagr, 0, 30) * 100
+    sharpe_score = _normalize(sharpe_ratio, 0, 2) * 100
+    dd_score = (1 - _normalize(max_drawdown, 0, 50)) * 100
+    pf_score = _normalize(profit_factor, 1, 3) * 100
+    win_score = _normalize(win_rate, 30, 80) * 100
+    trade_score = _normalize(min(trade_count, 100), 10, 100) * 100
+
+    return (
+        cagr_score * 0.30 +
+        sharpe_score * 0.25 +
+        dd_score * 0.20 +
+        pf_score * 0.15 +
+        win_score * 0.05 +
+        trade_score * 0.05
+    )
+
+
 def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
                _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
                trade_id_arr, ta_lbl):
@@ -288,6 +313,10 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
     avg_trade_return = (sum(close_pnls) / total_cash_before) if total_cash_before > 0 and n_closed > 0 else 0
 
+    strategy_score = round(_calc_strategy_score(
+        cagr, sharpe, max_dd, profit_factor, win_rate, trade_count
+    ), 2)
+
     # 连续盈亏次数
     signs = [1 if p > 0 else -1 for p in close_pnls]
     max_win_streak = max_loss_streak = 0
@@ -324,6 +353,7 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
         "calmar_ratio": round(calmar, 4),
         "trade_count": trade_count, "win_rate": round(win_rate, 4),
         "profit_factor": round(profit_factor, 4), "payoff_ratio": round(payoff_ratio, 4),
+        "strategy_score": strategy_score,
         "avg_win": round(avg_win, 4), "avg_win_pct": round(avg_win_amt, 4),
         "avg_loss": round(avg_loss, 4), "avg_loss_pct": round(avg_loss_amt, 4),
         "max_win": round(max_win, 4), "max_loss": round(max_loss, 4),
@@ -646,6 +676,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 INSERT INTO backtest_performance
                 SELECT code, stock_name, market, ktype, window_label, ma_len,
                        total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
+                       strategy_score,
                        max_drawdown, sharpe_ratio, calmar_ratio,
                        trade_count, win_rate, profit_factor, payoff_ratio,
                        avg_win, avg_win_pct, avg_loss, avg_loss_pct,
