@@ -712,14 +712,14 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     actual_trade_amount, trade_status, close_pnl, close_type,
                     cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
                 )
-                SELECT s.code, s.stock_name, s.market, s.ktype, oww.w AS window_label, s.datetime,
+                SELECT s.code, s.stock_name, s.market, s.ktype, s.ow, s.datetime,
                        s.ma_len, s.trade_id, '平多',
                        s.close_price_after_slippage,
                        s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
                        s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓',
                        s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.close_pnl_type, s.created_at
                 FROM (
-                    SELECT *, ROW_NUMBER() OVER (
+                    SELECT oww.w AS ow, s.*, ROW_NUMBER() OVER (
                         PARTITION BY oww.code, oww.ktype, oww.ma_len, oww.trade_id, oww.w
                         ORDER BY s.datetime DESC
                     ) AS rn
