@@ -210,7 +210,9 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
                                           slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
             if df is not None and not df.empty:
                 all_dfs.append(df)
-                all_perf.append({**{"code": code, "ktype": ktype, "ma_len": ma, "window_label": window_label}, **_perf})
+                _sn = str(df["stock_name"].iloc[0]) if "stock_name" in df.columns and not df["stock_name"].empty else ""
+                _mkt = str(df["market"].iloc[0]) if "market" in df.columns and not df["market"].empty else ""
+                all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt, "ktype": ktype, "ma_len": ma, "window_label": window_label}, **_perf})
 
     if all_dfs:
         import warnings as _w
@@ -625,7 +627,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _plist2 = ",".join(f"'{p}'" for p in _tmp_perf_files)
             _cw.execute(f"""
                 INSERT INTO backtest_performance
-                SELECT code, '' AS stock_name, '' AS market, ktype, window_label, ma_len,
+                SELECT code, stock_name, market, ktype, window_label, ma_len,
                        total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
                        max_drawdown, sharpe_ratio, calmar_ratio,
                        trade_count, win_rate, profit_factor, payoff_ratio,
