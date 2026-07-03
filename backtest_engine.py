@@ -703,7 +703,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
                 WHERE trade_action IS NOT NULL
             """)
-            # 为未平仓交易补虚拟平仓行
+            # 为未平仓交易补虚拟平仓行（按窗口取最后一根持仓K线）
             _cw.execute("""
                 INSERT INTO backtest_trades (
                     code, stock_name, market, ktype, window_label, datetime,
@@ -720,27 +720,28 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                        s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.close_pnl_type, s.created_at
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
-                        PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
+                        PARTITION BY code, ktype, ma_len, trade_id, oww.w
+                        ORDER BY s.datetime DESC
                     ) AS rn
-                    FROM backtest_stats
-                    WHERE trade_status = '持仓中'
-                ) s,
-                LATERAL (
-                    SELECT DISTINCT t.w
-                    FROM backtest_stats o,
-                         UNNEST(STRING_SPLIT(o.window_label, ',')) AS t(w)
-                    WHERE o.trade_action = '开多'
-                      AND o.code = s.code AND o.ktype = s.ktype
-                      AND o.ma_len = s.ma_len AND o.trade_id = s.trade_id
-                ) oww
+                    FROM (
+                        SELECT DISTINCT o.code, o.ktype, o.ma_len, o.trade_id, t.w
+                        FROM backtest_stats o,
+                             UNNEST(STRING_SPLIT(o.window_label, ',')) AS t(w)
+                        WHERE o.trade_action = '开多'
+                    ) oww
+                    JOIN backtest_stats s ON s.code = oww.code AND s.ktype = oww.ktype
+                        AND s.ma_len = oww.ma_len AND s.trade_id = oww.trade_id
+                        AND s.trade_status = '持仓中'
+                        AND s.datetime <= STRPTIME(SPLIT_PART(oww.w, '~', 2), '%Y-%m-%d')
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM backtest_stats s2
+                        WHERE s2.code = oww.code AND s2.ktype = oww.ktype
+                          AND s2.ma_len = oww.ma_len AND s2.trade_id = oww.trade_id
+                          AND s2.trade_action = '平多'
+                          AND s2.window_label LIKE '%' || oww.w || '%'
+                    )
+                ) s
                 WHERE s.rn = 1
-                  AND NOT EXISTS (
-                    SELECT 1 FROM backtest_stats s2
-                    WHERE s2.code = s.code AND s2.ktype = s.ktype
-                      AND s2.ma_len = s.ma_len AND s2.trade_id = s.trade_id
-                      AND s2.trade_action = '平多'
-                      AND s2.window_label LIKE '%' || oww.w || '%'
-                  )
             """)
             # 全局排序
             _cw.execute("""
