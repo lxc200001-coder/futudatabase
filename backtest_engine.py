@@ -720,7 +720,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                        s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.close_pnl_type, s.created_at
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
-                        PARTITION BY code, ktype, ma_len, trade_id, oww.w
+                        PARTITION BY oww.code, oww.ktype, oww.ma_len, oww.trade_id, oww.w
                         ORDER BY s.datetime DESC
                     ) AS rn
                     FROM (
