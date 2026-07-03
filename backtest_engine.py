@@ -510,7 +510,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         "close_actual_trade_amount": [float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
         "close_pnl": [float(_vp_pnl[j]) if _vp_pnl[j] is not None else None for j in range(n_sl)],
         "close_type": ["真实平仓" if _closed[j] else ("虚拟平仓" if _holding[j] else None) for j in range(n_sl)],
-        "close_pnl_type": [None if ta_lbl[j] == "开多" else ("盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None)) for j in range(n_sl)],
+        "close_pnl_type": ["盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None) for j in range(n_sl)],
         "cash_before_trade": [float(_cash_bt[j]) if _cash_bt[j] is not None else None for j in range(n_sl)],
         "cash_after_trade": [float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None for j in range(n_sl)],
         "account_value": [float(av_sl[j]) for j in range(n_sl)],
@@ -697,7 +697,9 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     trade_shares, slippage, trade_amount, commission,
                     actual_trade_amount, trade_status, close_pnl,
                     CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
-                    cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
+                    cash_before_trade, cash_after_trade, available_cash,
+                    CASE WHEN trade_action = '开多' THEN NULL ELSE close_pnl_type END,
+                    created_at
                 FROM backtest_stats,
                      UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
                 WHERE trade_action IS NOT NULL
