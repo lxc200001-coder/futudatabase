@@ -230,9 +230,9 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     years = max((last_dt - first_dt).days / 365.0, 1 / 365.0)
     risk_free = 0.02
 
-    total_ret = (final_ac / first_ac - 1) * 100 if first_ac > 0 else 0.0
-    cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) * 100 if first_ac > 0 else 0.0
-    buy_hold = (last_close / first_close - 1) * 100 if first_close > 0 else 0.0
+    total_ret = (final_ac / first_ac - 1) if first_ac > 0 else 0.0
+    cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) if first_ac > 0 else 0.0
+    buy_hold = (last_close / first_close - 1) if first_close > 0 else 0.0
 
     # Sharpe
     rets = np.diff(av_arr) / av_arr[:-1]
@@ -246,7 +246,7 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
 
     # 最大回撤
     running_max = np.maximum.accumulate(av_arr)
-    max_dd = float(np.max((running_max - av_arr) / running_max)) * 100 if running_max[-1] > 0 else 0.0
+    max_dd = float(np.max((running_max - av_arr) / running_max)) if running_max[-1] > 0 else 0.0
     calmar = cagr / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
 
     # 交易统计（从 _vp_pnl 中提取平多行）
@@ -267,10 +267,10 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     avg_loss_amt = (sum(close_amts[i] for i in range(n_closed) if close_pnls[i] < 0) / n_losses) if n_losses else 0
     total_cash_before = sum(_vp_price_slip[j] * _vp_shares[j] for j in range(n_sl) if ta_lbl[j] == "开多" and _vp_shares[j] is not None)
 
-    win_rate = (n_wins / n_closed * 100) if n_closed > 0 else 0
+    win_rate = (n_wins / n_closed) if n_closed > 0 else 0
     profit_factor = total_win / abs(total_loss) if total_loss < 0 else 0
     payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
-    avg_trade_return = (sum(close_pnls) / total_cash_before * 100) if total_cash_before > 0 and n_closed > 0 else 0
+    avg_trade_return = (sum(close_pnls) / total_cash_before) if total_cash_before > 0 and n_closed > 0 else 0
 
     # 连续盈亏次数
     signs = [1 if p > 0 else -1 for p in close_pnls]
