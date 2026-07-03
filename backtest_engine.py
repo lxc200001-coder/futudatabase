@@ -667,28 +667,19 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     }), _perf
 
 
-def _build_wf_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
-                          signal_exec, trade_actions, trade_prices, ha_close, closes,
-                          ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
+def _build_wf_slice_rows(df, idx, ma_len, ktype,
+                          ha_ma_sl, dir_sl, sig_sl, signal_exec,
+                          trade_actions_sl, trade_prices_sl, ha_close_sl, closes,
+                          ac_sl, hs_sl, ts_sl, av_sl, slippage, fee_rate,
                           trade_mode="close", wl_cache=None,
                           carry_trade_id=0, carry_cash=0.0):
-    """Walk Forward 版本：在 _build_slice_rows 基础上增加 signal_exec 和账户接续。"""
-    idx = np.where(mask.values)[0]
-    if len(idx) == 0:
+    """Walk Forward 版本：接收预切片数组，增加 signal_exec 和账户接续。
+    所有 `_sl` 后缀的参数已是当前窗口的预切片数组，不再用 idx 二次索引。"""
+    n_sl = len(idx)
+    if n_sl == 0:
         return None, None, None, None, None
 
     c_sl = closes[idx]
-    ha_close_sl = ha_close[idx]
-    ha_ma_sl = ha_ma_val[idx]
-    dir_sl = direction[idx]
-    sig_sl = signal[idx]
-    sig_exec_sl = np.array(signal_exec, dtype=object) if isinstance(signal_exec, list) else signal_exec[idx]
-
-    n_sl = len(idx)
-    av_sl = av_arr[idx]
-    ac_sl = ac_arr[idx]
-    hs_sl = hs_arr[idx]
-    ts_sl = ts_arr[idx]
 
     acc_chg = np.zeros(n_sl, dtype=np.float64)
     acc_chg_pct = np.zeros(n_sl, dtype=np.float64)
@@ -699,13 +690,13 @@ def _build_wf_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     chg_init_pct = np.divide(chg_init, INITIAL_CASH, out=np.zeros_like(chg_init),
                              where=INITIAL_CASH != 0)
 
-    # 中文字段映射（使用 filtered trade_actions）
+    # 中文字段映射（预切片数组，直接用 j 索引）
     ta_lbl = np.full(n_sl, None, dtype=object)
     tp_val = np.full(n_sl, None, dtype=object)
     tp_slip_val = np.full(n_sl, None, dtype=object)
     for j in range(n_sl):
-        ta = trade_actions[idx[j]]
-        tp = trade_prices[idx[j]]
+        ta = trade_actions_sl[j]
+        tp = trade_prices_sl[j]
         if ta == 1:
             ta_lbl[j] = "开多"
             if not np.isnan(tp):
@@ -720,7 +711,7 @@ def _build_wf_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     trade_status_arr = np.full(n_sl, None, dtype=object)
     _tid = carry_trade_id
     for j in range(n_sl):
-        ta = trade_actions[idx[j]]
+        ta = trade_actions_sl[j]
         hs = hs_sl[j]
         if ta == 1:
             _tid += 1
@@ -746,8 +737,8 @@ def _build_wf_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     _entry_comm = None
     _virtual_cash = carry_cash
     for j in range(n_sl):
-        ta = trade_actions[idx[j]]
-        tp = trade_prices[idx[j]]
+        ta = trade_actions_sl[j]
+        tp = trade_prices_sl[j]
         hs = hs_sl[j]
         ts_val = ts_sl[j]
 
@@ -818,7 +809,7 @@ def _build_wf_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         "ha_ma_value": [float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None for j in range(n_sl)],
         "trend_direction": list(dir_sl),
         "signal": list(sig_sl),
-        "signal_exec": list(sig_exec_sl),
+        "signal_exec": list(signal_exec),
         "trade_id": [int(trade_id_arr[j]) if trade_id_arr[j] is not None else None for j in range(n_sl)],
         "trade_action": [str(ta_lbl[j]) if ta_lbl[j] is not None else None for j in range(n_sl)],
         "trade_price": [float(tp_val[j]) if tp_val[j] is not None else None for j in range(n_sl)],
@@ -935,16 +926,36 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
                         ac_arr, hs_arr, ts_arr, av_arr)
 
-    # 预计算窗口归属缓存
-    _w_labels = [f"{ws.date()}~{we.date()}" for ws, we in windows]
+    # 预计算窗口归属缓存（使用 WF 窗口：从 windows[1:] 开始）
+    _wf_windows = windows[1:]
+    _w_labels = [f"{ws.date()}~{we.date()}" for ws, we in _wf_windows]
     _dt_arr = pd.to_datetime(df_k["datetime"]).values
     _wl_cache = {}
     for _i, _dt in enumerate(_dt_arr):
-        _belongs = [_w_labels[_j] for _j in range(len(windows)) if windows[_j][1] >= _dt]
+        _belongs = [_w_labels[_j] for _j in range(len(_wf_windows)) if _wf_windows[_j][1] >= _dt]
         _wl_cache[_i] = (",".join(_belongs), len(_belongs))
 
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
     _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
+
+    # 预查询 backtest_stats 获取 ha_close / 信号数据
+    _qc = duckdb.connect(DB_PATH, read_only=True)
+    _bt_df = _qc.execute(f"""
+        SELECT datetime, ha_close, ma_len, ha_ma_value, trend_direction, signal
+        FROM backtest_stats
+        WHERE code = ? AND ktype = ?
+        ORDER BY datetime
+    """, [code, ktype]).fetchdf()
+    _qc.close()
+    # 构建查找结构
+    _ha_close_map = {}
+    for _, _r in _bt_df.iterrows():
+        _ha_close_map[_r["datetime"]] = _r["ha_close"]
+    _signal_map = {}
+    for _, _r in _bt_df.iterrows():
+        _signal_map[(_r["datetime"], _r["ma_len"])] = (
+            _r["ha_ma_value"], _r["trend_direction"], _r["signal"]
+        )
 
     # 构建 WF 映射：{window_label → best_ma}
     stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
@@ -972,12 +983,23 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             continue
 
         idx = np.where(mask.values)[0]
-        # 从 ma_cache 获取信号（完全使用上个窗口的 best_ma）
-        ha_ma_val, direction, signal, trade_actions, trade_prices, \
-            _, _, _, _ = ma_cache[prev_best_ma]
 
-        sig_sl = signal[idx]
-        ta_sl = trade_actions[idx]   # 原始 0/1/2
+        # 从 backtest_stats 查找当前 WF MA 的 ha_ma_value / direction / signal
+        _ha_ma_sl = np.full(len(idx), np.nan, dtype=np.float64)
+        _dir_sl = np.full(len(idx), "", dtype=object)
+        _sig_sl = np.full(len(idx), "", dtype=object)
+        for _j, _ii in enumerate(idx):
+            _key = (df_k["datetime"].iloc[_ii], prev_best_ma)
+            _v = _signal_map.get(_key)
+            if _v is not None:
+                _ha_ma_sl[_j], _dir_sl[_j], _sig_sl[_j] = _v
+
+        # 从 backtest_stats 查找 ha_close
+        _ha_close_sl = np.array([_ha_close_map.get(df_k["datetime"].iloc[_ii], np.nan) for _ii in idx], dtype=np.float64)
+
+        # 从 ma_cache 获取原始 trade_actions/trade_prices（用于 numba 重算）
+        _, _, _, trade_actions, trade_prices, _, _, _, _ = ma_cache[prev_best_ma]
+        ta_sl = trade_actions[idx]
         tp_sl = trade_prices[idx]
 
         # 信号冲突检测
@@ -985,7 +1007,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         filtered_ta = ta_sl.copy()
         pos = carry_has_position
         for j in range(len(idx)):
-            sig = sig_sl[j]
+            sig = _sig_sl[j]
             if sig == "买入":
                 if pos:
                     signal_exec[j] = "忽略"; filtered_ta[j] = 0
@@ -1003,11 +1025,11 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             allow_fractional=_is_cc
         )
 
-        # 构建行数据
+        # 构建行数据（传入从 backtest_stats 查找的数组）
         df_slice, _perf, carry_trade_id, carry_has_position = _build_wf_slice_rows(
-            df_k, mask, prev_best_ma, ktype,
-            ha_ma_val, direction, signal, signal_exec,
-            filtered_ta, tp_sl, ha_close, closes,
+            df_k, idx, prev_best_ma, ktype,
+            _ha_ma_sl, _dir_sl, _sig_sl, signal_exec,
+            filtered_ta, tp_sl, _ha_close_sl, closes,
             ac_arr, hs_arr, ts_arr, av_arr,
             slippage, fee_rate, trade_mode=trade_mode,
             wl_cache=_wl_cache,
