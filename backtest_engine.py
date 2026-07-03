@@ -450,8 +450,6 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             _entry_comm = None
 
     # 列式构造（替代逐行 dict，快 10-50 倍）
-    if perf_only:
-        return None, _perf
     _has_sn = "stock_name" in df.columns
     _has_mkt = "market" in df.columns
     _has_tv = "turnover" in df.columns
@@ -472,6 +470,8 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                        _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
                        trade_id_arr, ta_lbl)
 
+    if perf_only:
+        return None, _perf
     return pd.DataFrame({
         "code": [str(df["code"].iloc[i]) for i in idx],
         "stock_name": [str(df["stock_name"].iloc[i]) if _has_sn else "" for i in idx],
