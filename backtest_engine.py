@@ -712,7 +712,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     actual_trade_amount, trade_status, close_pnl, close_type,
                     cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
                 )
-                SELECT s.code, s.stock_name, s.market, s.ktype, w, s.datetime,
+                SELECT s.code, s.stock_name, s.market, s.ktype, oww.w AS window_label, s.datetime,
                        s.ma_len, s.trade_id, '平多',
                        s.close_price_after_slippage,
                        s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
@@ -722,17 +722,24 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     SELECT *, ROW_NUMBER() OVER (
                         PARTITION BY code, ktype, ma_len, trade_id ORDER BY datetime DESC
                     ) AS rn
-                    FROM backtest_stats s
+                    FROM backtest_stats
                     WHERE trade_status = '持仓中'
                 ) s,
-                     UNNEST(STRING_SPLIT(s.window_label, ',')) AS t(w)
+                LATERAL (
+                    SELECT DISTINCT t.w
+                    FROM backtest_stats o,
+                         UNNEST(STRING_SPLIT(o.window_label, ',')) AS t(w)
+                    WHERE o.trade_action = '开多'
+                      AND o.code = s.code AND o.ktype = s.ktype
+                      AND o.ma_len = s.ma_len AND o.trade_id = s.trade_id
+                ) oww
                 WHERE s.rn = 1
                   AND NOT EXISTS (
                     SELECT 1 FROM backtest_stats s2
                     WHERE s2.code = s.code AND s2.ktype = s.ktype
                       AND s2.ma_len = s.ma_len AND s2.trade_id = s.trade_id
                       AND s2.trade_action = '平多'
-                      AND s2.window_label LIKE '%' || w || '%'
+                      AND s2.window_label LIKE '%' || oww.w || '%'
                   )
             """)
             # 全局排序
