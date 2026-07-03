@@ -333,13 +333,14 @@ def build_window_stability(summary_rows):
             win_window_count=("cagr", lambda x: (x > 0).sum()),
             avg_score_rank=("window_rank", "mean"),
             rank_first_count=("window_rank", lambda x: (x == 1).sum()),
-            rank_top3_pct=("window_rank", lambda x: (x <= 3).sum() / max(len(x), 1) * 100),
+            rank_top3_pct=("window_rank", lambda x: (x <= 3).sum() / max(len(x), 1)),
             score_rank_std=("window_rank", "std"),
             avg_cagr=("cagr", "mean"),
             cagr_std=("cagr", "std"),
         ).reset_index()
 
-        stats["win_window_pct"] = stats["win_window_count"] / stats["window_count"] * 100
+        stats["win_window_pct"] = stats["win_window_count"] / stats["window_count"]
+        stats["avg_cagr"] = stats["avg_cagr"]
         stats["cagr_std"] = stats["cagr_std"].fillna(0)
         stats["score_rank_std"] = stats["score_rank_std"].fillna(0)
 
