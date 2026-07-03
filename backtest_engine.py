@@ -926,14 +926,9 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
                         ac_arr, hs_arr, ts_arr, av_arr)
 
-    # 预计算窗口归属缓存（使用 WF 窗口：从 windows[1:] 开始）
-    _wf_windows = windows[1:]
-    _w_labels = [f"{ws.date()}~{we.date()}" for ws, we in _wf_windows]
-    _dt_arr = pd.to_datetime(df_k["datetime"]).values
-    _wl_cache = {}
-    for _i, _dt in enumerate(_dt_arr):
-        _belongs = [_w_labels[_j] for _j in range(len(_wf_windows)) if _wf_windows[_j][1] >= _dt]
-        _wl_cache[_i] = (",".join(_belongs), len(_belongs))
+    # WF 窗口标签（先用占位符，循环结束后根据实际有数据的窗口修正）
+    _wl_cache = {_i: ("", 0) for _i in range(len(df_k))}
+    _wf_labels_seen = []  # 记录所有有数据的 WF 段标签
 
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
     _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
@@ -968,8 +963,9 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     carry_has_position = False
 
     for i in range(1, len(windows)):
-        ws, we = windows[i]
-        _wl = f"{ws.date()}~{we.date()}"
+        prev_end = windows[i-1][1]
+        curr_end = windows[i][1]
+        _wl = f"{(prev_end + pd.Timedelta(days=1)).date()}~{curr_end.date()}"
         _prev_wl = f"{windows[i-1][0].date()}~{windows[i-1][1].date()}"
 
         # 获取上个窗口的 best_ma
@@ -977,8 +973,9 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         if prev_best_ma is None:
             continue  # 没有 is_best 数据，跳过
 
-        mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
-               (pd.to_datetime(df_k["datetime"]) <= we)
+        # WF 段范围：(上个窗口结束日, 当前窗口结束日]
+        mask = (pd.to_datetime(df_k["datetime"]) > prev_end) & \
+               (pd.to_datetime(df_k["datetime"]) <= curr_end)
         if not mask.any():
             continue
 
@@ -1040,11 +1037,20 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
 
         if df_slice is not None and not df_slice.empty:
             all_dfs.append(df_slice)
+            _wf_labels_seen.append(_wl)
         if _perf:
             all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt,
                                 "ktype": ktype, "ma_len": prev_best_ma, "window_label": _wl}, **_perf})
 
-    if all_dfs:
+    # 修正 window_label：合并所有有数据的 WF 段标签
+    if all_dfs and _wf_labels_seen:
+        _first_parts = _wf_labels_seen[0].split("~")
+        _last_parts = _wf_labels_seen[-1].split("~")
+        _wf_label = f"{_first_parts[0]}~{_last_parts[-1]}"
+        _wf_count = len(_wf_labels_seen)
+        for _df in all_dfs:
+            _df["window_label"] = _wf_label
+            _df["window_count"] = _wf_count
         import warnings as _w
         with _w.catch_warnings():
             _w.simplefilter("ignore", FutureWarning)
