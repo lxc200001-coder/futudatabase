@@ -343,7 +343,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     """对切片后的预计算结果构建行（不跑 numba）。"""
     idx = np.where(mask.values)[0]
     if len(idx) == 0:
-        return None
+        return None, None
 
     # 切片（用 idx 索引，保持日期对齐）
     c_sl = closes[idx]
