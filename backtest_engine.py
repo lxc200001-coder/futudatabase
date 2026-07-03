@@ -41,16 +41,18 @@ WINDOW_START_DATE = "2000-01-03"
 # =========================================================
 
 @njit
-def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, slippage, fee_rate, allow_fractional=False):
+def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, slippage, fee_rate,
+                         allow_fractional=False, initial_shares=0.0):
     """@njit 逐K线计算账户状态。
 
     trade_actions: 0=无, 1=开多, 2=平多
     trade_prices: 成交价，NaN 表示无交易
     allow_fractional: 是否允许碎股（加密货币用）
+    initial_shares: 首根K线持有的股数（WF跨窗口接续用）
     返回所有账户数组。
     """
     available_cash = np.full(n, initial_cash, dtype=np.float64)
-    held_shares = np.zeros(n, dtype=np.float64)
+    held_shares = np.full(n, initial_shares, dtype=np.float64)
     trade_shares_arr = np.zeros(n, dtype=np.float64)
     comm_arr = np.zeros(n, dtype=np.float64)
     slip_arr = np.zeros(n, dtype=np.float64)
@@ -718,10 +720,10 @@ def _build_wf_slice_rows(df, idx, ma_len, ktype,
             trade_id_arr[j] = _tid
             trade_status_arr[j] = "持仓中"
         elif ta == 2:
-            trade_id_arr[j] = _tid if _tid > carry_trade_id else None
+            trade_id_arr[j] = _tid if _tid > 0 else None
             trade_status_arr[j] = "已平仓"
         elif hs > 0:
-            trade_id_arr[j] = _tid if _tid > carry_trade_id else None
+            trade_id_arr[j] = _tid if _tid > 0 else None
             trade_status_arr[j] = "持仓中"
 
     # 虚拟平仓（从 carry_cash 接续）
@@ -959,6 +961,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     all_dfs = []
     all_perf = []
     carry_cash = INITIAL_CASH
+    carry_shares = 0.0
     carry_trade_id = 0
     carry_has_position = False
 
@@ -1016,10 +1019,10 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
                 else:
                     signal_exec[j] = "忽略"; filtered_ta[j] = 0
 
-        # 用 filtered_ta 重算账户
+        # 用 filtered_ta 重算账户（整体连续回测，接续上段现金和持股）
         (ac_arr, hs_arr, ts_arr, _, _, av_arr) = _numba_account_loop(
             closes[idx], filtered_ta, tp_sl, len(idx), carry_cash, slippage, fee_rate,
-            allow_fractional=_is_cc
+            allow_fractional=_is_cc, initial_shares=carry_shares
         )
 
         # 构建行数据（传入从 backtest_stats 查找的数组）
@@ -1033,7 +1036,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             carry_trade_id=carry_trade_id, carry_cash=carry_cash
         )
 
-        carry_cash = av_arr[-1]
+        carry_cash = ac_arr[-1]   # 可用现金接续，非账户总价值
+        carry_shares = hs_arr[-1] # 持股接续
 
         if df_slice is not None and not df_slice.empty:
             all_dfs.append(df_slice)
