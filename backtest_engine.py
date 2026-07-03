@@ -214,6 +214,25 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
                 _mkt = str(df["market"].iloc[0]) if "market" in df.columns and not df["market"].empty else ""
                 all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt, "ktype": ktype, "ma_len": ma, "window_label": window_label}, **_perf})
 
+    # 遍历所有窗口收集 perf
+    _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
+    _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
+    for ws, we in windows:
+        _wl = f"{ws.date()}~{we.date()}"
+        _mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
+                (pd.to_datetime(df_k["datetime"]) <= we)
+        if not _mask.any():
+            continue
+        for ma in ma_range:
+            (ha_ma_val, direction, signal, trade_actions, trade_prices,
+             ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
+            _, _perf = _build_slice_rows(df_k, _mask, ma, ktype, ha_ma_val, direction, signal,
+                                          trade_actions, trade_prices, ha_close, closes,
+                                          ac_arr, hs_arr, ts_arr, av_arr,
+                                          slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache, perf_only=True)
+            if _perf:
+                all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt, "ktype": ktype, "ma_len": ma, "window_label": _wl}, **_perf})
+
     if all_dfs:
         import warnings as _w
         with _w.catch_warnings():
@@ -320,7 +339,7 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
 def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
                       ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
-                      trade_mode="close", wl_cache=None):
+                      trade_mode="close", wl_cache=None, perf_only=False):
     """对切片后的预计算结果构建行（不跑 numba）。"""
     idx = np.where(mask.values)[0]
     if len(idx) == 0:
@@ -431,6 +450,8 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             _entry_comm = None
 
     # 列式构造（替代逐行 dict，快 10-50 倍）
+    if perf_only:
+        return None, _perf
     _has_sn = "stock_name" in df.columns
     _has_mkt = "market" in df.columns
     _has_tv = "turnover" in df.columns
