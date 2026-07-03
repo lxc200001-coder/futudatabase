@@ -210,9 +210,6 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
                                           slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
             if df is not None and not df.empty:
                 all_dfs.append(df)
-                _sn = str(df["stock_name"].iloc[0]) if "stock_name" in df.columns and not df["stock_name"].empty else ""
-                _mkt = str(df["market"].iloc[0]) if "market" in df.columns and not df["market"].empty else ""
-                all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt, "ktype": ktype, "ma_len": ma, "window_label": window_label}, **_perf})
 
     # 遍历所有窗口收集 perf
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
