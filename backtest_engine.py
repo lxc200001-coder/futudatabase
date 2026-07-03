@@ -298,6 +298,84 @@ def build_score_matrix(summary_rows):
     return score_pivot, rank_pivot
 
 
+def build_window_stability(summary_rows):
+    """对每个累积 window_label 阶段计算参数稳定性（与 backtest_uscncc.py 逻辑一致，支持多股票 + ma_len）。"""
+    df = pd.DataFrame(summary_rows)
+    if df.empty:
+        return pd.DataFrame()
+
+    # 排除评分全为 0 的 window_label
+    valid = df.groupby("window_label")["strategy_score"].transform("max") > 0
+    df = df[valid]
+    if df.empty:
+        return pd.DataFrame()
+
+    windows = sorted(df["window_label"].unique())
+    if not windows:
+        return pd.DataFrame()
+
+    # 每 window_label 内按 (code, window_label) 组排名
+    df["window_rank"] = df.groupby(["code", "window_label"])["strategy_score"].rank(ascending=False, method="min")
+
+    def _norm(series, higher_is_better=True):
+        lo, hi = series.min(), series.max()
+        if hi == lo:
+            return pd.Series(0.5, index=series.index)
+        return (series - lo) / (hi - lo) if higher_is_better else (hi - series) / (hi - lo)
+
+    all_stages = []
+    for i, w in enumerate(windows):
+        stage_df = df[df["window_label"].isin(windows[:i + 1])]
+
+        stats = stage_df.groupby(["code", "ma_len"]).agg(
+            ktype=("ktype", "first"),
+            window_count=("window_label", "nunique"),
+            win_window_count=("cagr", lambda x: (x > 0).sum()),
+            avg_score_rank=("window_rank", "mean"),
+            rank_first_count=("window_rank", lambda x: (x == 1).sum()),
+            rank_top3_pct=("window_rank", lambda x: (x <= 3).sum() / max(len(x), 1) * 100),
+            score_rank_std=("window_rank", "std"),
+            avg_cagr=("cagr", "mean"),
+            cagr_std=("cagr", "std"),
+        ).reset_index()
+
+        stats["win_window_pct"] = stats["win_window_count"] / stats["window_count"] * 100
+        stats["cagr_std"] = stats["cagr_std"].fillna(0)
+        stats["score_rank_std"] = stats["score_rank_std"].fillna(0)
+
+        # 归一化加权评分
+        avg_rank_n = _norm(stats["avg_score_rank"], higher_is_better=False)
+        top3_n = _norm(stats["rank_top3_pct"], higher_is_better=True)
+        std_n = _norm(stats["score_rank_std"], higher_is_better=False)
+        cagr_n = _norm(stats["avg_cagr"], higher_is_better=True)
+        win_rate_n = _norm(stats["win_window_pct"], higher_is_better=True)
+        cagr_std_n = _norm(stats["cagr_std"], higher_is_better=False)
+
+        stats["stability_score"] = (
+            0.20 * avg_rank_n + 0.10 * top3_n + 0.15 * std_n
+            + 0.25 * cagr_n + 0.20 * win_rate_n + 0.10 * cagr_std_n
+        )
+
+        stats.insert(0, "window_label", w)
+        all_stages.append(stats)
+
+    result = pd.concat(all_stages, ignore_index=True)
+    result = result.sort_values(["code", "window_label", "ma_len"]).reset_index(drop=True)
+
+    # 标记每股票每 window_label 的最优参数
+    result["is_best"] = ""
+    idx = (
+        result
+        .sort_values(["stability_score", "score_rank_std", "avg_cagr"],
+                      ascending=[False, True, False])
+        .groupby(["code", "window_label"], sort=False)
+        .head(1)
+        .index
+    )
+    result.loc[idx, "is_best"] = "最优"
+    return result
+
+
 def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
                _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
                trade_id_arr, ta_lbl):
@@ -728,25 +806,24 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         except Exception as e:
             print(f"  策略表现写入失败: {e}")
 
-    # 构建 strategy_score 明细 / 排名表（从 backtest_performance 查询后写入两个新表）
+    # 构建 strategy_score 明细 / 排名 / 稳定性表（从 backtest_performance 查询后写入）
     try:
         _qc = duckdb.connect(DB_PATH)
         _perf_df = _qc.execute("""
-            SELECT code, ktype, ma_len, window_label, strategy_score
+            SELECT code, ktype, ma_len, window_label, strategy_score, cagr
             FROM backtest_performance
         """).fetchdf()
         if not _perf_df.empty:
             _score_pivot, _rank_pivot = build_score_matrix(_perf_df.to_dict("records"))
 
             if not _score_pivot.empty:
-                # 透视表 melt 回长格式
+                # 透视表 melt 回长格式 → 评分明细
                 _score_long = _score_pivot.melt(
                     id_vars=["code", "ktype", "ma_len"],
                     var_name="window_label", value_name="strategy_score"
                 ).dropna(subset=["strategy_score"])
                 _score_long["created_at"] = datetime.now()
 
-                # 清空旧数据并写入
                 _qc.execute("DELETE FROM strategy_score_detail")
                 _qc.register("_s", _score_long)
                 _qc.execute("""
@@ -768,6 +845,21 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     INSERT INTO strategy_score_rank
                     SELECT code, ktype, ma_len, window_label, window_rank, created_at
                     FROM _r
+                """)
+
+            # 参数稳定性分析
+            _stab_df = build_window_stability(_perf_df.to_dict("records"))
+            if not _stab_df.empty:
+                _stab_df["created_at"] = datetime.now()
+                _qc.execute("DELETE FROM strategy_score_stability")
+                _qc.register("_t", _stab_df)
+                _qc.execute("""
+                    INSERT INTO strategy_score_stability
+                    SELECT code, ktype, ma_len, window_label, window_count,
+                           win_window_count, win_window_pct, avg_cagr, cagr_std,
+                           rank_top3_pct, avg_score_rank, score_rank_std, rank_first_count,
+                           stability_score, is_best, created_at
+                    FROM _t
                 """)
         _qc.close()
     except Exception as e:

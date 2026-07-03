@@ -535,6 +535,39 @@ def create_tables(con):
         ("created_at","创建时间")]:
         con.execute(f"COMMENT ON COLUMN strategy_score_rank.{_c} IS '{_d}'")
 
+    # ── strategy_score 参数稳定性分析表 ──
+    con.execute("DROP TABLE IF EXISTS strategy_score_stability")
+    con.execute("""
+        CREATE TABLE strategy_score_stability (
+            code                VARCHAR,
+            ktype               VARCHAR,
+            ma_len              INTEGER,
+            window_label        VARCHAR,
+            window_count        INTEGER,
+            win_window_count    INTEGER,
+            win_window_pct      DOUBLE,
+            avg_cagr            DOUBLE,
+            cagr_std            DOUBLE,
+            rank_top3_pct       DOUBLE,
+            avg_score_rank      DOUBLE,
+            score_rank_std      DOUBLE,
+            rank_first_count    INTEGER,
+            stability_score     DOUBLE,
+            is_best             VARCHAR,
+            created_at          TIMESTAMP
+        )
+    """)
+    con.execute("COMMENT ON TABLE strategy_score_stability IS '策略参数稳定性分析（累积窗口评估各ma的稳定性和综合表现）'")
+    for _c, _d in [("code","股票代码"),("ktype","K线周期"),("ma_len","均线周期"),
+        ("window_label","窗口标签"),("window_count","窗口数量"),
+        ("win_window_count","盈利窗口数量"),("win_window_pct","盈利窗口占比"),
+        ("avg_cagr","平均年化收益率"),("cagr_std","年化收益率标准差"),
+        ("rank_top3_pct","前三名占比"),("avg_score_rank","平均排名"),
+        ("score_rank_std","排名标准差"),("rank_first_count","第一名次数"),
+        ("stability_score","参数稳定性评分"),
+        ("is_best","是否最优参数"),("created_at","创建时间")]:
+        con.execute(f"COMMENT ON COLUMN strategy_score_stability.{_c} IS '{_d}'")
+
     # 表描述
     con.execute("COMMENT ON TABLE watchlist IS '监控标的库(合并rank表+实时排名+symbols.csv)'")
     con.execute("COMMENT ON TABLE plates IS '板块/行业信息'")
@@ -720,6 +753,7 @@ if __name__ == "__main__":
                      "backtest_trades", "backtest_performance", "backtest_summary", "backtest_scores",
                      "backtest_stability", "backtest_signals", "backtest_stats",
                      "strategy_score_detail", "strategy_score_rank",
+                     "strategy_score_stability",
                      "klines_1d", "klines_1w", "klines_60m",
                      "klines_1d_sorted", "klines_1w_sorted", "klines_60m_sorted",
                      "v_klines_1d", "v_klines_1w", "v_klines_60m",
