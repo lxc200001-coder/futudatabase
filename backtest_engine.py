@@ -746,7 +746,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _cw.execute("""
                 CREATE TABLE backtest_trades_sorted AS
                 SELECT * FROM backtest_trades
-                ORDER BY code, ktype, window_label, ma_len, datetime
+                ORDER BY code, ktype, window_label, ma_len, datetime,
+                         CASE WHEN trade_action = '开多' THEN 0 ELSE 1 END
             """)
             _cw.execute("DROP TABLE backtest_trades")
             _cw.execute("ALTER TABLE backtest_trades_sorted RENAME TO backtest_trades")
