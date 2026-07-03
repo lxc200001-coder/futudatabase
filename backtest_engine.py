@@ -209,7 +209,6 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
                                           ac_arr, hs_arr, ts_arr, av_arr,
                                           slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
             if df is not None and not df.empty:
-                df["window_label"] = window_label
                 all_dfs.append(df)
                 all_perf.append({**{"code": code, "ktype": ktype, "ma_len": ma, "window_label": window_label}, **_perf})
 
