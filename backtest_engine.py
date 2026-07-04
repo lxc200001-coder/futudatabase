@@ -717,44 +717,6 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
                 if row["code"] == code}
     wf_mas = set(stock_wf.values())
 
-    # 仅计算 WF 会用到的 MA（is_best 中的值）
-    ma_cache = {}
-    for ma in ma_range:
-        if ma not in wf_mas:
-            continue
-        ha_ma_val = bn.move_mean(ha_close, window=ma, min_count=ma)
-        _up = np.zeros(n, dtype=np.int8)
-        _valid = ~np.isnan(ha_ma_val)
-        _up[1:] = np.where(_valid[1:] & _valid[:-1] & (ha_ma_val[1:] > ha_ma_val[:-1]), 1, 0)
-        direction = np.where(_up == 1, "多头", "空头")
-        signal = np.full(n, "", dtype=object)
-        signal[0] = "等待"
-        _du = _up[1:] == 1; _dd = _up[1:] == 0
-        _pu = _up[:-1] == 1; _pd = _up[:-1] == 0
-        signal[1:][_du & _pd] = "买入"
-        signal[1:][_du & _pu] = "持有"
-        signal[1:][_dd & _pu] = "卖出"
-        signal[1:][_dd & _pd] = "等待"
-        trade_actions = np.zeros(n, dtype=np.int64)
-        trade_prices = np.full(n, np.nan, dtype=np.float64)
-        _buy = signal == "买入"
-        _sell = signal == "卖出"
-        if trade_mode == "close":
-            trade_actions[_buy] = 1; trade_prices[_buy] = closes[_buy]
-            trade_actions[_sell] = 2; trade_prices[_sell] = closes[_sell]
-        else:
-            _buy1 = np.roll(_buy, 1); _buy1[0] = False
-            _sell1 = np.roll(_sell, 1); _sell1[0] = False
-            trade_actions[_buy1] = 1; trade_prices[_buy1] = opens_arr[_buy1]
-            trade_actions[_sell1] = 2; trade_prices[_sell1] = opens_arr[_sell1]
-        # 全量 numba（仅用于信号/方向，WF 会重算账户）
-        (ac_arr, hs_arr, ts_arr, _, _, av_arr) = _numba_account_loop(
-            closes, trade_actions, trade_prices, n, INITIAL_CASH, slippage, fee_rate,
-            allow_fractional=_is_cc
-        )
-        ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
-                        ac_arr, hs_arr, ts_arr, av_arr)
-
     # 找到第一个有有效 is_best 的 WF 段的起始日期
     _wf_start = None
     for i in range(1, len(windows)):
@@ -777,7 +739,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     # 预查询 backtest_stats 获取 ha_close / 信号数据
     _qc = duckdb.connect(DB_PATH, read_only=True)
     _bt_df = _qc.execute(f"""
-        SELECT datetime, ha_close, ma_len, ha_ma_value, trend_direction, signal
+        SELECT datetime, ha_close, ma_len, ha_ma_value, trend_direction, signal,
+               trade_action, trade_price
         FROM backtest_stats
         WHERE code = ? AND ktype = ?
         ORDER BY datetime
@@ -788,8 +751,11 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         _ha_close_map[_r["datetime"]] = _r["ha_close"]
     _signal_map = {}
     for _, _r in _bt_df.iterrows():
+        _ta = _r["trade_action"]
+        _ta_code = 1 if _ta == "开多" else (2 if _ta == "平多" else 0)
+        _tp = _r["trade_price"] if _r["trade_price"] and not (isinstance(_r["trade_price"], float) and np.isnan(_r["trade_price"])) else None
         _signal_map[(_r["datetime"], _r["ma_len"])] = (
-            _r["ha_ma_value"], _r["trend_direction"], _r["signal"]
+            _r["ha_ma_value"], _r["trend_direction"], _r["signal"], _ta_code, _tp
         )
 
 
@@ -822,20 +788,18 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         _wl = f"{(seg_start + pd.Timedelta(days=1)).date()}~{seg_end.date()}"
         _wf_labels_seen.append(_wl)
 
-        # 从 ma_cache 取原始交易动作
-        _, _, _, ta_arr, tp_arr, _, _, _, _ = ma_cache[wf_ma]
         full_ma[seg_idx] = wf_ma
-        full_ta[seg_idx] = ta_arr[seg_idx]
-        full_tp[seg_idx] = tp_arr[seg_idx]
 
-        # 从 backtest_stats 取 ha_close / signal + 信号冲突检测
+        # 从 backtest_stats 取 ha_close / signal / trade_action + 信号冲突检测
         for jj, ii in enumerate(seg_idx):
             dt = df_k["datetime"].iloc[ii]
             full_ha_close[ii] = _ha_close_map.get(dt, np.nan)
             sig_key = (dt, wf_ma)
             sig_val = _signal_map.get(sig_key)
             if sig_val:
-                full_ha_ma[ii], full_dir[ii], full_sig[ii] = sig_val
+                full_ha_ma[ii], full_dir[ii], full_sig[ii], full_ta[ii], tp = sig_val
+                if tp is not None:
+                    full_tp[ii] = tp
 
             sig = full_sig[ii]
             if sig == "买入":
