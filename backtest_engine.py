@@ -503,9 +503,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     # signal_exec: 传入时为预计算数组；为 None 时自动设为 '执行'
     if signal_exec is None:
         sig_exec_sl = np.full(n_sl, None, dtype=object)
-        for _j in range(n_sl):
-            if sig_sl[_j] in ("买入", "卖出"):
-                sig_exec_sl[_j] = "执行"
+        sig_exec_sl[(sig_sl == "买入") | (sig_sl == "卖出")] = "执行"
     elif isinstance(signal_exec, np.ndarray):
         sig_exec_sl = signal_exec[idx]
     else:
@@ -524,21 +522,17 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     chg_init_pct = np.divide(chg_init, INITIAL_CASH, out=np.zeros_like(chg_init),
                              where=INITIAL_CASH != 0)
 
-    # 中文字段映射
+    # 中文字段映射（向量化）
+    _ta_sl = trade_actions[idx]
+    _tp_sl = trade_prices[idx]
     ta_lbl = np.full(n_sl, None, dtype=object)
     tp_val = np.full(n_sl, None, dtype=object)
     tp_slip_val = np.full(n_sl, None, dtype=object)
-    for j in range(n_sl):
-        ta = trade_actions[idx[j]]
-        tp = trade_prices[idx[j]]
-        if ta == 1:
-            ta_lbl[j] = "开多"
-            if not np.isnan(tp):
-                tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 + slippage))
-        elif ta == 2:
-            ta_lbl[j] = "平多"
-            if not np.isnan(tp):
-                tp_val[j] = float(tp); tp_slip_val[j] = float(tp * (1 - slippage))
+    _m1 = _ta_sl == 1; _m2 = _ta_sl == 2
+    ta_lbl[_m1] = "开多"; ta_lbl[_m2] = "平多"
+    _n1 = _m1 & ~np.isnan(_tp_sl); _n2 = _m2 & ~np.isnan(_tp_sl)
+    tp_val[_n1] = _tp_sl[_n1]; tp_slip_val[_n1] = _tp_sl[_n1] * (1 + slippage)
+    tp_val[_n2] = _tp_sl[_n2]; tp_slip_val[_n2] = _tp_sl[_n2] * (1 - slippage)
 
     # 交易编号 / 交易状态
     trade_id_arr = np.full(n_sl, None, dtype=object)
