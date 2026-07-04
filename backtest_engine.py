@@ -32,7 +32,7 @@ FEE_RATE = 0.001
 SLIPPAGE = 0.001
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
-DEFAULT_KTYPE = "1w,1d"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
+DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
 DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
@@ -702,7 +702,6 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
 
 def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan):
     """Walk Forward 回测：用上个窗口的 is_best MA 作为当前窗口的交易参数。"""
-    _t_wf = time.time()
     _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
     con = duckdb.connect(DB_PATH, read_only=True)
     try:
@@ -884,9 +883,6 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             wf_df["close_price_after_slippage"].values if "close_price_after_slippage" in wf_df.columns else np.full(n_wf, None),
             tid_wf, ta_lbl_wf)
 
-        _elapsed = time.time() - _t_wf
-        if _elapsed > 1:
-            print(f"    {code} {_elapsed:.1f}s")
         perf_row = {**{"code": code, "stock_name": _sn, "market": _mkt,
                        "ktype": ktype, "window_label": _wf_label}, **total_perf}
         return wf_df, pd.DataFrame([perf_row])
@@ -1258,16 +1254,18 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 _wf_codes = _wf_plan["code"].unique()
                 _futures = {executor.submit(_worker_stock_walkforward, code, ktype, windows, ma_range,
                                            trade_mode, slippage, fee_rate, _wf_plan): code for code in _wf_codes}
-                for _future in concurrent.futures.as_completed(_futures):
-                    try:
-                        _code, _path, _perf_path, err = _future.result()
-                    except Exception as e:
-                        continue
-                    if err or not _path:
-                        continue
-                    _tmp_wf_files.append(_path)
-                    if _perf_path:
-                        _tmp_wf_perf.append(_perf_path)
+                with tqdm(total=len(_futures), desc="  WF 回测", unit="stock") as _wf_pbar:
+                    for _future in concurrent.futures.as_completed(_futures):
+                        try:
+                            _code, _path, _perf_path, err = _future.result()
+                        except Exception as e:
+                            _wf_pbar.update(1); continue
+                        if err or not _path:
+                            _wf_pbar.update(1); continue
+                        _tmp_wf_files.append(_path)
+                        if _perf_path:
+                            _tmp_wf_perf.append(_perf_path)
+                        _wf_pbar.update(1)
 
             # 批量写入
             if _tmp_wf_files:
