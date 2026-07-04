@@ -293,23 +293,28 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
         _belongs = [_w_labels[_j] for _j in range(len(windows)) if windows[_j][1] >= _dt]
         _wl_cache[_i] = (",".join(_belongs), len(_belongs))
 
-    # 仅末窗切片构建结果（window_label 标注所有所属窗口）
+    # 仅末窗：写入 parquet（跳过 DataFrame 和 pd.concat）
     ws, we = windows[-1]
     window_label = f"{ws.date()}~{we.date()}"
     mask = (pd.to_datetime(df_k["datetime"]) >= ws) & \
            (pd.to_datetime(df_k["datetime"]) <= we)
-    all_dfs = []
+    _stats_path = None
     all_perf = []
     if mask.any():
+        _tmp_base = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}")
+        os.makedirs(os.path.dirname(_tmp_base), exist_ok=True)
         for ma in ma_range:
             (ha_ma_val, direction, signal, trade_actions, trade_prices,
              ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
-            df, _perf = _build_slice_rows(df_k, mask, ma, ktype, ha_ma_val, direction, signal,
-                                          trade_actions, trade_prices, ha_close, closes,
-                                          ac_arr, hs_arr, ts_arr, av_arr,
-                                          slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache)
-            if df is not None and not df.empty:
-                all_dfs.append(df)
+            _p = f"{_tmp_base}_{ma}.parquet"
+            path_or_df, _perf = _build_slice_rows(
+                df_k, mask, ma, ktype, ha_ma_val, direction, signal,
+                trade_actions, trade_prices, ha_close, closes,
+                ac_arr, hs_arr, ts_arr, av_arr,
+                slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache,
+                parquet_path=_p)
+            if path_or_df is not None:
+                _stats_path = _p
 
     # 遍历所有窗口收集 perf
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
@@ -330,12 +335,9 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             if _perf:
                 all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt, "ktype": ktype, "ma_len": ma, "window_label": _wl}, **_perf})
 
-    if all_dfs:
-        import warnings as _w
-        with _w.catch_warnings():
-            _w.simplefilter("ignore", FutureWarning)
-            return pd.concat(all_dfs, ignore_index=True), pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
-    return pd.DataFrame(), pd.DataFrame()
+    if _stats_path:
+        return _stats_path, pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
+    return None, pd.DataFrame()
 
 def _calc_strategy_score(cagr, sharpe_ratio, max_drawdown, profit_factor, win_rate, trade_count):
     """计算策略综合评分（与 backtest_uscncc.py 中 calc_score_row 逻辑一致）。"""
@@ -554,7 +556,8 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
 def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
                       ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
-                      trade_mode="close", wl_cache=None, perf_only=False, signal_exec=None):
+                      trade_mode="close", wl_cache=None, perf_only=False, signal_exec=None,
+                      parquet_path=None):
     """对切片后的预计算结果构建行（不跑 numba）。
     signal_exec: WF 传入的信号执行状态；为 None 时自动设为 '执行'。"""
     idx = np.where(mask.values)[0]
@@ -791,6 +794,47 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     _cpt[_vp_gt0] = "盈利"
     _cpt[~_vp_gt0 & _vp_valid] = "亏损"
 
+    if parquet_path:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        _now = pd.Timestamp.now()
+        _ca2 = np.where(_cb_ok, _cb_out + np.where(_vp_pnl_ok, _vp_pnl_out, 0), np.nan)
+        pq.write_table(pa.table({
+            "code": _c_arr, "stock_name": _sn_arr, "market": _mkt_arr,
+            "ktype": pa.array([ktype] * n_sl, type=pa.string()),
+            "window_label": _wl0.astype(str), "window_count": _wl1,
+            "datetime": _dt_arr,
+            "open": _o_arr, "high": _h_arr, "low": _l_arr, "close": c_sl,
+            "volume": _v_arr,
+            "turnover": _tv_arr if _tv_arr is not None else np.zeros(n_sl),
+            "turnover_amount": _tva_arr if _tva_arr is not None else np.zeros(n_sl),
+            "source": _src_arr,
+            "ha_close": ha_close_sl,
+            "ma_len": pa.array([ma_len] * n_sl, type=pa.int64()),
+            "ha_ma_value": _ha_ma_out,
+            "trend_direction": dir_sl, "signal": sig_sl, "signal_exec": sig_exec_sl,
+            "trade_id": _tid_out, "trade_action": _ta_out,
+            "trade_price": _tp_out, "trade_price_after_slippage": _tps_out,
+            "trade_shares": ts_sl,
+            "slippage": _slip_v,
+            "trade_amount": _trad_amt, "commission": _comm_amt, "actual_trade_amount": _act_amt,
+            "available_cash": ac_sl, "held_shares": hs_sl, "trade_status": _ts_out,
+            "close_price": _vp_p_out, "close_price_after_slippage": _vp_ps_out,
+            "close_shares": _vp_sh_out, "close_slippage": _vp_sc_out,
+            "close_trade_amount": _vp_a_out, "close_commission": _vp_c_out,
+            "close_actual_trade_amount": _vp_a_out + _vp_c_out,
+            "close_pnl": _vp_pnl_out,
+            "close_type": _ct, "close_pnl_type": _cpt,
+            "cash_before_trade": _cb_out,
+            "cash_after_trade": _ca2,
+            "account_value": av_sl,
+            "account_value_change": acc_chg,
+            "account_value_change_pct": acc_chg_pct,
+            "change_from_initial": chg_init,
+            "change_from_initial_pct": chg_init_pct,
+            "created_at": pa.array([_now] * n_sl, type=pa.timestamp("us")),
+        }), parquet_path)
+        return parquet_path, _perf
     return pd.DataFrame({
         "code": _c_arr, "stock_name": _sn_arr, "market": _mkt_arr,
         "ktype": ktype,
@@ -834,14 +878,24 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
     """工作进程：计算一只股票的所有MA+窗口。返回 (code, stats_path, perf_path, err)"""
     try:
-        df_stats, df_perf = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
-        if df_stats is None or df_stats.empty:
+        _stats_path, df_perf = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
+        if _stats_path is None:
             return code, None, None, None
         _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}")
         os.makedirs(os.path.dirname(_tmp), exist_ok=True)
         _p_stats = _tmp + "_stats.parquet"
         _p_perf = _tmp + "_perf.parquet"
-        df_stats.to_parquet(_p_stats, index=False)
+        # 合并所有 MA 的 parquet 为一个文件
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        _tables = []
+        for ma in ma_range:
+            _f = f"{_tmp}_{ma}.parquet"
+            if os.path.exists(_f):
+                _tables.append(pq.read_table(_f))
+                os.remove(_f)
+        if _tables:
+            pq.write_table(pa.concat_tables(_tables), _p_stats)
         if not df_perf.empty:
             df_perf.to_parquet(_p_perf, index=False)
         return code, _p_stats, _p_perf, None
