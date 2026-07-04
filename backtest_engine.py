@@ -111,7 +111,7 @@ def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
     """
     n = len(av_arr)
     if n == 0:
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0.0, 0.0)
 
     first_ac = av_arr[0]; final_ac = av_arr[-1]
     total_ret = (final_ac / first_ac - 1) if first_ac > 0 else 0.0
