@@ -139,12 +139,13 @@ def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
         dd = (running_max - av_arr[i]) / running_max if running_max > 0 else 0.0
         if dd > max_dd: max_dd = dd
 
-    # 交易统计 / 连续盈亏 / 持仓天数（一次循环）
+    # 交易统计 / 连续盈亏 / 持仓天数 / 金额统计（一次循环）
     n_closed = 0; n_wins = 0; n_losses = 0
     total_win = 0.0; total_loss = 0.0; max_win = 0.0; max_loss = 0.0
     total_cash_before = 0.0; max_tid = 0
     max_ws = 0; max_ls = 0; cur_stk = 0; cur_sgn = 0
     max_tid_local = 0
+    win_amt_sum = 0.0; loss_amt_sum = 0.0
     for j in range(n):
         ta = ta_code[j]; tid = trade_id[j]
         if ta == 1:
@@ -152,13 +153,13 @@ def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
         if ta == 2:
             pnl = vp_pnl[j]
             if not np.isnan(pnl):
-                n_closed += 1
+                n_closed += 1; amt = vp_amt[j] if not np.isnan(vp_amt[j]) else 0.0
                 if pnl > 0:
-                    n_wins += 1; total_win += pnl
+                    n_wins += 1; total_win += pnl; win_amt_sum += amt
                     if pnl > max_win: max_win = pnl
                     s = 1
                 else:
-                    n_losses += 1; total_loss += pnl
+                    n_losses += 1; total_loss += pnl; loss_amt_sum += amt
                     if pnl < max_loss: max_loss = pnl
                     s = -1
                 # 连续盈亏
@@ -193,7 +194,8 @@ def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
     return (total_ret, buy_hold, sharpe, max_dd,
             max_tid_local, n_closed, n_wins, n_losses,
             total_win, total_loss, max_win, max_loss,
-            total_cash_before, max_ws, max_ls, avg_hb, avg_hd)
+            total_cash_before, max_ws, max_ls, avg_hb, avg_hd,
+            win_amt_sum, loss_amt_sum)
 
 
 def generate_windows(step_months, end_date=None):
@@ -498,25 +500,25 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     _dt_vals = df["datetime"].values[idx]
     _dt_days = np.array([int(t.astype("datetime64[D]").astype(np.int64)) for t in _dt_vals], dtype=np.int64)
 
-    # 准备 vp_* 数组（object → float64，None → NaN）
     _vp_p = np.array([float(v) if v is not None else np.nan for v in _vp_pnl], dtype=np.float64)
 
-    # 调用 numba 一次循环完成全部统计
+    _vp_a = np.array([float(v) if v is not None else np.nan for v in _vp_amt], dtype=np.float64)
+    _vp_ps = np.array([float(v) if v is not None else np.nan for v in _vp_price_slip], dtype=np.float64)
+    _vp_sh = np.array([float(v) if v is not None else 0.0 for v in _vp_shares], dtype=np.float64)
+
     (total_ret, buy_hold, sharpe, max_dd,
      trade_count, n_closed, n_wins, n_losses,
      total_win, total_loss, max_win, max_loss,
      total_cash_before, max_win_streak, max_loss_streak,
-     avg_hold_bars, avg_hold_days) = _calc_perf_numba(
+     avg_hold_bars, avg_hold_days,
+     win_amt_sum, loss_amt_sum) = _calc_perf_numba(
         av_arr.astype(np.float64), closes.astype(np.float64),
-        _vp_p, np.full(n_sl, np.nan, dtype=np.float64),
-        np.array([float(v) if v is not None else np.nan for v in _vp_price_slip], dtype=np.float64),
-        np.array([float(v) if v is not None else 0.0 for v in _vp_shares], dtype=np.float64),
+        _vp_p, _vp_a, _vp_ps, _vp_sh,
         ta_code, _tid_arr, _dt_days)
 
     cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) if first_ac > 0 else 0.0
     calmar = cagr / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
 
-    # 派生统计（numba 返回原始值，在此派生）
     n_closed = int(n_closed); n_wins = int(n_wins); n_losses = int(n_losses)
     trade_count = int(trade_count)
     win_rate = (n_wins / n_closed) if n_closed > 0 else 0
@@ -525,12 +527,16 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     avg_loss = (total_loss / n_losses) if n_losses else 0.0
     payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
     avg_trade_return = ((total_win + total_loss) / total_cash_before) if total_cash_before > 0 and n_closed > 0 else 0
-    # avg_win_amt / avg_loss_amt（从 _vp_amt 计算）
-    _close_amts = [float(_vp_amt[j]) for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
-    _close_pnls2 = [float(_vp_pnl[j]) for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
-    _n_c2 = len(_close_pnls2)
-    avg_win_amt = (sum(_close_amts[i] for i in range(_n_c2) if _close_pnls2[i] > 0) / n_wins) if n_wins else 0
-    avg_loss_amt = (sum(_close_amts[i] for i in range(_n_c2) if _close_pnls2[i] < 0) / n_losses) if n_losses else 0
+    avg_win_amt = (win_amt_sum / n_wins) if n_wins else 0
+    avg_loss_amt = (loss_amt_sum / n_losses) if n_losses else 0
+    n_closed = int(n_closed); n_wins = int(n_wins); n_losses = int(n_losses)
+    trade_count = int(trade_count)
+    win_rate = (n_wins / n_closed) if n_closed > 0 else 0
+    profit_factor = total_win / abs(total_loss) if total_loss < 0 else 0
+    avg_win = (total_win / n_wins) if n_wins else 0
+    avg_loss = (total_loss / n_losses) if n_losses else 0.0
+    payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
+    avg_trade_return = ((total_win + total_loss) / total_cash_before) if total_cash_before > 0 and n_closed > 0 else 0
 
     strategy_score = round(_calc_strategy_score(
         cagr, sharpe, max_dd, profit_factor, win_rate, trade_count
