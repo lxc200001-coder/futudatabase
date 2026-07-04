@@ -33,7 +33,7 @@ SLIPPAGE = 0.000
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -504,9 +504,12 @@ def build_window_stability(summary_rows):
 
 def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
                _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
-               trade_id_arr, ta_lbl, ta_code=None):
-    """从内存 arrays 计算全部策略表现指标（使用 numba 加速）。"""
+               trade_id_arr, ta_lbl, ta_code=None, init_cash=None):
+    """从内存 arrays 计算全部策略表现指标（使用 numba 加速）。
+    init_cash: 实际初始现金（WF 路径传入，避免首根WF K线的交易影响 first_ac）"""
     first_ac, final_ac = float(av_arr[0]), float(av_arr[-1])
+    if init_cash is not None:
+        first_ac = float(init_cash)
     years = max((last_dt - first_dt).days / 365.0, 1 / 365.0)
 
     # 准备 ta_code（优先使用传入的 int 数组）
@@ -1163,7 +1166,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             wf_df["close_shares"].values if "close_shares" in wf_df.columns else np.full(n_wf, None),
             wf_df["close_trade_amount"].values if "close_trade_amount" in wf_df.columns else np.full(n_wf, None),
             wf_df["close_price_after_slippage"].values if "close_price_after_slippage" in wf_df.columns else np.full(n_wf, None),
-            tid_wf, ta_lbl_wf)
+            tid_wf, ta_lbl_wf, init_cash=INITIAL_CASH)
 
         perf_row = {**{"code": code, "stock_name": _sn, "market": _mkt,
                        "ktype": ktype, "window_label": _wf_label}, **total_perf}
