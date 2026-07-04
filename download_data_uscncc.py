@@ -12,7 +12,7 @@
 #    b. fetch_cn_top_turnover()      ← 富途实时成交额排名（CN，默认前 100）
 #    c. _sync_watchlist_db()         ← 合并写入 watchlist 表
 #       数据源：
-#         - top_turnover_stock_rank 表（60日成交额排名，rank ≤ 150）
+#         - top_turnover_stock_rank 表（60日成交额排名，rank ≤ 200）
 #         - top_turnover_etf_rank 表（ETF 成交额排名，rank ≤ 10）
 #         - 富途实时成交额排名结果
 #         - symbols/symbols.csv 文件
@@ -71,7 +71,7 @@ DEFAULT_KTYPE = "1w,1d"        # 默认K线周期: 1w(周K) / 1d(日K) / all(全
 # ── 成交额排名阈值 ──
 TOP_TURNOVER_US_LIMIT = 100        # US 实时成交额排名取前 N 只
 TOP_TURNOVER_CN_LIMIT = 100        # CN 实时成交额排名取前 N 只
-TOP_TURNOVER_STOCK_RANK_MAX = 150  # 60日成交额排名表中 rank ≤ N 的股票
+TOP_TURNOVER_STOCK_RANK_MAX = 200  # 60日成交额排名表中 rank ≤ N 的股票
 TOP_TURNOVER_ETF_RANK_MAX = 10     # ETF 成交额排名表中 rank ≤ N 的 ETF
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -938,7 +938,7 @@ def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None, selected_
 
         # b. top_turnover_stock_rank 最新日期 rank ≤ N
         try:
-            for _r in _con.execute("""
+            for _r in _con.execute(f"""
                 SELECT DISTINCT code FROM top_turnover_stock_rank
                 WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_stock_rank)
                   AND rank <= {TOP_TURNOVER_STOCK_RANK_MAX}
