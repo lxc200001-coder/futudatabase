@@ -1507,7 +1507,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                         WHERE NOT EXISTS (
                             SELECT 1 FROM backtest_stats_walkforward s2
                             WHERE s2.code = oww.code AND s2.ktype = oww.ktype
-                              AND s2.ma_len = oww.ma_len AND s2.trade_id = oww.trade_id
+                              AND s2.trade_id = oww.trade_id
                               AND s2.trade_action = '平多'
                               AND s2.window_label LIKE '%' || oww.w || '%'
                         )
