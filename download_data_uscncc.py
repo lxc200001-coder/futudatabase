@@ -1103,7 +1103,30 @@ def run_download(ktype="1w", selected_markets=None):
             _ok += 1
         else:
             _fail += 1
-            _failed_codes.append(code)
+            _failed_codes.append((code, _use_api if market == "us" else market))
+
+    # US 股票重试（最多 3 轮），仍失败则走 Stooq
+    _us_failed = [(c, a) for c, a in _failed_codes if a in ("futu", "moomoo")]
+    for _round in range(3):
+        if not _us_failed:
+            break
+        _next_fail = []
+        for code, api in _us_failed:
+            _ctx = futu_ctx if api == "futu" else moomoo_ctx
+            _rl = request_times if api == "futu" else moomoo_rl
+            df = fetch_futu_data(code, start_str, end_str, _ctx, ktype, rate_limit_queue=_rl) if _ctx else pd.DataFrame()
+            if not df.empty:
+                all_dfs.append(df); _ok += 1; _fail -= 1
+            else:
+                _next_fail.append((code, api))
+        _us_failed = _next_fail
+    # 最终失败的回退 Stooq
+    for code, _ in _us_failed:
+        df = fetch_stooq_local_data(code, start_str, end_str, ktype)
+        if not df.empty:
+            all_dfs.append(df); _ok += 1; _fail -= 1; _src_map[code] = "stooq"
+    _failed_codes = [c for c, a in _failed_codes if a not in ("futu", "moomoo")] + \
+                    [c for c, _ in _us_failed]
 
     if futu_ctx:
         futu_ctx.close()
