@@ -1049,7 +1049,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             _wf_labels_seen.append(_wl)
         if _perf:
             all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt,
-                                "ktype": ktype, "ma_len": prev_best_ma, "window_label": _wl}, **_perf})
+                                "ktype": ktype, "window_label": _wl}, **_perf})
 
     # 修正 window_label：合并所有有数据的 WF 段标签
     if all_dfs and _wf_labels_seen:
@@ -1445,7 +1445,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     _plist2 = ",".join(f"'{p}'" for p in _tmp_wf_perf)
                     _cw.execute(f"""
                         INSERT INTO backtest_performance_walkforward
-                        SELECT code, stock_name, market, ktype, window_label, ma_len,
+                        SELECT code, stock_name, market, ktype, window_label,
                                total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
                                strategy_score,
                                max_drawdown, sharpe_ratio, calmar_ratio,

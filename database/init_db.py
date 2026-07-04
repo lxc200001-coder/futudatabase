@@ -486,7 +486,7 @@ def create_tables(con):
     """)
     con.execute("COMMENT ON TABLE backtest_performance IS '策略表现汇总'")
     for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
-        ("ktype","K线周期"),("window_label","窗口标签"),("ma_len","均线周期"),
+        ("ktype","K线周期"),("window_label","窗口标签"),
         ("total_return","收益率"),("cagr","年化收益率"),("buy_hold_return","买入持有收益率"),
         ("excess_return","超额收益率"),("avg_trade_return","平均每笔收益率"),
         ("strategy_score","策略综合评分"),
@@ -705,7 +705,6 @@ def create_tables(con):
             market                  VARCHAR,
             ktype                   VARCHAR,
             window_label            VARCHAR,
-            ma_len                  INTEGER,
             total_return            DOUBLE,
             cagr                    DOUBLE,
             buy_hold_return         DOUBLE,
@@ -736,7 +735,7 @@ def create_tables(con):
     """)
     con.execute("COMMENT ON TABLE backtest_performance_walkforward IS 'Walk Forward 策略表现汇总'")
     for _c, _d in [("code","股票代码"),("stock_name","股票名称"),("market","市场"),
-        ("ktype","K线周期"),("window_label","窗口标签"),("ma_len","均线周期"),
+        ("ktype","K线周期"),("window_label","窗口标签"),
         ("total_return","收益率"),("cagr","年化收益率"),("buy_hold_return","买入持有收益率"),
         ("excess_return","超额收益率"),("avg_trade_return","平均每笔收益率"),
         ("strategy_score","策略综合评分"),
