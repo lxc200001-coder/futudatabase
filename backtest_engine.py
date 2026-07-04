@@ -307,12 +307,13 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
             (ha_ma_val, direction, signal, trade_actions, trade_prices,
              ac_arr, hs_arr, ts_arr, av_arr) = ma_cache[ma]
             _p = f"{_tmp_base}_{ma}.parquet"
+            _tp = f"{_tmp_base}_{ma}_trades.parquet"
             path_or_df, _perf = _build_slice_rows(
                 df_k, mask, ma, ktype, ha_ma_val, direction, signal,
                 trade_actions, trade_prices, ha_close, closes,
                 ac_arr, hs_arr, ts_arr, av_arr,
                 slippage, fee_rate, trade_mode=trade_mode, wl_cache=_wl_cache,
-                parquet_path=_p)
+                parquet_path=_p, trades_parquet_path=_tp)
             if path_or_df is not None:
                 _stats_path = _p
 
@@ -557,7 +558,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
                       ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
                       trade_mode="close", wl_cache=None, perf_only=False, signal_exec=None,
-                      parquet_path=None):
+                      parquet_path=None, trades_parquet_path=None):
     """对切片后的预计算结果构建行（不跑 numba）。
     signal_exec: WF 传入的信号执行状态；为 None 时自动设为 '执行'。"""
     idx = np.where(mask.values)[0]
@@ -834,6 +835,31 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
             "change_from_initial_pct": chg_init_pct,
             "created_at": pa.array([_now] * n_sl, type=pa.timestamp("us")),
         }), parquet_path)
+        # 写交易记录 parquet（trade_action 非空行）
+        if trades_parquet_path:
+            _tm = _ta_out != np.array(None)
+            _tc = np.array([str(x) for x in _ta_out[_tm]], dtype=object)
+            _ti = np.array([int(x) for x in _tid_out[_tm]], dtype=np.int64)
+            _ts2 = np.array([str(x) for x in _ts_out[_tm]], dtype=object)
+            _tc2 = np.array([str(x) for x in _ct[_tm]], dtype=object)
+            _tcp2 = np.array([str(x) for x in _cpt[_tm]], dtype=object)
+            _tcaf = np.where(_cb_ok[_tm], _cb_out[_tm] + np.where(_vp_pnl_ok[_tm], _vp_pnl_out[_tm], 0), np.nan)
+            pq.write_table(pa.table({
+                "code": _c_arr[_tm], "stock_name": _sn_arr[_tm], "market": _mkt_arr[_tm],
+                "ktype": pa.array([ktype] * _tm.sum(), type=pa.string()),
+                "window_label": _wl0[_tm].astype(str), "datetime": _dt_arr[_tm],
+                "ma_len": pa.array([ma_len] * _tm.sum(), type=pa.int64()),
+                "trade_id": _ti, "trade_action": _tc,
+                "trade_price_after_slippage": _tps_out[_tm],
+                "trade_shares": ts_sl[_tm], "slippage": _slip_v[_tm],
+                "trade_amount": _trad_amt[_tm], "commission": _comm_amt[_tm],
+                "actual_trade_amount": _act_amt[_tm],
+                "trade_status": _ts2, "close_pnl": _vp_pnl_out[_tm],
+                "close_type": _tc2, "close_pnl_type": _tcp2,
+                "cash_before_trade": _cb_out[_tm], "cash_after_trade": _tcaf,
+                "available_cash": _cb_out[_tm],
+                "created_at": pa.array([_now] * _tm.sum(), type=pa.timestamp("us")),
+            }), trades_parquet_path)
         return parquet_path, _perf
     return pd.DataFrame({
         "code": _c_arr, "stock_name": _sn_arr, "market": _mkt_arr,
@@ -880,31 +906,29 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
     try:
         _stats_path, df_perf = run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate)
         if _stats_path is None:
-            return code, None, None, None
+            return code, None, None, None, None
         _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_{code.replace('.','_')}_{ktype}")
         os.makedirs(os.path.dirname(_tmp), exist_ok=True)
         _p_stats = _tmp + "_stats.parquet"
+        _p_trades = _tmp + "_trades.parquet"
         _p_perf = _tmp + "_perf.parquet"
-        # 合并所有 MA 的 parquet 为一个文件
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        _tables = []
-        _ma_files = []
-        for ma in ma_range:
-            _f = f"{_tmp}_{ma}.parquet"
-            if os.path.exists(_f):
-                _ma_files.append(_f)
-                _tables.append(pq.read_table(_f, memory_map=False))
-        for _f in _ma_files:
-            try: os.remove(_f)
-            except: pass
-        if _tables:
-            pq.write_table(pa.concat_tables(_tables), _p_stats)
+        import pyarrow as pa; import pyarrow.parquet as pq
+        for _p_out, _sfx in [(_p_stats, ""), (_p_trades, "_trades")]:
+            _tbls, _fs = [], []
+            for ma in ma_range:
+                _f = f"{_tmp}_{ma}{_sfx}.parquet"
+                if os.path.exists(_f):
+                    _fs.append(_f); _tbls.append(pq.read_table(_f, memory_map=False))
+            for _f in _fs:
+                try: os.remove(_f)
+                except: pass
+            if _tbls:
+                pq.write_table(pa.concat_tables(_tbls), _p_out)
         if not df_perf.empty:
             df_perf.to_parquet(_p_perf, index=False)
-        return code, _p_stats, _p_perf, None
+        return code, _p_stats, _p_trades, _p_perf, None
     except Exception as e:
-        return code, None, None, str(e)
+        return code, None, None, None, None, str(e)
 
 
 def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan):
@@ -1104,7 +1128,7 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
     try:
         df_stats, df_perf = run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan)
         if df_stats is None or df_stats.empty:
-            return code, None, None, None
+            return code, None, None, None, None
         _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_wf_{code.replace('.','_')}_{ktype}")
         os.makedirs(os.path.dirname(_tmp), exist_ok=True)
         _p_stats = _tmp + "_stats.parquet"
@@ -1112,9 +1136,9 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
         df_stats.to_parquet(_p_stats, index=False)
         if not df_perf.empty:
             df_perf.to_parquet(_p_perf, index=False)
-        return code, _p_stats, _p_perf, None
+        return code, _p_stats, _p_trades, _p_perf, None
     except Exception as e:
-        return code, None, None, str(e)
+        return code, None, None, None, None, str(e)
 
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
@@ -1180,6 +1204,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     _sel = ",".join(_cols)
 
     _tmp_perf_files = []
+    _tmp_trades_files = []
     _failures = []  # 收集失败信息，回测结束后统一输出
     # 子进程全部结束后再统一写入
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
@@ -1188,7 +1213,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         with tqdm(total=len(futures), desc="  回测", unit="stock") as pbar:
             for future in concurrent.futures.as_completed(futures):
                 try:
-                    _code, _path, _perf_path, err = future.result()
+                    _code, _path, _trades_path, _perf_path, err = future.result()
                 except Exception as e:
                     _failures.append(("进程异常", str(e)))
                     pbar.update(1); continue
@@ -1198,6 +1223,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 if not _path:
                     pbar.update(1); continue
                 _tmp_files.append(_path)
+                if _trades_path:
+                    _tmp_trades_files.append(_trades_path)
                 if _perf_path:
                     _tmp_perf_files.append(_perf_path)
                 pbar.update(1)
@@ -1226,6 +1253,29 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         for _p in _tmp_files:
             try: os.remove(_p)
             except: pass
+
+    # 写入交易记录表（从回测阶段直接生成，无需派生）
+    if _tmp_trades_files:
+        _tt0 = time.time()
+        _cw = duckdb.connect(DB_PATH)
+        _cw.execute("DELETE FROM backtest_trades")
+        _tlist = ",".join(f"'{p}'" for p in _tmp_trades_files)
+        _cw.execute(f"""
+            INSERT INTO backtest_trades
+            SELECT code, stock_name, market, ktype, window_label, datetime,
+                   ma_len, trade_id, trade_action, trade_price_after_slippage,
+                   trade_shares, slippage, trade_amount, commission,
+                   actual_trade_amount, trade_status, close_pnl, close_type,
+                   close_pnl_type,
+                   cash_before_trade, cash_after_trade, available_cash, created_at
+            FROM read_parquet([{_tlist}])
+        """)
+        _cnt_t = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
+        _cw.close()
+        for _p in _tmp_trades_files:
+            try: os.remove(_p)
+            except: pass
+        print(f"  交易记录: {_cnt_t:,} 行 ({time.time()-_tt0:.0f}s)")
 
     # 写入策略表现表
     if _tmp_perf_files:
@@ -1311,81 +1361,6 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         _qc.close()
     except Exception as e:
         print(f"  strategy_score 透视表构建失败: {e}")
-
-    # 派生交易记录表
-    if total_rows > 0:
-        print("  派生交易记录...", end=" ", flush=True)
-        _t2 = time.time()
-        try:
-            _cw = duckdb.connect(DB_PATH)
-            _cw.execute("DELETE FROM backtest_trades")
-            _cw.execute("""
-                INSERT INTO backtest_trades (
-                    code, stock_name, market, ktype, window_label, datetime,
-                    ma_len, trade_id, trade_action, trade_price_after_slippage,
-                    trade_shares, slippage, trade_amount, commission,
-                    actual_trade_amount, trade_status, close_pnl, close_type,
-                    cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
-                )
-                SELECT
-                    code, stock_name, market, ktype, w, datetime,
-                    ma_len, trade_id, trade_action, trade_price_after_slippage,
-                    trade_shares, slippage, trade_amount, commission,
-                    actual_trade_amount, trade_status, close_pnl,
-                    CASE WHEN trade_action = '平多' THEN close_type ELSE NULL END,
-                    cash_before_trade, cash_after_trade, available_cash,
-                    CASE WHEN trade_action = '开多' THEN NULL ELSE close_pnl_type END,
-                    created_at
-                FROM backtest_stats,
-                     UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
-                WHERE trade_action IS NOT NULL
-            """)
-            # 为未平仓交易补虚拟平仓行（按窗口取最后一根持仓K线）
-            _cw.execute("""
-                INSERT INTO backtest_trades (
-                    code, stock_name, market, ktype, window_label, datetime,
-                    ma_len, trade_id, trade_action, trade_price_after_slippage,
-                    trade_shares, slippage, trade_amount, commission,
-                    actual_trade_amount, trade_status, close_pnl, close_type,
-                    cash_before_trade, cash_after_trade, available_cash, close_pnl_type, created_at
-                )
-                SELECT s.code, s.stock_name, s.market, s.ktype, s.ow, s.datetime,
-                       s.ma_len, s.trade_id, '平多',
-                       s.close_price_after_slippage,
-                       s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
-                       s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓',
-                       s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.close_pnl_type, s.created_at
-                FROM (
-                    SELECT oww.w AS ow, s.*, ROW_NUMBER() OVER (
-                        PARTITION BY oww.code, oww.ktype, oww.ma_len, oww.trade_id, oww.w
-                        ORDER BY s.datetime DESC
-                    ) AS rn
-                    FROM (
-                        SELECT DISTINCT o.code, o.ktype, o.ma_len, o.trade_id, t.w
-                        FROM backtest_stats o,
-                             UNNEST(STRING_SPLIT(o.window_label, ',')) AS t(w)
-                        WHERE o.trade_action = '开多'
-                    ) oww
-                    JOIN backtest_stats s ON s.code = oww.code AND s.ktype = oww.ktype
-                        AND s.ma_len = oww.ma_len AND s.trade_id = oww.trade_id
-                        AND s.trade_status = '持仓中'
-                        AND s.datetime <= STRPTIME(SPLIT_PART(oww.w, '~', 2), '%Y-%m-%d')
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM backtest_stats s2
-                        WHERE s2.code = oww.code AND s2.ktype = oww.ktype
-                          AND s2.ma_len = oww.ma_len AND s2.trade_id = oww.trade_id
-                          AND s2.trade_action = '平多'
-                          AND s2.window_label LIKE '%' || oww.w || '%'
-                    )
-                ) s
-                WHERE s.rn = 1
-            """)
-            _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
-            print(f"  交易记录: {_cnt:,} 行 ({time.time()-_t2:.0f}s)")
-            _cw.close()
-        except Exception as e:
-            print(f"  派生失败: {e}")
-            _cw.close()
 
     print(f"  ──────────────────────────────────────")
     print(f"  完成: {total_rows:,} 行写入 backtest_stats")
