@@ -1132,8 +1132,19 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
         _tmp = os.path.join(PROJECT_ROOT, "results_uscncc", f"_tmp_wf_{code.replace('.','_')}_{ktype}")
         os.makedirs(os.path.dirname(_tmp), exist_ok=True)
         _p_stats = _tmp + "_stats.parquet"
+        _p_trades = _tmp + "_trades.parquet"
         _p_perf = _tmp + "_perf.parquet"
         df_stats.to_parquet(_p_stats, index=False)
+        if "trade_action" in df_stats.columns:
+            _tdf = df_stats[df_stats["trade_action"].notna()]
+            if not _tdf.empty:
+                _tcols = ["code","stock_name","market","ktype","window_label","datetime",
+                          "ma_len","trade_id","trade_action","trade_price_after_slippage",
+                          "trade_shares","slippage","trade_amount","commission",
+                          "actual_trade_amount","trade_status","close_pnl","close_type",
+                          "close_pnl_type","cash_before_trade","cash_after_trade","available_cash","created_at"]
+                _tdf = _tdf[[c for c in _tcols if c in _tdf.columns]]
+                _tdf.to_parquet(_p_trades, index=False)
         if not df_perf.empty:
             df_perf.to_parquet(_p_perf, index=False)
         return code, _p_stats, _p_trades, _p_perf, None
@@ -1410,6 +1421,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
             _tmp_wf_files = []
             _tmp_wf_perf = []
+            _tmp_wf_trades = []
             _n_workers = max(1, os.cpu_count() - 1)
             with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
                 _wf_codes = _wf_plan["code"].unique()
@@ -1418,12 +1430,14 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 with tqdm(total=len(_futures), desc="  WF 回测", unit="stock") as _wf_pbar:
                     for _future in concurrent.futures.as_completed(_futures):
                         try:
-                            _code, _path, _perf_path, err = _future.result()
+                            _code, _path, _trades_path, _perf_path, err = _future.result()
                         except Exception as e:
                             _wf_pbar.update(1); continue
                         if err or not _path:
                             _wf_pbar.update(1); continue
                         _tmp_wf_files.append(_path)
+                        if _trades_path:
+                            _tmp_wf_trades.append(_trades_path)
                         if _perf_path:
                             _tmp_wf_perf.append(_perf_path)
                         _wf_pbar.update(1)
@@ -1438,6 +1452,26 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 """)
                 _cw.close()
                 for _p in _tmp_wf_files:
+                    try: os.remove(_p)
+                    except: pass
+
+            # 写入 WF 交易记录
+            if _tmp_wf_trades:
+                _cw = duckdb.connect(DB_PATH)
+                _cw.execute("DELETE FROM backtest_trades_walkforward")
+                _tlist2 = ",".join(f"'{p}'" for p in _tmp_wf_trades)
+                _cw.execute(f"""
+                    INSERT INTO backtest_trades_walkforward
+                    SELECT code, stock_name, market, ktype, window_label, datetime,
+                           ma_len, trade_id, trade_action, trade_price_after_slippage,
+                           trade_shares, slippage, trade_amount, commission,
+                           actual_trade_amount, trade_status, close_pnl, close_type,
+                           close_pnl_type,
+                           cash_before_trade, cash_after_trade, available_cash, created_at
+                    FROM read_parquet([{_tlist2}])
+                """)
+                _cw.close()
+                for _p in _tmp_wf_trades:
                     try: os.remove(_p)
                     except: pass
 
@@ -1467,59 +1501,6 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
             # 派生 WF 交易记录
             _cw = duckdb.connect(DB_PATH)
-            try:
-                _cw.execute("DELETE FROM backtest_trades_walkforward")
-                _cw.execute("""
-                    INSERT INTO backtest_trades_walkforward
-                    SELECT code, stock_name, market, ktype, w, datetime,
-                           ma_len, trade_id, trade_action, trade_price_after_slippage,
-                           trade_shares, slippage, trade_amount, commission,
-                           actual_trade_amount, trade_status, close_pnl, close_type,
-                           close_pnl_type,
-                           cash_before_trade, cash_after_trade, available_cash, created_at
-                    FROM backtest_stats_walkforward,
-                         UNNEST(STRING_SPLIT(window_label, ',')) AS t(w)
-                    WHERE trade_action IS NOT NULL
-                """)
-                # 持仓未平仓补虚拟平仓
-                _cw.execute("""
-                    INSERT INTO backtest_trades_walkforward
-                    SELECT s.code, s.stock_name, s.market, s.ktype, s.ow, s.datetime,
-                           s.ma_len, s.trade_id, '平多',
-                           s.close_price_after_slippage,
-                           s.close_shares, s.close_slippage, s.close_trade_amount, s.close_commission,
-                           s.close_actual_trade_amount, s.trade_status, s.close_pnl, '虚拟平仓',
-                           s.close_pnl_type,
-                           s.cash_before_trade, s.cash_after_trade, s.cash_after_trade, s.created_at
-                    FROM (
-                        SELECT oww.w AS ow, s.*, ROW_NUMBER() OVER (
-                            PARTITION BY oww.code, oww.ktype, oww.ma_len, oww.trade_id, oww.w
-                            ORDER BY s.datetime DESC
-                        ) AS rn
-                        FROM (
-                            SELECT DISTINCT o.code, o.ktype, o.ma_len, o.trade_id, t.w
-                            FROM backtest_stats_walkforward o,
-                                 UNNEST(STRING_SPLIT(o.window_label, ',')) AS t(w)
-                            WHERE o.trade_action = '开多'
-                        ) oww
-                        JOIN backtest_stats_walkforward s ON s.code = oww.code AND s.ktype = oww.ktype
-                            AND s.ma_len = oww.ma_len AND s.trade_id = oww.trade_id
-                            AND s.trade_status = '持仓中'
-                            AND s.datetime <= STRPTIME(SPLIT_PART(oww.w, '~', 2), '%Y-%m-%d')
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM backtest_stats_walkforward s2
-                            WHERE s2.code = oww.code AND s2.ktype = oww.ktype
-                              AND s2.trade_id = oww.trade_id
-                              AND s2.trade_action = '平多'
-                              AND s2.window_label LIKE '%' || oww.w || '%'
-                        )
-                    ) s
-                    WHERE s.rn = 1
-                """)
-            except Exception as e:
-                print(f"  WF 交易记录派生失败: {e}")
-            _cw.close()
-            print(f"  {'─'*50}")
 
 
 # =========================================================
