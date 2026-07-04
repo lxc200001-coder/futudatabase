@@ -769,9 +769,15 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     full_sig_exec = np.full(n, None, dtype=object)
     full_ha_close = np.full(n, np.nan, dtype=np.float64)
 
-    # 逐段填充 WF 范围内数组
+    # 构建信号/ha_close DataFrame（供 merge 使用）
+    _sig_df = pd.DataFrame([
+        (k[0], k[1], v[0], v[1], v[2], v[3], v[4])
+        for k, v in _signal_map.items()
+    ], columns=["datetime", "ma_len", "ha_ma_value", "direction", "signal", "ta_code", "trade_price"])
+    _hc_df = pd.DataFrame(list(_ha_close_map.items()), columns=["datetime", "ha_close"])
+
+    # 逐段批量填充 WF 范围内数组（pandas merge 替代 per-bar 字典查找）
     _wf_labels_seen = []
-    has_position = False
     for i in range(1, len(windows)):
         seg_start = windows[i-1][1]
         seg_end = windows[i][1]
@@ -790,32 +796,40 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
 
         full_ma[seg_idx] = wf_ma
 
-        # 从 backtest_stats 取 ha_close / signal / trade_action + 信号冲突检测
-        for jj, ii in enumerate(seg_idx):
-            dt = df_k["datetime"].iloc[ii]
-            full_ha_close[ii] = _ha_close_map.get(dt, np.nan)
-            sig_key = (dt, wf_ma)
-            sig_val = _signal_map.get(sig_key)
-            if sig_val:
-                full_ha_ma[ii], full_dir[ii], full_sig[ii], full_ta[ii], tp = sig_val
-                if tp is not None:
-                    full_tp[ii] = tp
+        # 批量查询信号 + ha_close
+        seg_df = df_k.iloc[seg_idx][["datetime"]].copy()
+        seg_df["ma_len"] = wf_ma
+        seg_df["_idx"] = seg_idx
+        seg_df = seg_df.merge(_sig_df, on=["datetime", "ma_len"], how="left")
+        seg_df = seg_df.merge(_hc_df, on="datetime", how="left")
 
-            sig = full_sig[ii]
-            if sig == "买入":
-                if has_position:
-                    full_sig_exec[ii] = "忽略"
-                    full_ta[ii] = 0
-                else:
-                    full_sig_exec[ii] = "执行"
-                    has_position = True
-            elif sig == "卖出":
-                if has_position:
-                    full_sig_exec[ii] = "执行"
-                    has_position = False
-                else:
-                    full_sig_exec[ii] = "忽略"
-                    full_ta[ii] = 0
+        full_ha_close[seg_idx] = seg_df["ha_close"].fillna(np.nan).values
+        full_ha_ma[seg_idx] = seg_df["ha_ma_value"].fillna(np.nan).values
+        full_dir[seg_idx] = seg_df["direction"].fillna("").values.astype(object)
+        full_sig[seg_idx] = seg_df["signal"].fillna("").values.astype(object)
+        full_ta[seg_idx] = seg_df["ta_code"].fillna(0).astype(np.int64).values
+        tp_vals = seg_df["trade_price"].values
+        tp_mask = ~pd.isna(tp_vals)
+        full_tp[seg_idx[tp_mask]] = tp_vals[tp_mask]
+
+    # 一次连续信号冲突检测（所有 WF 段一次过，保持 has_position 状态）
+    has_position = False
+    for ii in wf_idx:
+        sig = full_sig[ii]
+        if sig == "买入":
+            if has_position:
+                full_sig_exec[ii] = "忽略"
+                full_ta[ii] = 0
+            else:
+                full_sig_exec[ii] = "执行"
+                has_position = True
+        elif sig == "卖出":
+            if has_position:
+                full_sig_exec[ii] = "执行"
+                has_position = False
+            else:
+                full_sig_exec[ii] = "忽略"
+                full_ta[ii] = 0
 
     if not _wf_labels_seen:
         return pd.DataFrame(), pd.DataFrame()
