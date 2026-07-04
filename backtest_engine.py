@@ -30,7 +30,7 @@ DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
 SLIPPAGE = 0.000
-TRADE_MODE = "close"   # close / open
+TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
 DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
@@ -1074,6 +1074,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             if has_position:
                 full_sig_exec[ii] = "忽略"
                 full_ta[ii] = 0
+                if trade_mode != "close" and ii + 1 < n:
+                    full_ta[ii + 1] = 0
             else:
                 full_sig_exec[ii] = "执行"
                 has_position = True
@@ -1084,6 +1086,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             else:
                 full_sig_exec[ii] = "忽略"
                 full_ta[ii] = 0
+                if trade_mode != "close" and ii + 1 < n:
+                    full_ta[ii + 1] = 0
 
     if not _wf_labels_seen:
         return pd.DataFrame(), pd.DataFrame()
