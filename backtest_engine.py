@@ -1010,6 +1010,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             ORDER BY code ASC, ktype ASC, window_label ASC, ma_len ASC, datetime ASC
         """)
         total_rows = _cw.execute("SELECT count(*) FROM backtest_stats").fetchone()[0]
+        # 建索引加速后续 JOIN
+        _cw.execute("CREATE INDEX IF NOT EXISTS idx_bt_code_ktype_ml_tid ON backtest_stats(code, ktype, ma_len, trade_id)")
         _cw.close()
         print(f"  {len(_tmp_files)} 个 parquet 写入完成 ({total_rows:,} 行) ({time.time()-_t0:.0f}s)")
         for _p in _tmp_files:
@@ -1169,15 +1171,6 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 ) s
                 WHERE s.rn = 1
             """)
-            # 全局排序
-            _cw.execute("""
-                CREATE TABLE backtest_trades_sorted AS
-                SELECT * FROM backtest_trades
-                ORDER BY code, ktype, window_label, ma_len, datetime,
-                         CASE WHEN trade_action = '开多' THEN 0 ELSE 1 END
-            """)
-            _cw.execute("DROP TABLE backtest_trades")
-            _cw.execute("ALTER TABLE backtest_trades_sorted RENAME TO backtest_trades")
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
             print(f"  交易记录: {_cnt:,} 行 ({time.time()-_t2:.0f}s)")
             _cw.close()
