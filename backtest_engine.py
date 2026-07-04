@@ -749,18 +749,6 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
     _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
 
-    # 预查询 backtest_stats 获取 ha_close / 信号数据
-    _qc = duckdb.connect(DB_PATH, read_only=True)
-    _bt_df = _qc.execute(f"""
-        SELECT DISTINCT datetime, ha_close
-        FROM backtest_stats
-        WHERE code = ? AND ktype = ?
-        ORDER BY datetime
-    """, [code, ktype]).fetchdf()
-    _qc.close()
-    _ha_close_map = {}
-    for _, _r in _bt_df.iterrows():
-        _ha_close_map[_r["datetime"]] = _r["ha_close"]
     # 构建 ma_cache（仅计算 WF 需要用到的 MA）
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
     _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
@@ -803,8 +791,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     full_sig_exec = np.full(n, None, dtype=object)
     full_ha_close = np.full(n, np.nan, dtype=np.float64)
 
-    # ha_close 向量化填充
-    full_ha_close[wf_idx] = df_k["datetime"].iloc[wf_idx].map(_ha_close_map).fillna(np.nan).values
+    # ha_close 直接用已计算的 numpy 数组切片（不查 DB）
+    full_ha_close[wf_idx] = ha_close[wf_idx]
 
     # 逐段 numpy 切片填充 WF 数组
     _wf_labels_seen = []
