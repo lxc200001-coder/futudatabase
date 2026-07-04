@@ -1312,9 +1312,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _plist2 = ",".join(f"'{p}'" for p in _tmp_perf_files)
             _cw.execute(f"""
                 INSERT INTO backtest_performance
-                SELECT code, stock_name, market, ktype, window_label, ma_len,
-                       total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
+                SELECT code, stock_name, market, ktype, window_label,
                        strategy_score,
+                       ma_len,
+                       total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
                        max_drawdown, sharpe_ratio, calmar_ratio,
                        trade_count, win_rate, profit_factor, payoff_ratio,
                        avg_win, avg_win_pct, avg_loss, avg_loss_pct,
@@ -1498,8 +1499,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                     _cw.execute(f"""
                         INSERT INTO backtest_performance_walkforward
                         SELECT code, stock_name, market, ktype, window_label,
-                               total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
                                strategy_score,
+                               total_return, cagr, buy_hold_return, excess_return, avg_trade_return,
                                max_drawdown, sharpe_ratio, calmar_ratio,
                                trade_count, win_rate, profit_factor, payoff_ratio,
                                avg_win, avg_win_pct, avg_loss, avg_loss_pct,
