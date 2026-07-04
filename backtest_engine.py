@@ -174,19 +174,35 @@ def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
     if cur_sgn == 1 and cur_stk > max_ws: max_ws = cur_stk
     elif cur_sgn == -1 and cur_stk > max_ls: max_ls = cur_stk
 
-    # 持仓天数（trade_id 索引）
+    # 持仓天数 + 虚拟平仓计入盈亏统计
     max_tid_local = max(max_tid_local, 1)
     oi = np.zeros(max_tid_local + 1, dtype=np.int64)
     od = np.zeros(max_tid_local + 1, dtype=np.int64)
+    lb = np.zeros(max_tid_local + 1, dtype=np.int64)
     hb = 0; hd = 0; hc = 0
     for j in range(n):
         tid = trade_id[j]
         if tid <= 0: continue
+        lb[tid] = j
         if ta_code[j] == 1 and oi[tid] == 0:
             oi[tid] = j; od[tid] = dt_days[j]
         elif ta_code[j] == 2 and oi[tid] > 0:
             hb += j - oi[tid]; hd += dt_days[j] - od[tid]; hc += 1
             oi[tid] = 0
+    # 未平仓 trade 的最后持仓 K 线计入盈亏统计
+    for tid in range(1, max_tid_local + 1):
+        if oi[tid] > 0:
+            _j = lb[tid]
+            pnl = vp_pnl[_j]
+            if not np.isnan(pnl):
+                n_closed += 1; amt = vp_amt[_j] if not np.isnan(vp_amt[_j]) else 0.0
+                if pnl > 0:
+                    n_wins += 1; total_win += pnl; win_amt_sum += amt
+                    if pnl > max_win: max_win = pnl
+                else:
+                    n_losses += 1; total_loss += pnl; loss_amt_sum += amt
+                    if pnl < max_loss: max_loss = pnl
+                hb += _j - oi[tid]; hd += dt_days[_j] - od[tid]; hc += 1
 
     avg_hb = hb / hc if hc > 0 else 0.0
     avg_hd = hd / hc if hc > 0 else 0.0
