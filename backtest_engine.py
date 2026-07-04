@@ -242,6 +242,9 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
     lows_arr = df_k["low"].values.astype(np.float64)
     ha_close = (opens_arr + highs_arr + lows_arr + closes) / 4.0
     _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
+    if np.iscomplexobj(ha_close):
+        _bad = df_k[["code","datetime","open","high","low","close"]].head(5)
+        raise ValueError(f"K线数据含复数: {_bad.to_string()}")
 
     # 全量计算每个 MA 的信号数组（避免对每个窗口重复计算）
     ma_cache = {}  # ma → {ha_ma_val, direction, signal, trade_actions, trade_prices}
@@ -963,6 +966,9 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     lows_arr = df_k["low"].values.astype(np.float64)
     ha_close = (opens_arr + highs_arr + lows_arr + closes) / 4.0
     _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
+    if np.iscomplexobj(ha_close):
+        _bad = df_k[["code","datetime","open","high","low","close"]].head(5)
+        raise ValueError(f"K线数据含复数: {_bad.to_string()}")
 
     # 构建 WF 映射：{window_label → best_ma}
     stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
