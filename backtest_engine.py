@@ -933,6 +933,23 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
                 except: pass
             if _tbls:
                 pq.write_table(pa.concat_tables(_tbls), _p_out)
+        if os.path.exists(_p_trades) and os.path.getsize(_p_trades) > 0:
+            _tdf = pq.read_table(_p_trades, memory_map=False).to_pandas()
+            _open_ids = set(_tdf[_tdf["trade_action"] == "开多"]["trade_id"])
+            _closed_ids = set(_tdf[_tdf["trade_action"] == "平多"]["trade_id"])
+            _vc_list = []
+            for _tid in _open_ids - _closed_ids:
+                _rows = _tdf[_tdf["trade_id"] == _tid].sort_values("datetime")
+                if _rows.empty: continue
+                _lk = _rows.iloc[-1].to_dict()
+                _lk["trade_action"] = "平多"
+                _lk["trade_status"] = "已平仓"
+                _lk["close_type"] = "虚拟平仓"
+                _vc_list.append(_lk)
+            if _vc_list:
+                _vc_df = pd.DataFrame(_vc_list)
+                _tdf = pd.concat([_tdf, _vc_df], ignore_index=True)
+                _tdf.to_parquet(_p_trades, index=False)
         if not df_perf.empty:
             df_perf.to_parquet(_p_perf, index=False)
         return code, _p_stats, _p_trades, _p_perf, None
@@ -1160,6 +1177,20 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
                           "actual_trade_amount","trade_status","close_pnl","close_type",
                           "close_pnl_type","cash_before_trade","cash_after_trade","available_cash","created_at"]
                 _tdf = _tdf[[c for c in _tcols if c in _tdf.columns]]
+                if not _tdf.empty:
+                    _open_ids = set(_tdf[_tdf["trade_action"] == "开多"]["trade_id"])
+                    _closed_ids = set(_tdf[_tdf["trade_action"] == "平多"]["trade_id"])
+                    _vc_list = []
+                    for _tid in _open_ids - _closed_ids:
+                        _rows = _tdf[_tdf["trade_id"] == _tid].sort_values("datetime")
+                        if _rows.empty: continue
+                        _lk = _rows.iloc[-1].to_dict()
+                        _lk["trade_action"] = "平多"
+                        _lk["trade_status"] = "已平仓"
+                        _lk["close_type"] = "虚拟平仓"
+                        _vc_list.append(_lk)
+                    if _vc_list:
+                        _tdf = pd.concat([_tdf, pd.DataFrame(_vc_list)], ignore_index=True)
                 _tdf.to_parquet(_p_trades, index=False)
         if not df_perf.empty:
             df_perf.to_parquet(_p_perf, index=False)
