@@ -968,6 +968,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     _sel = ",".join(_cols)
 
     _tmp_perf_files = []
+    _failures = []  # 收集失败信息，回测结束后统一输出
     # 子进程全部结束后再统一写入
     with concurrent.futures.ProcessPoolExecutor(max_workers=_n_workers) as executor:
         futures = {executor.submit(_worker_stock, code, ktype, windows, ma_range,
@@ -977,10 +978,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 try:
                     _code, _path, _perf_path, err = future.result()
                 except Exception as e:
-                    print(f"\n  进程异常: {e}")
+                    _failures.append(("进程异常", str(e)))
                     pbar.update(1); continue
                 if err:
-                    print(f"\n  {_code} 失败: {err}")
+                    _failures.append((_code, err))
                     pbar.update(1); continue
                 if not _path:
                     pbar.update(1); continue
@@ -988,6 +989,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                 if _perf_path:
                     _tmp_perf_files.append(_perf_path)
                 pbar.update(1)
+
+    # 回测结束，统一输出失败信息
+    for _code, _err in _failures:
+        print(f"  {_code} 失败: {_err}")
 
     # 所有子进程结束→DuckDB 原生批量读 parquet（比逐行快 100 倍）
     if _tmp_files:
