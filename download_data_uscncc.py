@@ -14,6 +14,10 @@ from collections import deque
 from datetime import datetime
 import duckdb
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
+from config import (
+    TOP_TURNOVER_US_LIMIT, TOP_TURNOVER_CN_LIMIT,
+    TOP_TURNOVER_STOCK_RANK_MAX, TOP_TURNOVER_ETF_RANK_MAX,
+)
 
 # 关闭杂项日志
 logging.getLogger("futu").setLevel(logging.ERROR)
@@ -98,7 +102,11 @@ MARKET_LABEL = {"us": "美股", "cn": "A股", "cc": "加密货币"}
 # 统一请求开始日期（各数据源自会按上市日期截断）
 # =========================================================
 def get_start_date_by_ktype(ktype):
-    """根据周期返回起始日期：周线、日线均为最近19年。"""
+    """根据 ktype 返回起始日期。"""
+    if ktype in ("1W", "1w"):
+        return datetime(datetime.now().year - 26, 1, 3)   # 周线：26 年（≈2000年）
+    elif ktype in ("1D", "1d"):
+        return datetime(datetime.now().year - 19, 1, 3)   # 日线：19 年
     return datetime(datetime.now().year - 19, 1, 3)
 
 
@@ -798,7 +806,7 @@ def fetch_stock_names(symbols, quote_ctx):
     return name_map
 
 
-def fetch_top_turnover_stocks(limit=100):
+def fetch_top_turnover_stocks(limit=TOP_TURNOVER_US_LIMIT):
     """通过 Futu OpenD 获取当日成交额前 N 的美股，返回代码列表"""
     from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
@@ -827,7 +835,7 @@ def fetch_top_turnover_stocks(limit=100):
         quote_ctx.close()
 
 
-def fetch_cn_top_turnover(limit=100):
+def fetch_cn_top_turnover(limit=TOP_TURNOVER_CN_LIMIT):
     """通过 Futu OpenD 获取沪深主板当日成交额前 N 的股票，返回代码列表"""
     from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
@@ -897,23 +905,23 @@ def _sync_watchlist_db(us_realtime_codes=None, cn_realtime_codes=None, selected_
                         continue
                 _sources.setdefault(_c, set()).add("手动添加")
 
-        # b. top_turnover_stock_rank 最新日期 rank ≤ 200
+        # b. top_turnover_stock_rank 最新日期 rank ≤ N
         try:
             for _r in _con.execute("""
                 SELECT DISTINCT code FROM top_turnover_stock_rank
                 WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_stock_rank)
-                  AND rank <= 200
+                  AND rank <= {TOP_TURNOVER_STOCK_RANK_MAX}
             """).fetchall():
                 _sources.setdefault(str(_r[0]), set()).add("60日成交额排名")
         except Exception:
             pass
 
-        # c. top_turnover_etf_rank 最新日期 rank ≤ 10
+        # c. top_turnover_etf_rank 最新日期 rank ≤ N
         try:
-            for _r in _con.execute("""
+            for _r in _con.execute(f"""
                 SELECT DISTINCT code FROM top_turnover_etf_rank
                 WHERE datetime = (SELECT MAX(datetime) FROM top_turnover_etf_rank)
-                  AND rank <= 10
+                  AND rank <= {TOP_TURNOVER_ETF_RANK_MAX}
             """).fetchall():
                 _sources.setdefault(str(_r[0]), set()).add("ETF成交额排名")
         except Exception:
@@ -1182,10 +1190,10 @@ if __name__ == "__main__":
                         help="K线周期: week(周K) / day(日K) / all(全部) / week,day(逗号拼接, 默认: week,day)")
     parser.add_argument("--market", default=DEFAULT_MARKET,
                         help=f"市场: US / CN / CC / US,CN / all (默认: {DEFAULT_MARKET})")
-    parser.add_argument("--top-turnover", type=int, nargs="?", const=100, default=100,
-                        help="获取成交额前 N 的美股列表 (默认 N=100, 设为0跳过)")
-    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=100, default=100,
-                        help="获取成交额前 N 的沪深主板股票列表 (默认 N=100, 设为0跳过)")
+    parser.add_argument("--top-turnover", type=int, nargs="?", const=TOP_TURNOVER_US_LIMIT, default=TOP_TURNOVER_US_LIMIT,
+                        help=f"获取成交额前 N 的美股列表 (默认 N={TOP_TURNOVER_US_LIMIT}, 设为0跳过)")
+    parser.add_argument("--top-turnover-cn", type=int, nargs="?", const=TOP_TURNOVER_CN_LIMIT, default=TOP_TURNOVER_CN_LIMIT,
+                        help=f"获取成交额前 N 的沪深主板股票列表 (默认 N={TOP_TURNOVER_CN_LIMIT}, 设为0跳过)")
     parser.add_argument("--only-turnover", action="store_true",
                         help="只执行 Stooq 导入和成交额排名，不下载K线数据")
     parser.add_argument("--skip-week", action="store_true", help="跳过周线下载（已弃用，用 --ktype 替代）")
