@@ -450,17 +450,19 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     if cur_sign == 1: max_win_streak = max(max_win_streak, cur_streak)
     elif cur_sign == -1: max_loss_streak = max(max_loss_streak, cur_streak)
 
-    # 平均持仓K线数/天数（开多→平多 datetime diff）
+    # 平均持仓K线数/天数（开多→平多 datetime diff，dict 配对 O(n)）
     hold_bars_list = []; hold_days_list = []
+    _open_trades = {}  # trade_id → (bar_index, datetime)
     for j in range(n_sl):
-        if ta_lbl[j] == "开多":
-            open_dt = df["datetime"].iloc[idx[j]]
-            for k in range(j + 1, n_sl):
-                if ta_lbl[k] == "平多" and trade_id_arr[k] == trade_id_arr[j]:
-                    close_dt = df["datetime"].iloc[idx[k]]
-                    hold_bars_list.append(k - j)
-                    hold_days_list.append((close_dt - open_dt).days)
-                    break
+        _tid = trade_id_arr[j]
+        if _tid is None:
+            continue
+        if ta_lbl[j] == "开多" and _tid not in _open_trades:
+            _open_trades[_tid] = (j, df["datetime"].iloc[idx[j]])
+        elif ta_lbl[j] == "平多" and _tid in _open_trades:
+            _open_j, _open_dt = _open_trades.pop(_tid)
+            hold_bars_list.append(j - _open_j)
+            hold_days_list.append((df["datetime"].iloc[idx[j]] - _open_dt).days)
     avg_hold_days = (sum(hold_days_list) / len(hold_days_list)) if hold_days_list else 0
     avg_hold_bars = (sum(hold_bars_list) / len(hold_bars_list)) if hold_bars_list else 0
 
