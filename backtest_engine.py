@@ -1508,6 +1508,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                                avg_hold_days, avg_hold_bars,
                                initial_cash, final_cash, CURRENT_TIMESTAMP
                         FROM read_parquet([{_plist2}])
+                        ORDER BY strategy_score DESC
                     """)
                     _cw.close()
                     for _p in _tmp_wf_perf:
