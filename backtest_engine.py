@@ -995,6 +995,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
     # 所有子进程结束→DuckDB 原生批量读 parquet（比逐行快 100 倍）
     if _tmp_files:
+        _t0 = time.time()
         print("  写入中...", end=" ", flush=True)
         _cw = duckdb.connect(DB_PATH)
         _plist = ",".join(f"'{p}'" for p in _tmp_files)
@@ -1004,7 +1005,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         """)
         total_rows = _cw.execute("SELECT count(*) FROM backtest_stats").fetchone()[0]
         _cw.close()
-        print(f"  {len(_tmp_files)} 个 parquet 写入完成 ({total_rows:,} 行)")
+        print(f"  {len(_tmp_files)} 个 parquet 写入完成 ({total_rows:,} 行) ({time.time()-_t0:.0f}s)")
         for _p in _tmp_files:
             try: os.remove(_p)
             except: pass
@@ -1096,6 +1097,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
     # 全局排序（设置临时目录避免 OOM）
     if total_rows > 0:
+        _t1 = time.time()
         print("  排序中...", end=" ", flush=True)
         _tmp_dir = os.path.join(PROJECT_ROOT, "results_uscncc", "_duckdb_tmp")
         os.makedirs(_tmp_dir, exist_ok=True)
@@ -1109,10 +1111,12 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         _cw.execute("DROP TABLE backtest_stats")
         _cw.execute("ALTER TABLE backtest_stats_sorted RENAME TO backtest_stats")
         _cw.close()
+        print(f"  排序完成 ({time.time()-_t1:.0f}s)")
 
     # 派生交易记录表
     if total_rows > 0:
         print("  派生交易记录...", end=" ", flush=True)
+        _t2 = time.time()
         try:
             _cw = duckdb.connect(DB_PATH)
             _cw.execute("DELETE FROM backtest_trades")
@@ -1187,7 +1191,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _cw.execute("DROP TABLE backtest_trades")
             _cw.execute("ALTER TABLE backtest_trades_sorted RENAME TO backtest_trades")
             _cnt = _cw.execute("SELECT count(*) FROM backtest_trades").fetchone()[0]
-            print(f"  交易记录: {_cnt:,} 行")
+            print(f"  交易记录: {_cnt:,} 行 ({time.time()-_t2:.0f}s)")
             _cw.close()
         except Exception as e:
             print(f"  派生失败: {e}")
