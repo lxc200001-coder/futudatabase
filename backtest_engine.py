@@ -483,8 +483,9 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
 def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
                       trade_actions, trade_prices, ha_close, closes,
                       ac_arr, hs_arr, ts_arr, av_arr, slippage, fee_rate,
-                      trade_mode="close", wl_cache=None, perf_only=False):
-    """对切片后的预计算结果构建行（不跑 numba）。"""
+                      trade_mode="close", wl_cache=None, perf_only=False, signal_exec=None):
+    """对切片后的预计算结果构建行（不跑 numba）。
+    signal_exec: WF 传入的信号执行状态；为 None 时自动设为 '执行'。"""
     idx = np.where(mask.values)[0]
     if len(idx) == 0:
         return None, None
@@ -498,6 +499,17 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
 
     # 变动指标（基于切片后的 av_arr）
     n_sl = len(idx)
+
+    # signal_exec: 传入时为预计算数组；为 None 时自动设为 '执行'
+    if signal_exec is None:
+        sig_exec_sl = np.full(n_sl, None, dtype=object)
+        for _j in range(n_sl):
+            if sig_sl[_j] in ("买入", "卖出"):
+                sig_exec_sl[_j] = "执行"
+    elif isinstance(signal_exec, np.ndarray):
+        sig_exec_sl = signal_exec[idx]
+    else:
+        sig_exec_sl = np.array(signal_exec, dtype=object)
     av_sl = av_arr[idx]
     ac_sl = ac_arr[idx]
     hs_sl = hs_arr[idx]
@@ -636,6 +648,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         "ha_ma_value": [float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None for j in range(n_sl)],
         "trend_direction": list(dir_sl),
         "signal": list(sig_sl),
+        "signal_exec": list(sig_exec_sl),
         "trade_id": [int(trade_id_arr[j]) if trade_id_arr[j] is not None else None for j in range(n_sl)],
         "trade_action": [str(ta_lbl[j]) if ta_lbl[j] is not None else None for j in range(n_sl)],
         "trade_price": [float(tp_val[j]) if tp_val[j] is not None else None for j in range(n_sl)],
@@ -955,7 +968,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     _tmp_files = []
     _cols = ["code","stock_name","market","ktype","window_label","window_count","datetime",
         "open","high","low","close","volume","turnover","turnover_amount","source",
-        "ha_close","ma_len","ha_ma_value","trend_direction","signal",
+        "ha_close","ma_len","ha_ma_value","trend_direction","signal","signal_exec",
         "trade_id","trade_action","trade_price","trade_price_after_slippage",
         "trade_shares","slippage","trade_amount","commission","actual_trade_amount",
         "available_cash","held_shares","trade_status",
