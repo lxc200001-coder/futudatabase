@@ -234,12 +234,21 @@ def fetch_binance_data(code, start_str, end_str, ktype="1w"):
             "endTime": end_ms,
             "limit": 1000,
         }
-        try:
-            resp = sess.get(base_url, params=params, timeout=15)
-            resp.raise_for_status()
-            klines = resp.json()
-        except Exception as e:
-            tqdm.write(f"Binance 请求失败: {e}")
+        _binance_ok = False
+        for _retry in range(3):
+            try:
+                resp = sess.get(base_url, params=params, timeout=15)
+                resp.raise_for_status()
+                klines = resp.json()
+                _binance_ok = True
+                break
+            except Exception as e:
+                if _retry < 2:
+                    tqdm.write(f"  Binance {code} 重试 {_retry+1}/3: {e}")
+                    time.sleep(2 ** _retry)
+                else:
+                    tqdm.write(f"  Binance {code} 请求失败: {e}")
+        if not _binance_ok:
             break
 
         if not klines:
