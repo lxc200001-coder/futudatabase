@@ -934,7 +934,7 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
             df_perf.to_parquet(_p_perf, index=False)
         return code, _p_stats, _p_trades, _p_perf, None
     except Exception as e:
-        return code, None, None, None, None, str(e)
+        return code, None, None, None, str(e)
 
 
 def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan):
@@ -1155,7 +1155,7 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
             df_perf.to_parquet(_p_perf, index=False)
         return code, _p_stats, _p_trades, _p_perf, None
     except Exception as e:
-        return code, None, None, None, None, str(e)
+        return code, None, None, None, str(e)
 
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
