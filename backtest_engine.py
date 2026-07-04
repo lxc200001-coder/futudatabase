@@ -1102,6 +1102,18 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         full_ta[seg_idx] = trade_actions[seg_idx]
         full_tp[seg_idx] = trade_prices[seg_idx]
 
+    # 修正 np.roll 导致 WF 范围外信号带入的 trade_action（信号与动作不匹配则清除）
+    for ii in wf_idx:
+        if full_ta[ii] == 0: continue
+        if trade_mode != "close":
+            _expect_sig = "买入" if full_ta[ii] == 1 else "卖出"
+            if ii == 0 or full_sig[ii - 1] != _expect_sig:
+                full_ta[ii] = 0; full_tp[ii] = np.nan
+        else:
+            _expect_sig = "买入" if full_ta[ii] == 1 else "卖出"
+            if full_sig[ii] != _expect_sig:
+                full_ta[ii] = 0; full_tp[ii] = np.nan
+
     # 一次连续信号冲突检测（所有 WF 段一次过）
     has_position = False
     for ii in wf_idx:
