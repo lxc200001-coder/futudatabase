@@ -942,8 +942,6 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
                 _rows = _tdf[_tdf["trade_id"] == _tid].sort_values("datetime")
                 if _rows.empty: continue
                 _lk = _rows.iloc[-1].to_dict()
-                _lk["trade_action"] = "平多"
-                _lk["trade_status"] = "已平仓"
                 _lk["close_type"] = "虚拟平仓"
                 _vc_list.append(_lk)
             if _vc_list:
@@ -1185,8 +1183,6 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
                         _rows = _tdf[_tdf["trade_id"] == _tid].sort_values("datetime")
                         if _rows.empty: continue
                         _lk = _rows.iloc[-1].to_dict()
-                        _lk["trade_action"] = "平多"
-                        _lk["trade_status"] = "已平仓"
                         _lk["close_type"] = "虚拟平仓"
                         _vc_list.append(_lk)
                     if _vc_list:
