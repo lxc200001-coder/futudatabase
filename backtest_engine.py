@@ -611,12 +611,30 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
     _has_src = "source" in df.columns
     _ts_nonzero = ts_sl > 0
     _ts_g0 = _ts_nonzero
-    _closed = np.array([trade_status_arr[j] == "已平仓" for j in range(n_sl)], dtype=bool)
-    _holding = np.array([trade_status_arr[j] == "持仓中" for j in range(n_sl)], dtype=bool)
+    # 预提取 df 列到 ndarray（免除 .iloc 和重复 str() 调用）
+    _idx_s = idx  # 局部引用加速
+    _c_arr = df["code"].values[_idx_s].astype(str)
+    _sn_arr = df["stock_name"].values[_idx_s].astype(str) if _has_sn else np.full(n_sl, "", dtype=object)
+    _mkt_arr = df["market"].values[_idx_s].astype(str) if _has_mkt else np.full(n_sl, "", dtype=object)
+    _dt_arr = df["datetime"].values[_idx_s]
+    _o_arr = df["open"].values[_idx_s].astype(np.float64)
+    _h_arr = df["high"].values[_idx_s].astype(np.float64)
+    _l_arr = df["low"].values[_idx_s].astype(np.float64)
+    _v_arr = df["volume"].values[_idx_s].astype(np.float64)
+    _tv_arr = df["turnover"].values[_idx_s].astype(np.float64) if _has_tv else None
+    _tva_arr = df["turnover_amount"].values[_idx_s].astype(np.float64) if _has_tv_amt else None
+    _src_arr = df["source"].values[_idx_s].astype(str) if _has_src else np.full(n_sl, "", dtype=object)
+    # wl_cache 预提取
+    _wl0 = np.array([wl_cache[i][0] if wl_cache is not None else "" for i in _idx_s], dtype=object)
+    _wl1 = np.array([wl_cache[i][1] if wl_cache is not None else 0 for i in _idx_s], dtype=np.int64)
+
+    # 布尔数组（ndarray 比较）
+    _closed = trade_status_arr == "已平仓"
+    _holding = trade_status_arr == "持仓中"
     _vp_valid = np.array([_vp_pnl[j] is not None for j in range(n_sl)], dtype=bool)
     _vp_gt0 = np.array([_vp_pnl[j] is not None and _vp_pnl[j] > 0 for j in range(n_sl)], dtype=bool)
 
-    # 策略表现（直接从内存 arrays 计算，不依赖 SQL）
+    # 策略表现
     _first_dt = df["datetime"].iloc[idx[0]]
     _last_dt = df["datetime"].iloc[idx[-1]]
     _perf = _calc_perf(av_sl, c_sl, _first_dt, _last_dt, ktype, df, idx, n_sl,
@@ -625,58 +643,124 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
 
     if perf_only:
         return None, _perf
+
+    # 预处理带条件的列（避免 list comprehension）
+    _ha_ma_out = np.full(n_sl, None, dtype=object)
+    _m_ok = ~np.isnan(ha_ma_sl)
+    _ha_ma_out[_m_ok] = ha_ma_sl[_m_ok]
+
+    _tid_out = np.full(n_sl, None, dtype=object)
+    _tid_ok = trade_id_arr != np.array(None)
+    _tid_out[_tid_ok] = [int(x) for x in trade_id_arr[_tid_ok]]
+
+    _ta_out = np.full(n_sl, None, dtype=object)
+    _ta_ok = ta_lbl != np.array(None)
+    _ta_out[_ta_ok] = [str(x) for x in ta_lbl[_ta_ok]]
+
+    _tp_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _tp_ok = tp_val != np.array(None)
+    _tp_out[_tp_ok] = [float(x) for x in tp_val[_tp_ok]]
+
+    _tps_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _tps_ok = tp_slip_val != np.array(None)
+    _tps_out[_tps_ok] = [float(x) for x in tp_slip_val[_tps_ok]]
+
+    _ts_out = np.full(n_sl, None, dtype=object)
+    _ts_ok = trade_status_arr != np.array(None)
+    _ts_out[_ts_ok] = [str(x) for x in trade_status_arr[_ts_ok]]
+
+    _vp_p_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_p_ok = _vp_price != np.array(None)
+    _vp_p_out[_vp_p_ok] = [float(x) for x in _vp_price[_vp_p_ok]]
+
+    _vp_ps_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_ps_ok = _vp_price_slip != np.array(None)
+    _vp_ps_out[_vp_ps_ok] = [float(x) for x in _vp_price_slip[_vp_ps_ok]]
+
+    _vp_sh_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_sh_ok = _vp_shares != np.array(None)
+    _vp_sh_out[_vp_sh_ok] = [float(x) for x in _vp_shares[_vp_sh_ok]]
+
+    _vp_sc_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_sc_ok = _vp_slip_cost != np.array(None)
+    _vp_sc_out[_vp_sc_ok] = [float(x) for x in _vp_slip_cost[_vp_sc_ok]]
+
+    _vp_a_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_a_ok = _vp_amt != np.array(None)
+    _vp_a_out[_vp_a_ok] = [float(x) for x in _vp_amt[_vp_a_ok]]
+
+    _vp_c_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_c_ok = _vp_comm != np.array(None)
+    _vp_c_out[_vp_c_ok] = [float(x) for x in _vp_comm[_vp_c_ok]]
+
+    _vp_pnl_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _vp_pnl_ok = _vp_pnl != np.array(None)
+    _vp_pnl_out[_vp_pnl_ok] = [float(x) for x in _vp_pnl[_vp_pnl_ok]]
+
+    _cb_out = np.full(n_sl, np.nan, dtype=np.float64)
+    _cb_ok = _cash_bt != np.array(None)
+    _cb_out[_cb_ok] = [float(x) for x in _cash_bt[_cb_ok]]
+
+    # slippage 列（特殊复合逻辑）
+    _slip_v = np.zeros(n_sl, dtype=np.float64)
+    _slip_ok = (tp_val != np.array(None)) & _ts_nonzero
+    _slip_v[_slip_ok] = np.abs((_tps_out[_slip_ok] - _tp_out[_slip_ok]) * ts_sl[_slip_ok])
+
+    # trade_amount / commission / actual_trade_amount
+    _trad_amt = np.full(n_sl, np.nan, dtype=np.float64)
+    _comm_amt = np.full(n_sl, np.nan, dtype=np.float64)
+    _act_amt = np.full(n_sl, np.nan, dtype=np.float64)
+    _ta_mask = _ts_g0 & (_vp_ps_out != np.array(None))
+    _trad_amt[_ta_mask] = _vp_ps_out[_ta_mask] * ts_sl[_ta_mask]
+    _comm_amt[_ta_mask] = _trad_amt[_ta_mask] * fee_rate
+    _act_amt[_ta_mask] = _trad_amt[_ta_mask] * (1 + fee_rate)
+
+    # close_type / close_pnl_type（字符串条件列）
+    _ct = np.full(n_sl, None, dtype=object)
+    _ct[_closed] = "真实平仓"
+    _ct[~_closed & _holding] = "虚拟平仓"
+
+    _cpt = np.full(n_sl, None, dtype=object)
+    _cpt[_vp_gt0] = "盈利"
+    _cpt[~_vp_gt0 & _vp_valid] = "亏损"
+
     return pd.DataFrame({
-        "code": [str(df["code"].iloc[i]) for i in idx],
-        "stock_name": [str(df["stock_name"].iloc[i]) if _has_sn else "" for i in idx],
-        "market": [str(df["market"].iloc[i]) if _has_mkt else "" for i in idx],
+        "code": _c_arr, "stock_name": _sn_arr, "market": _mkt_arr,
         "ktype": ktype,
-        "window_label": [wl_cache[i][0] if wl_cache is not None else "" for i in idx],
-        "window_count": [wl_cache[i][1] if wl_cache is not None else 0 for i in idx],
-        "datetime": [df["datetime"].iloc[i] for i in idx],
-        "open": [float(df["open"].iloc[i]) for i in idx],
-        "high": [float(df["high"].iloc[i]) for i in idx],
-        "low": [float(df["low"].iloc[i]) for i in idx],
-        "close": [float(c_sl[j]) for j in range(n_sl)],
-        "volume": [float(df["volume"].iloc[i]) for i in idx],
-        "turnover": [float(df["turnover"].iloc[i]) if _has_tv else 0.0 for i in idx],
-        "turnover_amount": [float(df["turnover_amount"].iloc[i]) if _has_tv_amt else 0.0 for i in idx],
-        "source": [str(df["source"].iloc[i]) if _has_src else "" for i in idx],
-        "ha_close": [float(ha_close_sl[j]) for j in range(n_sl)],
-        "ma_len": ma_len,
-        "ha_ma_value": [float(ha_ma_sl[j]) if not np.isnan(ha_ma_sl[j]) else None for j in range(n_sl)],
-        "trend_direction": list(dir_sl),
-        "signal": list(sig_sl),
-        "signal_exec": list(sig_exec_sl),
-        "trade_id": [int(trade_id_arr[j]) if trade_id_arr[j] is not None else None for j in range(n_sl)],
-        "trade_action": [str(ta_lbl[j]) if ta_lbl[j] is not None else None for j in range(n_sl)],
-        "trade_price": [float(tp_val[j]) if tp_val[j] is not None else None for j in range(n_sl)],
-        "trade_price_after_slippage": [float(tp_slip_val[j]) if tp_slip_val[j] is not None else None for j in range(n_sl)],
-        "trade_shares": [float(ts_sl[j]) for j in range(n_sl)],
-        "slippage": [float(abs((tp_slip_val[j] - tp_val[j]) * ts_sl[j])) if tp_val[j] is not None and ts_sl[j] > 0 else 0.0 for j in range(n_sl)],
-        "trade_amount": [float(tp_slip_val[j] * ts_sl[j]) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
-        "commission": [float(tp_slip_val[j] * ts_sl[j] * fee_rate) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
-        "actual_trade_amount": [float(tp_slip_val[j] * ts_sl[j] * (1 + fee_rate)) if _ts_g0[j] and tp_slip_val[j] is not None else None for j in range(n_sl)],
-        "available_cash": [float(ac_sl[j]) for j in range(n_sl)],
-        "held_shares": [float(hs_sl[j]) for j in range(n_sl)],
-        "trade_status": [str(trade_status_arr[j]) if trade_status_arr[j] is not None else None for j in range(n_sl)],
-        "close_price": [float(_vp_price[j]) if _vp_price[j] is not None else None for j in range(n_sl)],
-        "close_price_after_slippage": [float(_vp_price_slip[j]) if _vp_price_slip[j] is not None else None for j in range(n_sl)],
-        "close_shares": [float(_vp_shares[j]) if _vp_shares[j] is not None else None for j in range(n_sl)],
-        "close_slippage": [float(_vp_slip_cost[j]) if _vp_slip_cost[j] is not None else None for j in range(n_sl)],
-        "close_trade_amount": [float(_vp_amt[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
-        "close_commission": [float(_vp_comm[j]) if _vp_comm[j] is not None else None for j in range(n_sl)],
-        "close_actual_trade_amount": [float(_vp_amt[j] + _vp_comm[j]) if _vp_amt[j] is not None else None for j in range(n_sl)],
-        "close_pnl": [float(_vp_pnl[j]) if _vp_pnl[j] is not None else None for j in range(n_sl)],
-        "close_type": ["真实平仓" if _closed[j] else ("虚拟平仓" if _holding[j] else None) for j in range(n_sl)],
-        "close_pnl_type": ["盈利" if _vp_gt0[j] else ("亏损" if _vp_valid[j] else None) for j in range(n_sl)],
-        "cash_before_trade": [float(_cash_bt[j]) if _cash_bt[j] is not None else None for j in range(n_sl)],
-        "cash_after_trade": [float(_cash_bt[j] + (_vp_pnl[j] or 0)) if _cash_bt[j] is not None else None for j in range(n_sl)],
-        "account_value": [float(av_sl[j]) for j in range(n_sl)],
-        "account_value_change": [float(acc_chg[j]) for j in range(n_sl)],
-        "account_value_change_pct": [float(acc_chg_pct[j]) for j in range(n_sl)],
-        "change_from_initial": [float(chg_init[j]) for j in range(n_sl)],
-        "change_from_initial_pct": [float(chg_init_pct[j]) for j in range(n_sl)],
+        "window_label": _wl0, "window_count": _wl1,
+        "datetime": _dt_arr,
+        "open": _o_arr, "high": _h_arr, "low": _l_arr, "close": c_sl,
+        "volume": _v_arr,
+        "turnover": _tv_arr if _tv_arr is not None else np.zeros(n_sl),
+        "turnover_amount": _tva_arr if _tva_arr is not None else np.zeros(n_sl),
+        "source": _src_arr,
+        "ha_close": ha_close_sl,
+        "ma_len": ma_len, "ha_ma_value": _ha_ma_out,
+        "trend_direction": dir_sl, "signal": sig_sl, "signal_exec": sig_exec_sl,
+        "trade_id": _tid_out, "trade_action": _ta_out,
+        "trade_price": _tp_out, "trade_price_after_slippage": _tps_out,
+        "trade_shares": ts_sl,
+        "slippage": _slip_v,
+        "trade_amount": _trad_amt, "commission": _comm_amt, "actual_trade_amount": _act_amt,
+        "available_cash": ac_sl, "held_shares": hs_sl, "trade_status": _ts_out,
+        "close_price": _vp_p_out, "close_price_after_slippage": _vp_ps_out,
+        "close_shares": _vp_sh_out, "close_slippage": _vp_sc_out,
+        "close_trade_amount": _vp_a_out, "close_commission": _vp_c_out,
+        "close_actual_trade_amount": _vp_a_out + _vp_c_out,
+        "close_pnl": _vp_pnl_out,
+        "close_type": _ct, "close_pnl_type": _cpt,
+        "cash_before_trade": _cb_out,
+        "cash_after_trade": np.where(_cb_ok, _cb_out + np.where(_vp_pnl_ok, _vp_pnl_out, 0), np.nan),
+        "account_value": av_sl,
+        "account_value_change": acc_chg,
+        "account_value_change_pct": acc_chg_pct,
+        "change_from_initial": chg_init,
+        "change_from_initial_pct": chg_init_pct,
         "created_at": pd.Timestamp.now(),
+    }).astype({
+        "code": "category", "stock_name": "category", "market": "category",
+        "trend_direction": "category", "signal": "category", "signal_exec": "category",
+        "trade_status": "category", "close_type": "category", "close_pnl_type": "category",
     }), _perf
 
 
