@@ -249,11 +249,11 @@ def _calc_strategy_score(cagr, sharpe_ratio, max_drawdown, profit_factor, win_ra
         x = max(lo, min(x, hi))
         return (x - lo) / (hi - lo)
 
-    cagr_score = _normalize(cagr, 0, 30) * 100
+    cagr_score = _normalize(cagr, 0, 0.30) * 100
     sharpe_score = _normalize(sharpe_ratio, 0, 2) * 100
-    dd_score = (1 - _normalize(max_drawdown, 0, 50)) * 100
+    dd_score = (1 - _normalize(max_drawdown, 0, 0.50)) * 100
     pf_score = _normalize(profit_factor, 1, 3) * 100
-    win_score = _normalize(win_rate, 30, 80) * 100
+    win_score = _normalize(win_rate, 0.30, 0.80) * 100
     trade_score = _normalize(min(trade_count, 100), 10, 100) * 100
 
     return (
