@@ -748,8 +748,21 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
                         ac_arr, hs_arr, ts_arr, av_arr)
 
-    # WF 范围：从首窗结束之后到最后一个窗口结束
-    wf_mask = (pd.to_datetime(df_k["datetime"]) > windows[0][1]) &                (pd.to_datetime(df_k["datetime"]) <= windows[-1][1])
+    # 构建 WF 映射：{window_label → best_ma}
+    stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
+                if row["code"] == code}
+
+    # 找到第一个有有效 is_best 的 WF 段的起始日期
+    _wf_start = None
+    for i in range(1, len(windows)):
+        prev_wl = f"{windows[i-1][0].date()}~{windows[i-1][1].date()}"
+        if stock_wf.get(prev_wl) is not None:
+            _wf_start = windows[i-1][1] + pd.Timedelta(days=1)
+            break
+    if _wf_start is None:
+        return pd.DataFrame(), pd.DataFrame()
+    wf_mask = (pd.to_datetime(df_k["datetime"]) >= _wf_start) & \
+               (pd.to_datetime(df_k["datetime"]) <= windows[-1][1])
     if not wf_mask.any():
         return pd.DataFrame(), pd.DataFrame()
     wf_idx = np.where(wf_mask.values)[0]
@@ -776,9 +789,6 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             _r["ha_ma_value"], _r["trend_direction"], _r["signal"]
         )
 
-    # 构建 WF 映射：{window_label → best_ma}
-    stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
-                if row["code"] == code}
 
     # 构建连续 WF 数组（全量长度 n，非 WF 范围填默认值）
     full_ma = np.zeros(n, dtype=np.int64)
