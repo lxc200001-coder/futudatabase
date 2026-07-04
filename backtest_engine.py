@@ -100,6 +100,102 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
     return available_cash, held_shares, trade_shares_arr, comm_arr, slip_arr, account_value
 
 
+@njit
+def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
+                      ta_code, trade_id, dt_days):
+    """@njit 一次性计算策略表现指标。
+
+    ta_code: 0=无, 1=开多, 2=平多
+    trade_id: 交易编号，0=无效
+    dt_days: datetime 的天数（用于持仓天数）
+    """
+    n = len(av_arr)
+    if n == 0:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0)
+
+    first_ac = av_arr[0]; final_ac = av_arr[-1]
+    total_ret = (final_ac / first_ac - 1) if first_ac > 0 else 0.0
+    first_close = closes[0]; last_close = closes[-1]
+    buy_hold = (last_close / first_close - 1) if first_close > 0 else 0.0
+
+    # Sharpe（一次循环计算均值和方差）
+    ret_sum = 0.0; ret_sum2 = 0.0; ret_cnt = 0
+    for i in range(1, n):
+        r = av_arr[i] / av_arr[i-1] - 1
+        if not np.isnan(r) and not np.isinf(r):
+            ret_sum += r; ret_sum2 += r * r; ret_cnt += 1
+    if ret_cnt > 1:
+        ret_avg = ret_sum / ret_cnt
+        ret_var = (ret_sum2 - ret_sum * ret_sum / ret_cnt) / (ret_cnt - 1)
+        ret_std = np.sqrt(ret_var) if ret_var > 0 else 0.0
+        sharpe = ret_avg / ret_std * np.sqrt(252) if ret_std > 1e-10 else 0.0
+    else:
+        sharpe = 0.0
+
+    # 最大回撤
+    running_max = av_arr[0]; max_dd = 0.0
+    for i in range(1, n):
+        if av_arr[i] > running_max: running_max = av_arr[i]
+        dd = (running_max - av_arr[i]) / running_max if running_max > 0 else 0.0
+        if dd > max_dd: max_dd = dd
+
+    # 交易统计 / 连续盈亏 / 持仓天数（一次循环）
+    n_closed = 0; n_wins = 0; n_losses = 0
+    total_win = 0.0; total_loss = 0.0; max_win = 0.0; max_loss = 0.0
+    total_cash_before = 0.0; max_tid = 0
+    max_ws = 0; max_ls = 0; cur_stk = 0; cur_sgn = 0
+    max_tid_local = 0
+    for j in range(n):
+        ta = ta_code[j]; tid = trade_id[j]
+        if ta == 1:
+            total_cash_before += vp_shares[j] * vp_price_slip[j]
+        if ta == 2:
+            pnl = vp_pnl[j]
+            if not np.isnan(pnl):
+                n_closed += 1
+                if pnl > 0:
+                    n_wins += 1; total_win += pnl
+                    if pnl > max_win: max_win = pnl
+                    s = 1
+                else:
+                    n_losses += 1; total_loss += pnl
+                    if pnl < max_loss: max_loss = pnl
+                    s = -1
+                # 连续盈亏
+                if s == cur_sgn:
+                    cur_stk += 1
+                else:
+                    if cur_sgn == 1 and cur_stk > max_ws: max_ws = cur_stk
+                    elif cur_sgn == -1 and cur_stk > max_ls: max_ls = cur_stk
+                    cur_stk = 1; cur_sgn = s
+        if tid > max_tid_local: max_tid_local = tid
+
+    if cur_sgn == 1 and cur_stk > max_ws: max_ws = cur_stk
+    elif cur_sgn == -1 and cur_stk > max_ls: max_ls = cur_stk
+
+    # 持仓天数（trade_id 索引）
+    max_tid_local = max(max_tid_local, 1)
+    oi = np.zeros(max_tid_local + 1, dtype=np.int64)
+    od = np.zeros(max_tid_local + 1, dtype=np.int64)
+    hb = 0; hd = 0; hc = 0
+    for j in range(n):
+        tid = trade_id[j]
+        if tid <= 0: continue
+        if ta_code[j] == 1 and oi[tid] == 0:
+            oi[tid] = j; od[tid] = dt_days[j]
+        elif ta_code[j] == 2 and oi[tid] > 0:
+            hb += j - oi[tid]; hd += dt_days[j] - od[tid]; hc += 1
+            oi[tid] = 0
+
+    avg_hb = hb / hc if hc > 0 else 0.0
+    avg_hd = hd / hc if hc > 0 else 0.0
+
+    return (total_ret, buy_hold, sharpe, max_dd,
+            max_tid_local, n_closed, n_wins, n_losses,
+            total_win, total_loss, max_win, max_loss,
+            total_cash_before, max_ws, max_ls, avg_hb, avg_hd)
+
+
 def generate_windows(step_months, end_date=None):
     """根据步长生成固定窗口列表，末窗停在最后一个完整步长边界。"""
     start = pd.Timestamp(WINDOW_START_DATE)
@@ -383,88 +479,59 @@ def build_window_stability(summary_rows):
 
 def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
                _vp_pnl, _vp_shares, _vp_amt, _vp_price_slip,
-               trade_id_arr, ta_lbl):
-    """从内存 arrays 计算全部策略表现指标。"""
+               trade_id_arr, ta_lbl, ta_code=None):
+    """从内存 arrays 计算全部策略表现指标（使用 numba 加速）。"""
     first_ac, final_ac = float(av_arr[0]), float(av_arr[-1])
-    first_close, last_close = float(closes[0]), float(closes[-1])
     years = max((last_dt - first_dt).days / 365.0, 1 / 365.0)
-    risk_free = 0.02
 
-    total_ret = (final_ac / first_ac - 1) if first_ac > 0 else 0.0
+    # 准备 ta_code（优先使用传入的 int 数组）
+    if ta_code is None:
+        ta_code = np.where(ta_lbl == "开多", 1, np.where(ta_lbl == "平多", 2, 0)).astype(np.int64)
+
+    # 准备 trade_id（object → int64，None → 0）
+    _tid_arr = np.array([int(t) if t is not None else 0 for t in trade_id_arr], dtype=np.int64)
+
+    # 准备 dt_days（datetime → int64 days since epoch）
+    _dt_vals = df["datetime"].values[idx]
+    _dt_days = np.array([int(t.astype("datetime64[D]").astype(np.int64)) for t in _dt_vals], dtype=np.int64)
+
+    # 准备 vp_* 数组（object → float64，None → NaN）
+    _vp_p = np.array([float(v) if v is not None else np.nan for v in _vp_pnl], dtype=np.float64)
+
+    # 调用 numba 一次循环完成全部统计
+    (total_ret, buy_hold, sharpe, max_dd,
+     trade_count, n_closed, n_wins, n_losses,
+     total_win, total_loss, max_win, max_loss,
+     total_cash_before, max_win_streak, max_loss_streak,
+     avg_hold_bars, avg_hold_days) = _calc_perf_numba(
+        av_arr.astype(np.float64), closes.astype(np.float64),
+        _vp_p, np.full(n_sl, np.nan, dtype=np.float64),
+        np.array([float(v) if v is not None else np.nan for v in _vp_price_slip], dtype=np.float64),
+        np.array([float(v) if v is not None else 0.0 for v in _vp_shares], dtype=np.float64),
+        ta_code, _tid_arr, _dt_days)
+
     cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) if first_ac > 0 else 0.0
-    buy_hold = (last_close / first_close - 1) if first_close > 0 else 0.0
-
-    # Sharpe
-    rets = np.diff(av_arr) / av_arr[:-1]
-    rets = rets[~np.isnan(rets) & ~np.isinf(rets)]
-    periods = 252 if ktype == "1d" else 52
-    if len(rets) > 1:
-        ret_avg = np.mean(rets); ret_std = np.std(rets, ddof=1)
-        sharpe = (ret_avg - risk_free / periods) / ret_std * np.sqrt(periods) if ret_std > 1e-10 else 0.0
-    else:
-        sharpe = 0.0
-
-    # 最大回撤
-    running_max = np.maximum.accumulate(av_arr)
-    max_dd = float(np.max((running_max - av_arr) / running_max)) if running_max[-1] > 0 else 0.0
     calmar = cagr / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
 
-    # 交易统计（从 _vp_pnl 中提取平多行）
-    close_pnls = [_vp_pnl[j] for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
-    close_amts = [_vp_amt[j] for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
-    n_closed = len(close_pnls)
-    trade_count = int(np.max([t for t in trade_id_arr if t is not None])) if any(t is not None for t in trade_id_arr) else 0
-    wins = [p for p in close_pnls if p > 0]
-    losses = [p for p in close_pnls if p < 0]
-    n_wins, n_losses = len(wins), len(losses)
-    total_win = sum(wins) if wins else 0
-    total_loss = sum(losses) if losses else 0.0
-    avg_win = (sum(wins) / n_wins) if n_wins else 0
-    avg_loss = (sum(losses) / n_losses) if n_losses else 0.0
-    max_win = max(wins) if wins else 0
-    max_loss = min(losses) if losses else 0.0
-    avg_win_amt = (sum(close_amts[i] for i in range(n_closed) if close_pnls[i] > 0) / n_wins) if n_wins else 0
-    avg_loss_amt = (sum(close_amts[i] for i in range(n_closed) if close_pnls[i] < 0) / n_losses) if n_losses else 0
-    total_cash_before = sum(_vp_price_slip[j] * _vp_shares[j] for j in range(n_sl) if ta_lbl[j] == "开多" and _vp_shares[j] is not None)
-
+    # 派生统计（numba 返回原始值，在此派生）
+    n_closed = int(n_closed); n_wins = int(n_wins); n_losses = int(n_losses)
+    trade_count = int(trade_count)
     win_rate = (n_wins / n_closed) if n_closed > 0 else 0
     profit_factor = total_win / abs(total_loss) if total_loss < 0 else 0
+    avg_win = (total_win / n_wins) if n_wins else 0
+    avg_loss = (total_loss / n_losses) if n_losses else 0.0
     payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
-    avg_trade_return = (sum(close_pnls) / total_cash_before) if total_cash_before > 0 and n_closed > 0 else 0
+    avg_trade_return = ((total_win + total_loss) / total_cash_before) if total_cash_before > 0 and n_closed > 0 else 0
+    # avg_win_amt / avg_loss_amt（从 _vp_amt 计算）
+    _close_amts = [float(_vp_amt[j]) for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
+    _close_pnls2 = [float(_vp_pnl[j]) for j in range(n_sl) if ta_lbl[j] == "平多" and _vp_pnl[j] is not None]
+    _n_c2 = len(_close_pnls2)
+    avg_win_amt = (sum(_close_amts[i] for i in range(_n_c2) if _close_pnls2[i] > 0) / n_wins) if n_wins else 0
+    avg_loss_amt = (sum(_close_amts[i] for i in range(_n_c2) if _close_pnls2[i] < 0) / n_losses) if n_losses else 0
 
     strategy_score = round(_calc_strategy_score(
         cagr, sharpe, max_dd, profit_factor, win_rate, trade_count
     ), 2)
-
-    # 连续盈亏次数
-    signs = [1 if p > 0 else -1 for p in close_pnls]
-    max_win_streak = max_loss_streak = 0
-    cur_streak = 0; cur_sign = 0
-    for s in signs:
-        if s == cur_sign:
-            cur_streak += 1
-        else:
-            if cur_sign == 1: max_win_streak = max(max_win_streak, cur_streak)
-            elif cur_sign == -1: max_loss_streak = max(max_loss_streak, cur_streak)
-            cur_streak = 1; cur_sign = s
-    if cur_sign == 1: max_win_streak = max(max_win_streak, cur_streak)
-    elif cur_sign == -1: max_loss_streak = max(max_loss_streak, cur_streak)
-
-    # 平均持仓K线数/天数（开多→平多 datetime diff，dict 配对 O(n)）
-    hold_bars_list = []; hold_days_list = []
-    _open_trades = {}  # trade_id → (bar_index, datetime)
-    for j in range(n_sl):
-        _tid = trade_id_arr[j]
-        if _tid is None:
-            continue
-        if ta_lbl[j] == "开多" and _tid not in _open_trades:
-            _open_trades[_tid] = (j, df["datetime"].iloc[idx[j]])
-        elif ta_lbl[j] == "平多" and _tid in _open_trades:
-            _open_j, _open_dt = _open_trades.pop(_tid)
-            hold_bars_list.append(j - _open_j)
-            hold_days_list.append((df["datetime"].iloc[idx[j]] - _open_dt).days)
-    avg_hold_days = (sum(hold_days_list) / len(hold_days_list)) if hold_days_list else 0
-    avg_hold_bars = (sum(hold_bars_list) / len(hold_bars_list)) if hold_bars_list else 0
 
     return {
         "total_return": round(total_ret, 4), "cagr": round(cagr, 4),
