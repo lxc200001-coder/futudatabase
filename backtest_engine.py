@@ -32,8 +32,8 @@ FEE_RATE = 0.001
 SLIPPAGE = 0.001
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
-DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_KTYPE = "1w,1d"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -712,9 +712,16 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
     opens_arr = df_k["open"].values.astype(np.float64)
 
-    # 全量计算所有 MA 的信号数组（与 run_stock 一致）
+    # 构建 WF 映射：{window_label → best_ma}
+    stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
+                if row["code"] == code}
+    wf_mas = set(stock_wf.values())
+
+    # 仅计算 WF 会用到的 MA（is_best 中的值）
     ma_cache = {}
     for ma in ma_range:
+        if ma not in wf_mas:
+            continue
         ha_ma_val = bn.move_mean(ha_close, window=ma, min_count=ma)
         _up = np.zeros(n, dtype=np.int8)
         _valid = ~np.isnan(ha_ma_val)
@@ -747,10 +754,6 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         )
         ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices,
                         ac_arr, hs_arr, ts_arr, av_arr)
-
-    # 构建 WF 映射：{window_label → best_ma}
-    stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
-                if row["code"] == code}
 
     # 找到第一个有有效 is_best 的 WF 段的起始日期
     _wf_start = None
