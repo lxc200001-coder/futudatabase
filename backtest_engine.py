@@ -761,31 +761,37 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     _ha_close_map = {}
     for _, _r in _bt_df.iterrows():
         _ha_close_map[_r["datetime"]] = _r["ha_close"]
-    # 一次性查询所有 WF MA 的信号/交易数据（从 backtest_stats）
+    # 构建 ma_cache（仅计算 WF 需要用到的 MA）
     _sn = str(df_k["stock_name"].iloc[0]) if "stock_name" in df_k.columns else ""
     _mkt = str(df_k["market"].iloc[0]) if "market" in df_k.columns else ""
-    _qc2 = duckdb.connect(DB_PATH, read_only=True)
-    _ma_list_str = ",".join(str(m) for m in wf_mas)
-    _bt_sig = _qc2.execute(f"""
-        SELECT datetime, ma_len, ha_ma_value, trend_direction, signal,
-               CASE trade_action WHEN '开多' THEN 1 WHEN '平多' THEN 2 ELSE 0 END AS ta_code,
-               trade_price
-        FROM backtest_stats
-        WHERE code = ? AND ktype = ? AND ma_len IN (""" + _ma_list_str + """)
-        ORDER BY datetime, ma_len
-    """, [code, ktype]).fetchdf()
-    _qc2.close()
-    _ma_sigs = {}
+    ma_cache = {}
     for ma in wf_mas:
-        _md = _bt_sig[_bt_sig["ma_len"] == ma].set_index("datetime")
-        _ma_sigs[ma] = {
-            "ha_ma_value": _md["ha_ma_value"].to_dict(),
-            "direction": _md["trend_direction"].to_dict(),
-            "signal": _md["signal"].to_dict(),
-            "ta_code": _md["ta_code"].to_dict(),
-            "trade_price": _md["trade_price"].to_dict(),
-        }
-    del _bt_sig
+        ha_ma_val = bn.move_mean(ha_close, window=ma, min_count=ma)
+        _up = np.zeros(n, dtype=np.int8)
+        _valid = ~np.isnan(ha_ma_val)
+        _up[1:] = np.where(_valid[1:] & _valid[:-1] & (ha_ma_val[1:] > ha_ma_val[:-1]), 1, 0)
+        direction = np.where(_up == 1, "多头", "空头")
+        signal = np.full(n, "", dtype=object)
+        signal[0] = "等待"
+        _du = _up[1:] == 1; _dd = _up[1:] == 0
+        _pu = _up[:-1] == 1; _pd = _up[:-1] == 0
+        signal[1:][_du & _pd] = "买入"
+        signal[1:][_du & _pu] = "持有"
+        signal[1:][_dd & _pu] = "卖出"
+        signal[1:][_dd & _pd] = "等待"
+        trade_actions = np.zeros(n, dtype=np.int64)
+        trade_prices = np.full(n, np.nan, dtype=np.float64)
+        _buy = signal == "买入"
+        _sell = signal == "卖出"
+        if trade_mode == "close":
+            trade_actions[_buy] = 1; trade_prices[_buy] = closes[_buy]
+            trade_actions[_sell] = 2; trade_prices[_sell] = closes[_sell]
+        else:
+            _buy1 = np.roll(_buy, 1); _buy1[0] = False
+            _sell1 = np.roll(_sell, 1); _sell1[0] = False
+            trade_actions[_buy1] = 1; trade_prices[_buy1] = opens_arr[_buy1]
+            trade_actions[_sell1] = 2; trade_prices[_sell1] = opens_arr[_sell1]
+        ma_cache[ma] = (ha_ma_val, direction, signal, trade_actions, trade_prices)
 
     # 初始化全量数组
     full_ma = np.zeros(n, dtype=np.int64)
@@ -800,8 +806,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     # ha_close 向量化填充
     full_ha_close[wf_idx] = df_k["datetime"].iloc[wf_idx].map(_ha_close_map).fillna(np.nan).values
 
-    # 逐段填充 WF 数组（从 _ma_sigs 查找）
-    _ts_arr = list(df_k["datetime"])  # 预转为 Timestamp 列表，避免循环中重复创建
+    # 逐段 numpy 切片填充 WF 数组
     _wf_labels_seen = []
     for i in range(1, len(windows)):
         seg_start = windows[i-1][1]
@@ -819,21 +824,14 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         _wl = f"{(seg_start + pd.Timedelta(days=1)).date()}~{seg_end.date()}"
         _wf_labels_seen.append(_wl)
 
-        _ms = _ma_sigs[wf_ma]
+        # numpy 切片批量赋值（比 per-bar dict 查找快）
+        ha_ma_val, direction, signal, trade_actions, trade_prices = ma_cache[wf_ma]
         full_ma[seg_idx] = wf_ma
-        for ii in seg_idx:
-            dt_ts = _ts_arr[ii]
-            full_ha_ma[ii] = _ms["ha_ma_value"].get(dt_ts, np.nan)
-            full_dir[ii] = _ms["direction"].get(dt_ts, "")
-            full_sig[ii] = _ms["signal"].get(dt_ts, "")
-            full_ta[ii] = _ms["ta_code"].get(dt_ts, 0)
-            tp = _ms["trade_price"].get(dt_ts)
-            if tp is not None:
-                try:
-                    if not np.isnan(float(tp)):
-                        full_tp[ii] = float(tp)
-                except (TypeError, ValueError):
-                    pass
+        full_ha_ma[seg_idx] = ha_ma_val[seg_idx]
+        full_dir[seg_idx] = direction[seg_idx]
+        full_sig[seg_idx] = signal[seg_idx]
+        full_ta[seg_idx] = trade_actions[seg_idx]
+        full_tp[seg_idx] = trade_prices[seg_idx]
 
     # 一次连续信号冲突检测（所有 WF 段一次过）
     has_position = False
