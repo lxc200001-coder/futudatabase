@@ -788,7 +788,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
     full_ha_close[wf_idx] = df_k["datetime"].iloc[wf_idx].map(_ha_close_map).fillna(np.nan).values
 
     # 逐段填充 WF 数组（从 _ma_sigs 查找）
-    _dt_arr = df_k["datetime"].values
+    _ts_arr = list(df_k["datetime"])  # 预转为 Timestamp 列表，避免循环中重复创建
     _wf_labels_seen = []
     for i in range(1, len(windows)):
         seg_start = windows[i-1][1]
@@ -809,7 +809,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         _ms = _ma_sigs[wf_ma]
         full_ma[seg_idx] = wf_ma
         for ii in seg_idx:
-            dt_ts = pd.Timestamp(_dt_arr[ii])
+            dt_ts = _ts_arr[ii]
             full_ha_ma[ii] = _ms["ha_ma_value"].get(dt_ts, np.nan)
             full_dir[ii] = _ms["direction"].get(dt_ts, "")
             full_sig[ii] = _ms["signal"].get(dt_ts, "")

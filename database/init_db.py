@@ -499,6 +499,7 @@ def create_tables(con):
         ("avg_hold_bars","平均持仓K线数"),("initial_cash","初始资金"),("final_cash","最终资金")]:
         con.execute(f"COMMENT ON COLUMN backtest_performance.{_c} IS '{_d}'")
 
+    con.execute("CREATE INDEX IF NOT EXISTS idx_backtest_perf_code ON backtest_performance(code, ktype)")
     # ── strategy_score 评分明细表 ──
     con.execute("DROP TABLE IF EXISTS strategy_score_detail")
     con.execute("""
