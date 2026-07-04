@@ -13,7 +13,7 @@ import contextlib
 from collections import deque
 from datetime import datetime
 import duckdb
-from futu import OpenQuoteContext, KLType, AuType, RET_OK
+from futu import OpenQuoteContext, KLType, AuType, RET_OK, AccumulateFilter, StockField, SortDir, Market
 
 
 # 关闭杂项日志
@@ -29,17 +29,12 @@ DATA_DIR = "data_uscncc"
 SYMBOL_FILE = "symbols/symbols.csv"
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
 DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / all(全部) / week,day(逗号拼接)
-DEFAULT_API = "futu"  # 美股数据源: futu(富途) / stooq-local(本地全量数据包)
 
 # ── 成交额排名阈值 ──
 TOP_TURNOVER_US_LIMIT = 100        # US 实时成交额排名取前 N 只
 TOP_TURNOVER_CN_LIMIT = 100        # CN 实时成交额排名取前 N 只
-TOP_TURNOVER_STOCK_RANK_MAX = 200  # 60日成交额排名表中 rank ≤ N 的股票
+TOP_TURNOVER_STOCK_RANK_MAX = 150  # 60日成交额排名表中 rank ≤ N 的股票
 TOP_TURNOVER_ETF_RANK_MAX = 10     # ETF 成交额排名表中 rank ≤ N 的 ETF
-
-# ktype → 子目录名 / 文件后缀 映射
-KTYPE_DIR_MAP = {"week": "1w", "day": "1d"}
-KTYPE_SUFFIX_MAP = {"week": "1w", "day": "1d"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 for sub in ["us", "cn", "cc"]:
@@ -720,7 +715,6 @@ def _get_quota_info(host="127.0.0.1", port=11111):
             return 0, 0, set()
     finally:
         _s.close()
-    from futu import OpenQuoteContext, RET_OK
     wait_rate_limit()
     ctx = OpenQuoteContext(host=host, port=port)
     try:
@@ -776,11 +770,9 @@ def fetch_stock_names(symbols, quote_ctx):
 
     # US: 富途
     if us_codes and quote_ctx:
-        for market_prefix in ["US", "HK"]:
-            batch = [c for c in us_codes if c.startswith(market_prefix + ".")]
-            if not batch:
-                continue
-            ret, data = quote_ctx.get_stock_basicinfo(market=market_prefix, code_list=batch)
+        batch = [c for c in us_codes if c.startswith("US.")]
+        if batch:
+            ret, data = quote_ctx.get_stock_basicinfo(market="US", code_list=batch)
             if ret == RET_OK and data is not None:
                 for _, row in data.iterrows():
                     name_map[row["code"]] = row.get("name", "")
@@ -811,7 +803,6 @@ def fetch_stock_names(symbols, quote_ctx):
 
 def fetch_top_turnover_stocks(limit=TOP_TURNOVER_US_LIMIT):
     """通过 Futu OpenD 获取当日成交额前 N 的美股，返回代码列表"""
-    from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
     quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
     try:
@@ -840,7 +831,6 @@ def fetch_top_turnover_stocks(limit=TOP_TURNOVER_US_LIMIT):
 
 def fetch_cn_top_turnover(limit=TOP_TURNOVER_CN_LIMIT):
     """通过 Futu OpenD 获取沪深主板当日成交额前 N 的股票，返回代码列表"""
-    from futu import OpenQuoteContext, AccumulateFilter, StockField, SortDir, RET_OK, Market
 
     def _is_excluded(code):
         return code.startswith("SH.688") or code.startswith(("SZ.300", "SZ.301")) or code.startswith("BJ.")
@@ -1252,7 +1242,6 @@ if __name__ == "__main__":
     plates_data = run_plate_sync(selected_markets=selected_markets)
     if plates_data:
         try:
-            import duckdb
             _db_path = os.path.join(os.path.dirname(__file__), "database", "market.duckdb")
             _con = duckdb.connect(_db_path)
             _con.execute("DELETE FROM plates")
