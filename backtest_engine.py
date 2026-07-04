@@ -702,6 +702,7 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
 
 def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate, wf_plan):
     """Walk Forward 回测：用上个窗口的 is_best MA 作为当前窗口的交易参数。"""
+    _t_wf = time.time()
     _kt = {"1w": "1w", "1d": "1d"}.get(ktype, ktype)
     con = duckdb.connect(DB_PATH, read_only=True)
     try:
@@ -883,6 +884,9 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             wf_df["close_price_after_slippage"].values if "close_price_after_slippage" in wf_df.columns else np.full(n_wf, None),
             tid_wf, ta_lbl_wf)
 
+        _elapsed = time.time() - _t_wf
+        if _elapsed > 0.2:
+            print(f"  WF {code} {_elapsed:.1f}s")
         perf_row = {**{"code": code, "stock_name": _sn, "market": _mkt,
                        "ktype": ktype, "window_label": _wf_label}, **total_perf}
         return wf_df, pd.DataFrame([perf_row])
