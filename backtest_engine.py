@@ -935,11 +935,11 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
                 pq.write_table(pa.concat_tables(_tbls), _p_out)
         if os.path.exists(_p_trades) and os.path.getsize(_p_trades) > 0:
             _tdf = pq.read_table(_p_trades, memory_map=False).to_pandas()
-            _open_ids = set(_tdf[_tdf["trade_action"] == "开多"]["trade_id"])
-            _closed_ids = set(_tdf[_tdf["trade_action"] == "平多"]["trade_id"])
+            _open_keys = set(zip(_tdf[_tdf["trade_action"] == "开多"]["ma_len"], _tdf[_tdf["trade_action"] == "开多"]["trade_id"]))
+            _closed_keys = set(zip(_tdf[_tdf["trade_action"] == "平多"]["ma_len"], _tdf[_tdf["trade_action"] == "平多"]["trade_id"]))
             _vc_list = []
-            for _tid in _open_ids - _closed_ids:
-                _rows = _tdf[_tdf["trade_id"] == _tid].sort_values("datetime")
+            for _mk in _open_keys - _closed_keys:
+                _rows = _tdf[(_tdf["ma_len"] == _mk[0]) & (_tdf["trade_id"] == _mk[1])].sort_values("datetime")
                 if _rows.empty: continue
                 _lk = _rows.iloc[-1].to_dict()
                 _lk["close_type"] = "虚拟平仓"
