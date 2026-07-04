@@ -1,3 +1,41 @@
+# =========================================================
+# 多市场 K 线数据下载 + 成交额排名 + watchlist 同步
+# =========================================================
+# 运行流程（按顺序）：
+#
+# 1. Stooq 导入（只对 US 市场）
+#    import_stooq_all_to_db()
+#    → 将 Stooq 全量本地数据包导入 stooq_local_all_us_stocks 表
+#
+# 2. 成交额排名 + watchlist 同步
+#    a. fetch_top_turnover_stocks()  ← 富途实时成交额排名（US，默认前 100）
+#    b. fetch_cn_top_turnover()      ← 富途实时成交额排名（CN，默认前 100）
+#    c. _sync_watchlist_db()         ← 合并写入 watchlist 表
+#       数据源：
+#         - top_turnover_stock_rank 表（60日成交额排名，rank ≤ 150）
+#         - top_turnover_etf_rank 表（ETF 成交额排名，rank ≤ 10）
+#         - 富途实时成交额排名结果
+#         - symbols/symbols.csv 文件
+#
+# 3. 下载 K 线
+#    run_download_all() → run_download(ktype)
+#    └─ 遍历股票列表，按市场分流：
+#         - CC（加密货币）→ fetch_binance_data()
+#         - CN（A股）     → fetch_cn_data()（Baostock 源）
+#         - US            → 按 API 配额分配：
+#                           富途/Moomoo → fetch_futu_data()
+#                           Stooq      → fetch_stooq_local_data()
+#    └─ 写入 klines_1w / klines_1d 表
+#    └─ 生成 top_turnover_stock_rank / top_turnover_etf_rank（60日成交额排名表）
+#
+# 4. 板块信息同步
+#    run_plate_sync()
+#    ├─ fetch_all_stock_plates()    ← 富途（US）
+#    └─ fetch_cn_stock_industry()   ← Baostock（CN）
+#    └─ 写入 plates 表
+#
+# =========================================================
+
 import os
 import sys
 import time
