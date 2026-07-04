@@ -29,10 +29,10 @@ DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
 
 INITIAL_CASH = 10000
 FEE_RATE = 0.001
-SLIPPAGE = 0.001
+SLIPPAGE = 0.000
 TRADE_MODE = "close"   # close / open
 MA_MODE = "continuous" # continuous / jump
-DEFAULT_KTYPE = "1w,1d"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
+DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
 DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
@@ -139,9 +139,11 @@ def run_stock(code, ktype, ma_range, windows, trade_mode, slippage, fee_rate):
 
     n = len(df_k)
     closes = df_k["close"].values.astype(np.float64)
-    ha_close = (df_k["open"].values + df_k["high"].values + df_k["low"].values + closes) / 4.0
-    _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
     opens_arr = df_k["open"].values.astype(np.float64)
+    highs_arr = df_k["high"].values.astype(np.float64)
+    lows_arr = df_k["low"].values.astype(np.float64)
+    ha_close = (opens_arr + highs_arr + lows_arr + closes) / 4.0
+    _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
 
     # 全量计算每个 MA 的信号数组（避免对每个窗口重复计算）
     ma_cache = {}  # ma → {ha_ma_val, direction, signal, trade_actions, trade_prices}
@@ -715,9 +717,11 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
 
     n = len(df_k)
     closes = df_k["close"].values.astype(np.float64)
-    ha_close = (df_k["open"].values + df_k["high"].values + df_k["low"].values + closes) / 4.0
-    _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
     opens_arr = df_k["open"].values.astype(np.float64)
+    highs_arr = df_k["high"].values.astype(np.float64)
+    lows_arr = df_k["low"].values.astype(np.float64)
+    ha_close = (opens_arr + highs_arr + lows_arr + closes) / 4.0
+    _is_cc = "加密货币" in str(df_k.get("market", pd.Series([""])).iloc[0])
 
     # 构建 WF 映射：{window_label → best_ma}
     stock_wf = {row["window_label"]: row["best_ma"] for _, row in wf_plan.iterrows()
