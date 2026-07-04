@@ -1051,7 +1051,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt,
                                 "ktype": ktype, "window_label": _wl}, **_perf})
 
-    # 修正 window_label：合并所有有数据的 WF 段标签
+    # 修正 window_label：合并所有有数据的 WF 段标签（stats + perf 统一）
     if all_dfs and _wf_labels_seen:
         _first_parts = _wf_labels_seen[0].split("~")
         _last_parts = _wf_labels_seen[-1].split("~")
@@ -1060,10 +1060,18 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         for _df in all_dfs:
             _df["window_label"] = _wf_label
             _df["window_count"] = _wf_count
+        # perf 也使用合并标签
+        if all_perf:
+            _pf = pd.DataFrame(all_perf)
+            _pf["window_label"] = _wf_label
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore", FutureWarning)
+                return pd.concat(all_dfs, ignore_index=True), _pf
         import warnings as _w
         with _w.catch_warnings():
             _w.simplefilter("ignore", FutureWarning)
-            return pd.concat(all_dfs, ignore_index=True), pd.DataFrame(all_perf) if all_perf else pd.DataFrame()
+            return pd.concat(all_dfs, ignore_index=True), pd.DataFrame()
     return pd.DataFrame(), pd.DataFrame()
 
 
