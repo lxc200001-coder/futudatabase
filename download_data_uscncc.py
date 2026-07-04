@@ -14,10 +14,7 @@ from collections import deque
 from datetime import datetime
 import duckdb
 from futu import OpenQuoteContext, KLType, AuType, RET_OK
-from config import (
-    TOP_TURNOVER_US_LIMIT, TOP_TURNOVER_CN_LIMIT,
-    TOP_TURNOVER_STOCK_RANK_MAX, TOP_TURNOVER_ETF_RANK_MAX,
-)
+
 
 # 关闭杂项日志
 logging.getLogger("futu").setLevel(logging.ERROR)
@@ -33,6 +30,12 @@ SYMBOL_FILE = "symbols/symbols.csv"
 DEFAULT_MARKET = "US,CC"   # 默认市场: all / US / CN / CC / US,CC
 DEFAULT_KTYPE = "week,day"      # 默认K线周期: week(周K) / day(日K) / all(全部) / week,day(逗号拼接)
 DEFAULT_API = "futu"  # 美股数据源: futu(富途) / stooq-local(本地全量数据包)
+
+# ── 成交额排名阈值 ──
+TOP_TURNOVER_US_LIMIT = 100        # US 实时成交额排名取前 N 只
+TOP_TURNOVER_CN_LIMIT = 100        # CN 实时成交额排名取前 N 只
+TOP_TURNOVER_STOCK_RANK_MAX = 200  # 60日成交额排名表中 rank ≤ N 的股票
+TOP_TURNOVER_ETF_RANK_MAX = 10     # ETF 成交额排名表中 rank ≤ N 的 ETF
 
 # ktype → 子目录名 / 文件后缀 映射
 KTYPE_DIR_MAP = {"week": "1w", "day": "1d"}
