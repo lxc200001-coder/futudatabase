@@ -33,7 +33,7 @@ SLIPPAGE = 0.000
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -864,7 +864,7 @@ def _build_slice_rows(df, mask, ma_len, ktype, ha_ma_val, direction, signal,
         }), parquet_path)
         # 写交易记录 parquet（trade_action 非空行）
         if trades_parquet_path:
-            _tm = _ta_out != np.array(None)
+            _tm = (_ta_out != np.array(None)) & ~((_tid_out == np.array(None)) & (ts_sl == 0))
             _tc = np.array([str(x) for x in _ta_out[_tm]], dtype=object)
             _ti = np.array([int(x) for x in _tid_out[_tm]], dtype=np.int64)
             _ts2 = np.array([str(x) for x in _ts_out[_tm]], dtype=object)
@@ -1185,7 +1185,7 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
         _p_perf = _tmp + "_perf.parquet"
         df_stats.to_parquet(_p_stats, index=False)
         if "trade_action" in df_stats.columns:
-            _tdf = df_stats[df_stats["trade_action"].notna()]
+            _tdf = df_stats[df_stats["trade_action"].notna() & ~(df_stats["trade_id"].isna() & (df_stats["trade_shares"] == 0))]
             if not _tdf.empty:
                 _tcols = ["code","stock_name","market","ktype","window_label","datetime",
                           "ma_len","trade_id","trade_action","trade_price_after_slippage",
