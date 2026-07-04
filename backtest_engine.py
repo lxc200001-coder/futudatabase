@@ -889,11 +889,15 @@ def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate
         import pyarrow as pa
         import pyarrow.parquet as pq
         _tables = []
+        _ma_files = []
         for ma in ma_range:
             _f = f"{_tmp}_{ma}.parquet"
             if os.path.exists(_f):
-                _tables.append(pq.read_table(_f))
-                os.remove(_f)
+                _ma_files.append(_f)
+                _tables.append(pq.read_table(_f, memory_map=False))
+        for _f in _ma_files:
+            try: os.remove(_f)
+            except: pass
         if _tables:
             pq.write_table(pa.concat_tables(_tables), _p_stats)
         if not df_perf.empty:
