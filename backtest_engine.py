@@ -102,12 +102,13 @@ def _numba_account_loop(closes, trade_actions, trade_prices, n, initial_cash, sl
 
 @njit
 def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
-                      ta_code, trade_id, dt_days):
+                      ta_code, trade_id, dt_days, periods=252):
     """@njit 一次性计算策略表现指标。
 
     ta_code: 0=无, 1=开多, 2=平多
     trade_id: 交易编号，0=无效
     dt_days: datetime 的天数（用于持仓天数）
+    periods: 年化周期数（日线=252，周线=52）
     """
     n = len(av_arr)
     if n == 0:
@@ -128,7 +129,7 @@ def _calc_perf_numba(av_arr, closes, vp_pnl, vp_amt, vp_price_slip, vp_shares,
         ret_avg = ret_sum / ret_cnt
         ret_var = (ret_sum2 - ret_sum * ret_sum / ret_cnt) / (ret_cnt - 1)
         ret_std = np.sqrt(ret_var) if ret_var > 0 else 0.0
-        sharpe = ret_avg / ret_std * np.sqrt(252) if ret_std > 1e-10 else 0.0
+        sharpe = ret_avg / ret_std * np.sqrt(periods) if ret_std > 1e-10 else 0.0
     else:
         sharpe = 0.0
 
@@ -525,6 +526,7 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
     _vp_ps = np.array([float(v) if v is not None else np.nan for v in _vp_price_slip], dtype=np.float64)
     _vp_sh = np.array([float(v) if v is not None else 0.0 for v in _vp_shares], dtype=np.float64)
 
+    _periods = 252 if ktype == "1d" else 52
     (total_ret, buy_hold, sharpe, max_dd,
      trade_count, n_closed, n_wins, n_losses,
      total_win, total_loss, max_win, max_loss,
@@ -533,7 +535,7 @@ def _calc_perf(av_arr, closes, first_dt, last_dt, ktype, df, idx, n_sl,
      win_amt_sum, loss_amt_sum) = _calc_perf_numba(
         av_arr.astype(np.float64), closes.astype(np.float64),
         _vp_p, _vp_a, _vp_ps, _vp_sh,
-        ta_code, _tid_arr, _dt_days)
+        ta_code, _tid_arr, _dt_days, _periods)
 
     cagr = ((final_ac / first_ac) ** (1.0 / years) - 1) if first_ac > 0 else 0.0
     calmar = cagr / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
