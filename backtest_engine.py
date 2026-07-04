@@ -885,8 +885,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
             tid_wf, ta_lbl_wf)
 
         _elapsed = time.time() - _t_wf
-        if _elapsed > 0.2:
-            print(f"  WF {code} {_elapsed:.1f}s")
+        if _elapsed > 1:
+            print(f"    {code} {_elapsed:.1f}s")
         perf_row = {**{"code": code, "stock_name": _sn, "market": _mkt,
                        "ktype": ktype, "window_label": _wf_label}, **total_perf}
         return wf_df, pd.DataFrame([perf_row])
@@ -916,6 +916,10 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                  trade_mode="close", slippage=0.0, fee_rate=0.001, markets=None):
     """主入口：对所有股票并行回测并写入 backtest_stats 表。"""
     ma_range = ma_list if ma_list is not None else list(range(ma_start, ma_end, ma_step))
+
+    print(f"\n{'='*60}")
+    print(f"  【主回测 {ktype}】")
+    print(f"{'='*60}")
 
     _step_map = {"1w": 12, "1d": 6}
     step_months = _step_map.get(ktype, 12)
@@ -1201,7 +1205,8 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             print(f"  派生失败: {e}")
             _cw.close()
 
-    print(f"\n完成: {total_rows:,} 行写入 backtest_stats")
+    print(f"  ──────────────────────────────────────")
+    print(f"  完成: {total_rows:,} 行写入 backtest_stats")
 
     # =========================================================
     # Walk Forward 回测（使用 strategy_score_stability 的 is_best 计划）
@@ -1221,7 +1226,9 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             _wf_plan = pd.DataFrame()
 
         if not _wf_plan.empty and len(windows) >= 2:
-            print("  Walk Forward 回测...", end=" ", flush=True)
+            print(f"\n  {'─'*50}")
+            print(f"  【Walk Forward 回测 {ktype}】")
+            print(f"  {'─'*50}")
             # 提前清空旧数据
             _cw = duckdb.connect(DB_PATH)
             for _wt in ["backtest_stats_walkforward", "backtest_trades_walkforward",
@@ -1353,6 +1360,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
             except Exception as e:
                 print(f"  WF 交易记录派生失败: {e}")
             _cw.close()
+            print(f"  {'─'*50}")
 
 
 # =========================================================
