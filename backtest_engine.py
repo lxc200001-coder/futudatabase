@@ -951,7 +951,7 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 
     # 提前清空旧数据
     _cw = duckdb.connect(DB_PATH)
-    try: _cw.execute("DELETE FROM backtest_stats")
+    try: _cw.execute("DROP TABLE IF EXISTS backtest_stats")
     except: pass
     _cw.close()
 
@@ -997,15 +997,17 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
     for _code, _err in _failures:
         print(f"  {_code} 失败: {_err}")
 
-    # 所有子进程结束→DuckDB 原生批量读 parquet（比逐行快 100 倍）
+    # 所有子进程结束→DuckDB 原生批量读 parquet + 排序（一步完成）
     if _tmp_files:
         _t0 = time.time()
         print("  写入中...", end=" ", flush=True)
         _cw = duckdb.connect(DB_PATH)
+        _cw.execute("DROP TABLE IF EXISTS backtest_stats")
         _plist = ",".join(f"'{p}'" for p in _tmp_files)
         _cw.execute(f"""
-            INSERT INTO backtest_stats ({_sel})
+            CREATE TABLE backtest_stats AS
             SELECT {_sel} FROM read_parquet([{_plist}])
+            ORDER BY code ASC, ktype ASC, window_label ASC, ma_len ASC, datetime ASC
         """)
         total_rows = _cw.execute("SELECT count(*) FROM backtest_stats").fetchone()[0]
         _cw.close()
@@ -1098,24 +1100,6 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
         _qc.close()
     except Exception as e:
         print(f"  strategy_score 透视表构建失败: {e}")
-
-    # 全局排序（设置临时目录避免 OOM）
-    if total_rows > 0:
-        _t1 = time.time()
-        print("  排序中...", end=" ", flush=True)
-        _tmp_dir = os.path.join(PROJECT_ROOT, "results_uscncc", "_duckdb_tmp")
-        os.makedirs(_tmp_dir, exist_ok=True)
-        _cw = duckdb.connect(DB_PATH)
-        _cw.execute(f"SET temp_directory = '{_tmp_dir}'")
-        _cw.execute(f"""
-            CREATE TABLE backtest_stats_sorted AS
-            SELECT * FROM backtest_stats
-            ORDER BY code ASC, ktype ASC, window_label ASC, ma_len ASC, datetime ASC
-        """)
-        _cw.execute("DROP TABLE backtest_stats")
-        _cw.execute("ALTER TABLE backtest_stats_sorted RENAME TO backtest_stats")
-        _cw.close()
-        print(f"  排序完成 ({time.time()-_t1:.0f}s)")
 
     # 派生交易记录表
     if total_rows > 0:
