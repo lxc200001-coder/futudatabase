@@ -849,7 +849,13 @@ def _build_wf_slice_rows(df, idx, ma_len, ktype,
     next_trade_id = _tid
     next_has_position = hs_sl[-1] > 0 if n_sl > 0 else False
     next_entry_slip = _entry_tp_slip if next_has_position else None
-    return _result_df, _perf, next_trade_id, next_has_position, next_entry_slip
+    raw_arrays = {
+        "av_sl": av_sl, "c_sl": c_sl,
+        "_vp_pnl": _vp_pnl, "_vp_shares": _vp_shares,
+        "_vp_amt": _vp_amt, "_vp_price_slip": _vp_price_slip,
+        "trade_id_arr": trade_id_arr, "ta_lbl": ta_lbl,
+    }
+    return _result_df, _perf, next_trade_id, next_has_position, next_entry_slip, raw_arrays
 
 
 def _worker_stock(code, ktype, windows, ma_range, trade_mode, slippage, fee_rate):
@@ -962,7 +968,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
                 if row["code"] == code}
 
     all_dfs = []
-    all_perf = []
+    all_perf = []  # 不再逐段添加，改用 all_raw 拼接后一次计算
+    all_raw = []
     carry_cash = INITIAL_CASH
     carry_shares = 0.0
     carry_trade_id = 0
@@ -1030,7 +1037,7 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         )
 
         # 构建行数据（传入从 backtest_stats 查找的数组）
-        df_slice, _perf, carry_trade_id, carry_has_position, carry_entry_slip = _build_wf_slice_rows(
+        df_slice, _perf, carry_trade_id, carry_has_position, carry_entry_slip, raw_arr = _build_wf_slice_rows(
             df_k, idx, prev_best_ma, ktype,
             _ha_ma_sl, _dir_sl, _sig_sl, signal_exec,
             filtered_ta, tp_sl, _ha_close_sl, closes,
@@ -1047,9 +1054,8 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         if df_slice is not None and not df_slice.empty:
             all_dfs.append(df_slice)
             _wf_labels_seen.append(_wl)
-        if _perf:
-            all_perf.append({**{"code": code, "stock_name": _sn, "market": _mkt,
-                                "ktype": ktype, "window_label": _wl}, **_perf})
+        if raw_arr is not None:
+            all_raw.append(raw_arr)
 
     # 修正 window_label：合并所有有数据的 WF 段标签（stats + perf 统一）
     if all_dfs and _wf_labels_seen:
@@ -1060,14 +1066,29 @@ def run_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippage, 
         for _df in all_dfs:
             _df["window_label"] = _wf_label
             _df["window_count"] = _wf_count
-        # perf 也使用合并标签
-        if all_perf:
-            _pf = pd.DataFrame(all_perf)
-            _pf["window_label"] = _wf_label
+
+        # 拼接所有段的 raw_arrays，计算总 performance
+        if all_raw:
+            av_full = np.concatenate([r["av_sl"] for r in all_raw])
+            c_full = np.concatenate([r["c_sl"] for r in all_raw])
+            _vp_pnl_full = np.concatenate([r["_vp_pnl"] for r in all_raw])
+            _vp_shares_full = np.concatenate([r["_vp_shares"] for r in all_raw])
+            _vp_amt_full = np.concatenate([r["_vp_amt"] for r in all_raw])
+            _vp_price_slip_full = np.concatenate([r["_vp_price_slip"] for r in all_raw])
+            tid_full = np.concatenate([r["trade_id_arr"] for r in all_raw])
+            ta_full = np.concatenate([r["ta_lbl"] for r in all_raw])
+            _n_total = len(av_full)
+            _total_perf = _calc_perf(av_full, c_full,
+                                     df_k["datetime"].iloc[0], df_k["datetime"].iloc[-1],
+                                     ktype, df_k, np.arange(_n_total), _n_total,
+                                     _vp_pnl_full, _vp_shares_full, _vp_amt_full, _vp_price_slip_full,
+                                     tid_full, ta_full)
+            total_perf = {**{"code": code, "stock_name": _sn, "market": _mkt,
+                             "ktype": ktype, "window_label": _wf_label}, **_total_perf}
             import warnings as _w
             with _w.catch_warnings():
                 _w.simplefilter("ignore", FutureWarning)
-                return pd.concat(all_dfs, ignore_index=True), _pf
+                return pd.concat(all_dfs, ignore_index=True), pd.DataFrame([total_perf])
         import warnings as _w
         with _w.catch_warnings():
             _w.simplefilter("ignore", FutureWarning)
