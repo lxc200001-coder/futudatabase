@@ -685,10 +685,9 @@ function renderChart() {
       try {
         var _volPane = _lwcChart.addPane();
         _volPane.setHeight(80);
-        _lwcChart.addSeries(LightweightCharts.HistogramSeries, {
+        _volPane.addSeries(LightweightCharts.HistogramSeries, {
           color: '#26a69a', priceFormat: { type: 'volume' },
-          priceScaleId: 'volume',
-        }, _volPane.paneId()).setData(d.volumes);
+        }).setData(d.volumes);
       } catch(e) { console.error("[LWC] volume pane error:", e); }
     }
 
@@ -698,12 +697,12 @@ function renderChart() {
       try {
         var _eqPane = _lwcChart.addPane();
         _eqPane.setHeight(100);
-        _lwcChart.addSeries(LightweightCharts.AreaSeries, {
+        _eqPane.addSeries(LightweightCharts.AreaSeries, {
           lineColor: _c('--lwc-equity-line','#2196f3'),
           topColor: _c('--lwc-equity-top','rgba(33,150,243,0.15)'),
           bottomColor: _c('--lwc-equity-bottom','rgba(33,150,243,0.01)'),
           lineWidth: 2, priceLineVisible: false,
-        }, _eqPane.paneId()).setData(_eq_data);
+        }).setData(_eq_data);
       } catch(e) { console.error("[LWC] equity pane error:", e); }
     }
 
@@ -712,10 +711,10 @@ function renderChart() {
       try {
         var _maPane = _lwcChart.addPane();
         _maPane.setHeight(50);
-        _lwcChart.addSeries(LightweightCharts.LineSeries, {
+        _maPane.addSeries(LightweightCharts.LineSeries, {
           color: '#9b59b6', lineWidth: 1.5, priceLineVisible: false,
           lastValueVisible: true,
-        }, _maPane.paneId()).setData(d.ma_len_values);
+        }).setData(d.ma_len_values);
       } catch(e) { console.error("[LWC] ma_pane error:", e); }
     }
 

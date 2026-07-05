@@ -1837,17 +1837,17 @@ def generate_heatmap_dashboard_from_db(db_path):
                         elif _sig_s == "平多":
                             _sig.append({"time":_t,"position":"inBar","color":"#ef5350","shape":"circle","text":f"S @ {_ts_str}" if _ts_str else "S","size":1.5})
                             if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
-                        # 副图数据
+                        # 副图数据（不设 >0 过滤，避免背景数据大量缺失导致只显示零星数据点）
                         _vol = _dfk["volume"].iloc[_i]
-                        if pd.notna(_vol) and _vol > 0:
+                        if pd.notna(_vol):
                             _up = float(_dfk["close"].iloc[_i]) >= float(_dfk["open"].iloc[_i])
-                            _volumes.append({"time":_t,"value":float(_vol),"color":"#26a69a" if _up else "#ef5350"})
+                            _volumes.append({"time":_t,"value":max(float(_vol),0),"color":"#26a69a" if _up else "#ef5350"})
                         _av = _dfk["account_value"].iloc[_i]
-                        if pd.notna(_av) and _av > 0:
-                            _account_values.append({"time":_t,"value":round(float(_av),2)})
+                        if pd.notna(_av):
+                            _account_values.append({"time":_t,"value":round(max(float(_av),0),2)})
                         _ml = _dfk["ma_len"].iloc[_i]
-                        if pd.notna(_ml) and _ml > 0:
-                            _ma_len_data.append({"time":_t,"value":int(_ml)})
+                        if pd.notna(_ml):
+                            _ma_len_data.append({"time":_t,"value":int(_ml) if _ml > 0 else 0})
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
                     if _candles:
