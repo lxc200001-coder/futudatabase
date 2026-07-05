@@ -629,9 +629,10 @@ function renderChart() {
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       timeScale: { borderColor: _c('--lwc-border','#ddd') },
       rightPriceScale: { borderColor: _c('--lwc-border','#ddd') },
-      height: 500,
+      height: 750,
     });
     var d = figs[currentType];
+    // ── 主图：K线 ──
     var cs = _lwcChart.addSeries(LightweightCharts.CandlestickSeries, {
       upColor: _c('--lwc-up','#000000'), downColor: _c('--lwc-down','#b0b0b0'),
       borderUpColor: _c('--lwc-up','#000000'), borderDownColor: _c('--lwc-down','#b0b0b0'),
@@ -679,25 +680,43 @@ function renderChart() {
     }
     _lwcChart.timeScale().fitContent();
 
-    // ── 资金曲线 ──
-    if(d.equity && d.equity.length) {
-      var _eqc = document.getElementById('equity-container');
-      _eqc.style.display = 'block';
-      _eqc.innerHTML = '<div class="panel-header">资金曲线</div>';
-      _eqChart = LightweightCharts.createChart(_eqc, {
-        layout: { textColor: _c('--lwc-text','#555'), background: { type: 'solid', color: _c('--lwc-bg','#fff') }, fontSize: 10 },
-        grid: { vertLines: { color: _c('--lwc-grid','#f0f0f0') }, horzLines: { color: _c('--lwc-grid','#f0f0f0') } },
-        rightPriceScale: { borderColor: _c('--lwc-border','#e0e0e0'), scaleMargins: { top: 0.1, bottom: 0.2 } },
-        timeScale: { borderColor: _c('--lwc-border','#e0e0e0'), timeVisible: false },
-        height: 140,
-        handleScroll: false, handleScale: false,
-      });
-      var _eqSeries = _eqChart.addSeries(LightweightCharts.AreaSeries, {
-        lineColor: _c('--lwc-equity-line','#2196f3'), topColor: _c('--lwc-equity-top','rgba(33,150,243,0.15)'), bottomColor: _c('--lwc-equity-bottom','rgba(33,150,243,0.01)'),
-        lineWidth: 2, priceLineVisible: false,
-      });
-      _eqSeries.setData(d.equity);
-      _eqChart.timeScale().fitContent();
+    // ── 副图1：成交量（Histogram）──
+    if(d.volumes && d.volumes.length) {
+      try {
+        var _volPane = _lwcChart.addPane();
+        _volPane.setHeight(80);
+        _lwcChart.addSeries(LightweightCharts.HistogramSeries, {
+          color: '#26a69a', priceFormat: { type: 'volume' },
+          priceScaleId: 'volume',
+        }, _volPane.paneId()).setData(d.volumes);
+      } catch(e) { console.error("[LWC] volume pane error:", e); }
+    }
+
+    // ── 副图2：资金曲线（Area）──
+    var _eq_data = d.account_values || d.equity || null;
+    if(_eq_data && _eq_data.length) {
+      try {
+        var _eqPane = _lwcChart.addPane();
+        _eqPane.setHeight(100);
+        _lwcChart.addSeries(LightweightCharts.AreaSeries, {
+          lineColor: _c('--lwc-equity-line','#2196f3'),
+          topColor: _c('--lwc-equity-top','rgba(33,150,243,0.15)'),
+          bottomColor: _c('--lwc-equity-bottom','rgba(33,150,243,0.01)'),
+          lineWidth: 2, priceLineVisible: false,
+        }, _eqPane.paneId()).setData(_eq_data);
+      } catch(e) { console.error("[LWC] equity pane error:", e); }
+    }
+
+    // ── 副图3：MA参数（Line）──
+    if(d.ma_len_values && d.ma_len_values.length) {
+      try {
+        var _maPane = _lwcChart.addPane();
+        _maPane.setHeight(50);
+        _lwcChart.addSeries(LightweightCharts.LineSeries, {
+          color: '#9b59b6', lineWidth: 1.5, priceLineVisible: false,
+          lastValueVisible: true,
+        }, _maPane.paneId()).setData(d.ma_len_values);
+      } catch(e) { console.error("[LWC] ma_pane error:", e); }
     }
 
     // ── 交易明细表格 ──

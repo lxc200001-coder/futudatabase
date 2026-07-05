@@ -1757,7 +1757,7 @@ def generate_heatmap_dashboard_from_db(db_path):
     """).fetchdf()
     # WF K 线数据（用于看板展示）
     _wf_k = con.execute("""
-        SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec, trade_action, trade_price_after_slippage, trade_shares
+        SELECT code, ktype, datetime, open, high, low, close, volume, ha_ma_value, signal, signal_exec, trade_action, trade_price_after_slippage, trade_shares, account_value, ma_len
         FROM backtest_stats_walkforward ORDER BY code, datetime
     """).fetchdf()
     _name_map = {}
@@ -1816,6 +1816,7 @@ def generate_heatmap_dashboard_from_db(db_path):
                 _dfk = _wf_k[(_wf_k["code"]==code) & (_wf_k["ktype"]==kt)].sort_values("datetime")
                 if not _dfk.empty and len(_dfk) > 5:
                     _candles, _mal, _sig = [], [], []
+                    _volumes, _account_values, _ma_len_data = [], [], []
                     _bm = None
                     for _i in range(len(_dfk)):
                         _t = pd.to_datetime(_dfk["datetime"].iloc[_i]).strftime("%Y-%m-%d")
@@ -1836,6 +1837,17 @@ def generate_heatmap_dashboard_from_db(db_path):
                         elif _sig_s == "平多":
                             _sig.append({"time":_t,"position":"inBar","color":"#ef5350","shape":"circle","text":f"S @ {_ts_str}" if _ts_str else "S","size":1.5})
                             if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
+                        # 副图数据
+                        _vol = _dfk["volume"].iloc[_i]
+                        if pd.notna(_vol) and _vol > 0:
+                            _up = float(_dfk["close"].iloc[_i]) >= float(_dfk["open"].iloc[_i])
+                            _volumes.append({"time":_t,"value":float(_vol),"color":"#26a69a" if _up else "#ef5350"})
+                        _av = _dfk["account_value"].iloc[_i]
+                        if pd.notna(_av) and _av > 0:
+                            _account_values.append({"time":_t,"value":round(float(_av),2)})
+                        _ml = _dfk["ma_len"].iloc[_i]
+                        if pd.notna(_ml) and _ml > 0:
+                            _ma_len_data.append({"time":_t,"value":int(_ml)})
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
                     if _candles:
@@ -1845,6 +1857,9 @@ def generate_heatmap_dashboard_from_db(db_path):
                             "mas": _mal,
                             "signals": _sig,
                             "best_ma": _bm,
+                            "volumes": _volumes if _volumes else None,
+                            "account_values": _account_values if _account_values else None,
+                            "ma_len_values": _ma_len_data if _ma_len_data else None,
                         }
                 figures_data[code] = figs
             if not wr.empty: all_ws_list.append(wr)
