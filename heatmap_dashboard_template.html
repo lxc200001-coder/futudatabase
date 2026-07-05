@@ -645,10 +645,17 @@ function renderChart() {
       });
       ml.setData(d.mas);
     }
-    // 左上角 MA 标签
+    // 左上角 MA 标签 + 调试信息
     var _maLabel = document.createElement('div');
     _maLabel.className = 'ma-label';
-    _maLabel.textContent = 'MA' + d.best_ma;
+    var _totalH = _lwcChart ? _lwcChart.chartElement().offsetHeight : '?';
+    var _panes = _lwcChart ? _lwcChart.panes() : [];
+    var _debug = 'MA' + d.best_ma + ' | H:' + document.getElementById('chart-container').offsetHeight + 'px' +
+      ' | panes:' + _panes.length +
+      ' | vol:' + (d.volumes ? d.volumes.length : 0) +
+      ' | eq:' + ((d.account_values || d.equity) ? (d.account_values || d.equity).length : 0) +
+      ' | ma:' + (d.ma_len_values ? d.ma_len_values.length : 0);
+    _maLabel.textContent = _debug;
     document.getElementById('chart-container').appendChild(_maLabel);
 
     // 回测指标面板
@@ -678,16 +685,14 @@ function renderChart() {
     if(d.signals && d.signals.length) {
       try { LightweightCharts.createSeriesMarkers(cs, d.signals); } catch(e) { console.error("[LWC] marker error:", e); }
     }
-    _lwcChart.timeScale().fitContent();
-
     // ── 副图1：成交量（Histogram）──
     if(d.volumes && d.volumes.length) {
       try {
         var _volPane = _lwcChart.addPane();
-        _volPane.setHeight(180);
         _volPane.addSeries(LightweightCharts.HistogramSeries, {
           color: '#26a69a', priceFormat: { type: 'volume' },
         }).setData(d.volumes);
+        _volPane.setHeight(180);
       } catch(e) { console.error("[LWC] volume pane error:", e); }
     }
 
@@ -696,13 +701,13 @@ function renderChart() {
     if(_eq_data && _eq_data.length) {
       try {
         var _eqPane = _lwcChart.addPane();
-        _eqPane.setHeight(180);
         _eqPane.addSeries(LightweightCharts.AreaSeries, {
           lineColor: _c('--lwc-equity-line','#2196f3'),
           topColor: _c('--lwc-equity-top','rgba(33,150,243,0.15)'),
           bottomColor: _c('--lwc-equity-bottom','rgba(33,150,243,0.01)'),
           lineWidth: 2, priceLineVisible: false,
         }).setData(_eq_data);
+        _eqPane.setHeight(180);
       } catch(e) { console.error("[LWC] equity pane error:", e); }
     }
 
@@ -710,13 +715,15 @@ function renderChart() {
     if(d.ma_len_values && d.ma_len_values.length) {
       try {
         var _maPane = _lwcChart.addPane();
-        _maPane.setHeight(180);
         _maPane.addSeries(LightweightCharts.LineSeries, {
           color: '#9b59b6', lineWidth: 1.5, priceLineVisible: false,
           lastValueVisible: true,
         }).setData(d.ma_len_values);
+        _maPane.setHeight(180);
       } catch(e) { console.error("[LWC] ma_pane error:", e); }
     }
+
+    _lwcChart.timeScale().fitContent();
 
     // ── 交易明细表格 ──
     var _tt = document.getElementById('trade-table');
