@@ -379,7 +379,7 @@ tailwind.config = {
     <div id="equity-container" class="rounded-xl border bg-card" style="display:none;"></div>
 
     <!-- Trade Table -->
-    <div id="trade-table" class="rounded-xl bg-card" style="display:none;max-height:300px;overflow-y:auto;border:1px solid hsl(var(--input));"></div>
+    <div id="trade-table" class="rounded-xl bg-card" style="display:none;max-height:300px;overflow:auto;border:1px solid hsl(var(--input));"></div>
 
     <!-- Empty State -->
     <div id="empty-state" class="flex items-center justify-center py-16 text-sm text-muted-foreground">请选择周期和市场</div>
@@ -774,7 +774,7 @@ function renderChart() {
     _tt.style.display = 'none';
     try {
         if(d.trades && d.trades.length) {
-      var _hdr = '<div class="overflow-x-auto"><table class="min-w-full text-xs" style="border-collapse:collapse;">';
+      var _hdr = '<table class="min-w-full text-xs" style="border-collapse:collapse;">';
       _hdr += '<thead><tr style="position:sticky;top:0;z-index:2;background:rgb(38,38,38);">';
       _hdr += '<th class="px-3 py-2 font-bold whitespace-nowrap" style="color:rgb(250,250,250);text-align:center;">订单ID</th>';
       _hdr += '<th class="px-3 py-2 font-bold whitespace-nowrap" style="color:rgb(250,250,250);text-align:center;">方向</th>';
@@ -828,7 +828,8 @@ function renderChart() {
         for(var _xx=0;_xx<4;_xx++) _hdr += '<td style="display:none;"></td>';
         _hdr += '</tr>';
       }
-      _hdr += '</tbody></table></div>';
+        if(_ti < d.trades.length - 1) _hdr += '<tr style="border:none;"><td colspan="12" style="height:0;border-bottom:1px solid hsl(var(--input));padding:0;"></td></tr>';
+      _hdr += '</tbody></table>';
       _tt.innerHTML = _hdr;
       _tt.style.display = 'block';
     }
