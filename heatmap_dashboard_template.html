@@ -626,7 +626,7 @@ function renderChart() {
     _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
       layout: { textColor: _c('--lwc-text','#333'), background: { type: 'solid', color: _c('--lwc-bg','#fff') } },
       grid: { vertLines: { color: _c('--lwc-grid','#e0e0e0') }, horzLines: { color: _c('--lwc-grid','#e0e0e0') } },
-      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
       timeScale: { borderColor: _c('--lwc-border','#ddd') },
       rightPriceScale: { borderColor: _c('--lwc-border','#ddd') },
       height: 1100,
@@ -645,17 +645,10 @@ function renderChart() {
       });
       ml.setData(d.mas);
     }
-    // 左上角 MA 标签 + 调试信息
+    // 左上角 MA 标签
     var _maLabel = document.createElement('div');
     _maLabel.className = 'ma-label';
-    var _totalH = _lwcChart ? _lwcChart.chartElement().offsetHeight : '?';
-    var _panes = _lwcChart ? _lwcChart.panes() : [];
-    var _debug = 'MA' + d.best_ma + ' | H:' + document.getElementById('chart-container').offsetHeight + 'px' +
-      ' | panes:' + _panes.length +
-      ' | vol:' + (d.volumes ? d.volumes.length : 0) +
-      ' | eq:' + ((d.account_values || d.equity) ? (d.account_values || d.equity).length : 0) +
-      ' | ma:' + (d.ma_len_values ? d.ma_len_values.length : 0);
-    _maLabel.textContent = _debug;
+    _maLabel.textContent = 'MA' + d.best_ma;
     document.getElementById('chart-container').appendChild(_maLabel);
 
     // 回测指标面板
@@ -692,7 +685,6 @@ function renderChart() {
         _volPane.addSeries(LightweightCharts.HistogramSeries, {
           color: '#26a69a', priceFormat: { type: 'volume' },
         }).setData(d.volumes);
-        _volPane.setHeight(180);
       } catch(e) { console.error("[LWC] volume pane error:", e); }
     }
 
@@ -707,7 +699,6 @@ function renderChart() {
           bottomColor: _c('--lwc-equity-bottom','rgba(33,150,243,0.01)'),
           lineWidth: 2, priceLineVisible: false,
         }).setData(_eq_data);
-        _eqPane.setHeight(180);
       } catch(e) { console.error("[LWC] equity pane error:", e); }
     }
 
@@ -719,9 +710,18 @@ function renderChart() {
           color: '#9b59b6', lineWidth: 1.5, priceLineVisible: false,
           lastValueVisible: true,
         }).setData(d.ma_len_values);
-        _maPane.setHeight(180);
       } catch(e) { console.error("[LWC] ma_pane error:", e); }
     }
+
+    // 用 stretch factor 统一设定所有 pane 高度（setHeight 内部会互相覆盖）
+    try {
+      var _allPanes = _lwcChart.panes();
+      // chart总高1100px，3个间隔各30px，实际可用1010px
+      // 比例：主图47 : 各副图18 → 主图470px, 副图各180px
+      for(var _pi = 0; _pi < _allPanes.length; _pi++) {
+        _allPanes[_pi].setStretchFactor(_pi === 0 ? 47 : 18);
+      }
+    } catch(e) { console.error("[LWC] pane height error:", e); }
 
     _lwcChart.timeScale().fitContent();
 
