@@ -794,7 +794,7 @@ function renderChart() {
         var _o = g.open, _ct = g.close;
         var _cls = (_ct && _ct.close_pnl_type === '盈利') ? 'trade-row-profit' : ((_ct && _ct.close_pnl_type === '亏损') ? 'trade-row-loss' : '');
         // Row 1: close (on top)
-        _hdr += '<tr class="'+_cls+'" style="border-bottom:none;background:rgb(10,10,10);">';
+        _hdr += '<tr class="'+_cls+'" data-group="g'+_ti+'" style="border-bottom:none;background:rgb(10,10,10);">';
         _hdr += '<td class="px-3 py-2 td-id" style="text-align:center;vertical-align:middle;" rowspan="2">'+g.trade_id+'</td>';
         _hdr += '<td class="px-3 py-2" style="text-align:center;">平多</td>';
         _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(_ct?(_ct.datetime||''):'')+'</td>';
@@ -817,7 +817,7 @@ function renderChart() {
         }
         _hdr += '</tr>';
         // Row 2: open (below)
-        _hdr += '<tr class="'+_cls+'" style="border-bottom:1px solid hsla(var(--border),0.5);background:rgb(10,10,10);">';
+        _hdr += '<tr class="'+_cls+'" data-group="g'+_ti+'" style="border-bottom:1px solid hsla(var(--border),0.5);background:rgb(10,10,10);">';
         _hdr += '<td class="px-3 py-2" style="text-align:center;">开多</td>';
         _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(_o.datetime||'')+'</td>';
         _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_o.trade_price_after_slippage||0).toFixed(2)+'</td>';
