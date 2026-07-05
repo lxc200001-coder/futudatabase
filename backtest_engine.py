@@ -1743,7 +1743,7 @@ def generate_heatmap_dashboard_from_db(db_path):
     """).fetchdf()
     # WF K 线数据（用于看板展示）
     _wf_k = con.execute("""
-        SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec
+        SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec, trade_action
         FROM backtest_stats_walkforward ORDER BY code, datetime
     """).fetchdf()
     con.close()
@@ -1805,10 +1805,10 @@ def generate_heatmap_dashboard_from_db(db_path):
                             "close":float(_dfk["close"].iloc[_i])})
                         _mv = _dfk["ha_ma_value"].iloc[_i]
                         if pd.notna(_mv): _mal.append({"time":_t,"value":round(float(_mv),2)})
-                        _sig_s = _dfk["signal"].iloc[_i]
-                        if _sig_s == "买入":
+                        _sig_s = _dfk["trade_action"].iloc[_i]
+                        if _sig_s == "开多":
                             _sig.append({"time":_t,"position":"above","color":"#ef5350","shape":"arrowUp","text":"B"})
-                        elif _sig_s == "卖出":
+                        elif _sig_s == "平多":
                             _sig.append({"time":_t,"position":"below","color":"#26a69a","shape":"arrowDown","text":"S"})
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
