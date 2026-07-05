@@ -1746,6 +1746,11 @@ def generate_heatmap_dashboard_from_db(db_path):
         SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec, trade_action
         FROM backtest_stats_walkforward ORDER BY code, datetime
     """).fetchdf()
+    _name_map = {}
+    try:
+        for _r in con.execute("SELECT DISTINCT code, stock_name FROM backtest_stats_walkforward").fetchall():
+            _name_map[str(_r[0])] = str(_r[1]) if _r[1] else ""
+    except: pass
     con.close()
 
     def get_market(code):
@@ -1769,7 +1774,7 @@ def generate_heatmap_dashboard_from_db(db_path):
             _pm = _pk[_pk["code"].apply(lambda c: get_market(c)==mkt)]
             if _pm.empty: payload_data[kt][mkt] = None; continue
             codes = sorted(_pm["code"].unique())
-            stock_list = [{"code":c,"name":""} for c in codes]
+            stock_list = [{"code":c,"name":_name_map.get(c,"")} for c in codes]
             figures_data = {}
             all_ws_list = []
             for code in codes:
