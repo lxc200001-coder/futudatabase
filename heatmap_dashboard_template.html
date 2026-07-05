@@ -621,7 +621,7 @@ function renderChart() {
         ['交易次数','trade_count',false],['胜率','win_rate',true],
         ['连胜','max_win_streak',false],['连败','max_loss_streak',false],['持仓K线','avg_hold_bars',false],
       ];
-      var _wfHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:6px;width:100%;">';
+      var _wfHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;width:100%;">';
       for(var _fi=0;_fi<_wfFields.length;_fi++) {
         var _fl = _wfFields[_fi][0], _fk = _wfFields[_fi][1], _pct = _wfFields[_fi][2];
         var _fv = _wfp[_fk];
