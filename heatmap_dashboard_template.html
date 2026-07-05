@@ -362,7 +362,7 @@ tailwind.config = {
       <div id="nav-ktype" class="flex rounded-md border border-input bg-muted/40 p-[2px] gap-0 h-8 flex-[1]"></div>
       <div class="w-px h-5 bg-border/40"></div>
       <span class="text-xs font-medium text-muted-foreground">图表</span>
-      <div id="nav-chart" class="flex rounded-md border border-input bg-muted/40 p-[2px] gap-0 h-8 flex-[4]"></div>
+      <div id="nav-chart" class="flex rounded-md border border-input bg-muted/40 p-[2px] gap-0 h-8 flex-[9]"></div>
     </header>
 
     <!-- Content Area -->
@@ -604,7 +604,43 @@ function renderChart() {
   Plotly.purge("plotly-container");
 
   if(figs[currentType]._lwc) {
+    var d = figs[currentType];
+
+    // ── WF 策略表现指标卡（横排滚动）──
+    var _wfp = d.wf_perf;
+    if(_wfp) {
+      var _wfFields = [
+        ['策略评分','strategy_score',false],['总收益率','total_return',true],['年化收益率','cagr',true],
+        ['买入持有','buy_hold_return',true],['超额收益','excess_return',true],['平均每笔','avg_trade_return',true],
+        ['最大回撤','max_drawdown',true],['夏普比率','sharpe_ratio',false],['卡尔玛','calmar_ratio',false],
+        ['交易次数','trade_count',false],['胜率','win_rate',true],['盈利因子','profit_factor',false],
+        ['盈亏比','payoff_ratio',false],['平均盈利','avg_win',true],['平均盈利%','avg_win_pct',true],
+        ['平均亏损','avg_loss',true],['平均亏损%','avg_loss_pct',true],['最大盈利','max_win',true],
+        ['最大亏损','max_loss',true],['连胜','max_win_streak',false],['连败','max_loss_streak',false],
+        ['持仓天数','avg_hold_days',false],['持仓K线','avg_hold_bars',false],
+      ];
+      var _wfHtml = '<div class="flex gap-2 overflow-x-auto pb-2" style="scrollbar-width:thin;">';
+      for(var _fi=0;_fi<_wfFields.length;_fi++) {
+        var _fl = _wfFields[_fi][0], _fk = _wfFields[_fi][1], _pct = _wfFields[_fi][2];
+        var _fv = _wfp[_fk];
+        if(_fv === undefined || _fv === null || _fv === '') continue;
+        var _num = Number(_fv);
+        if(isNaN(_num)) continue;
+        var _disp = _pct ? (_num*100).toFixed(2) + '%' : (_num%1===0 ? _num.toFixed(0) : _num.toFixed(4));
+        _wfHtml += '<div class="flex-shrink-0 flex flex-col gap-1 rounded-lg px-3 py-2 min-w-[100px]" style="background:linear-gradient(to bottom,rgb(22,23,23),rgb(33,33,33));border:1px solid hsl(var(--input));">'+
+          '<span style="color:rgb(161,161,161);font-size:13px;">'+_fl+'</span>'+
+          '<span style="color:rgb(250,250,250);font-size:39px;font-weight:600;line-height:1.1;word-break:break-all;">'+_disp+'</span>'+
+          '</div>';
+      }
+      _wfHtml += '</div>';
+      // Insert before lwc-container
+      var _lwc = document.getElementById('lwc-container');
+      _lwc.parentNode.insertBefore(document.createRange().createContextualFragment(_wfHtml), _lwc);
+    }
+
     document.getElementById('lwc-container').style.display = 'block';
+    // 图表容器边框与 ToggleGroup 一致
+    document.getElementById('lwc-container').style.border = '1px solid hsl(var(--input))';
     _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
       layout: { textColor: _c('--lwc-text','#333'), background: { type: 'solid', color: _c('--lwc-bg','#fff') } },
       grid: { vertLines: { color: _c('--lwc-grid','#e0e0e0') }, horzLines: { color: _c('--lwc-grid','#e0e0e0') } },
@@ -613,7 +649,6 @@ function renderChart() {
       rightPriceScale: { borderColor: _c('--lwc-border','#ddd') },
       height: 1100,
     });
-    var d = figs[currentType];
     // ── 主图：K线 ──
     var cs = _lwcChart.addSeries(LightweightCharts.CandlestickSeries, {
       upColor: _c('--lwc-up','#000000'), downColor: _c('--lwc-down','#b0b0b0'),

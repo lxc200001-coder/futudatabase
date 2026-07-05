@@ -1765,7 +1765,21 @@ def generate_heatmap_dashboard_from_db(db_path):
         for _r in con.execute("SELECT DISTINCT code, stock_name FROM backtest_stats_walkforward").fetchall():
             _name_map[str(_r[0])] = str(_r[1]) if _r[1] else ""
     except: pass
+    # WF 策略表现数据（用于K线图上方指标卡）
+    _wf_perf = con.execute("""
+        SELECT code, ktype, strategy_score, total_return, cagr, buy_hold_return, excess_return,
+               avg_trade_return, max_drawdown, sharpe_ratio, calmar_ratio, trade_count,
+               win_rate, profit_factor, payoff_ratio, avg_win, avg_win_pct, avg_loss,
+               avg_loss_pct, max_win, max_loss, max_win_streak, max_loss_streak,
+               avg_hold_days, avg_hold_bars
+        FROM backtest_performance_walkforward
+    """).fetchdf()
     con.close()
+    # 构建 (code, ktype) → perf dict 快速查找
+    _wf_perf_map = {}
+    if not _wf_perf.empty:
+        for _, _r in _wf_perf.iterrows():
+            _wf_perf_map[(_r["code"], _r["ktype"])] = _r.to_dict()
 
     def get_market(code):
         if code.startswith("CC."): return "cc"
@@ -1854,6 +1868,7 @@ def generate_heatmap_dashboard_from_db(db_path):
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
                     if _candles:
+                        _wf_p = _wf_perf_map.get((code, kt), None)
                         figs["K线图"] = {
                             "_lwc": True,
                             "candles": _candles,
@@ -1863,6 +1878,7 @@ def generate_heatmap_dashboard_from_db(db_path):
                             "volumes": _volumes if _volumes else None,
                             "account_values": _account_values if _account_values else None,
                             "ma_len_values": _ma_len_data if _ma_len_data else None,
+                            "wf_perf": _wf_p,
                         }
                 figures_data[code] = figs
             if not wr.empty: all_ws_list.append(wr)
