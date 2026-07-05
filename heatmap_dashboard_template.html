@@ -363,7 +363,12 @@ tailwind.config = {
 
     <!-- LWC Chart Container -->
     <div id="wf-perf-cards" style="display:none;width:100%;background:transparent;"></div>
-    <div id="lwc-container" class="rounded-xl border bg-card overflow-hidden" style="display:none;position:relative;">
+    <div id="lwc-container" class="rounded-xl border bg-card" style="display:none;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;z-index:1000;pointer-events:none;">
+        <div class="sp-label" style="position:absolute;top:448px;left:12px;color:#ffffff;font-size:12px;font-weight:500;font-family:sans-serif;opacity:0;">成交量</div>
+        <div class="sp-label" style="position:absolute;top:554px;left:12px;color:#ffffff;font-size:12px;font-weight:500;font-family:sans-serif;opacity:0;">资金曲线</div>
+        <div class="sp-label" style="position:absolute;top:660px;left:12px;color:#ffffff;font-size:12px;font-weight:500;font-family:sans-serif;opacity:0;">MA参数</div>
+      </div>
       <div id="chart-container" style="height:730px;position:relative;"></div>
     </div>
 
@@ -628,6 +633,7 @@ function renderChart() {
     }
 
     document.getElementById('lwc-container').style.display = 'block';
+    document.querySelectorAll('.sp-label').forEach(function(el){el.style.opacity='1';});
     // 图表容器边框与 ToggleGroup 一致
     document.getElementById('lwc-container').style.border = '1px solid hsl(var(--input))';
     _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
@@ -724,18 +730,8 @@ function renderChart() {
 
     _lwcChart.timeScale().fitContent();
 
-    // ── 副图标签 ──
-    try {
-      var _plc = document.getElementById('lwc-container');
-      _plc.style.position = 'relative';
-      var _labels = [['成交量', 448], ['资金曲线', 560], ['MA参数', 666]];
-      for(var _li = 0; _li < _labels.length; _li++) {
-        var _pl = document.createElement('div');
-        _pl.textContent = _labels[_li][0];
-        _pl.style.cssText = 'position:absolute;top:'+_labels[_li][1]+'px;left:12px;z-index:100;pointer-events:none;color:#ffffff;font-size:12px;font-weight:500;font-family:sans-serif;text-shadow:0 0 4px rgba(0,0,0,0.8);';
-        _plc.appendChild(_pl);
-      }
-    } catch(e) { console.error("[LWC] pane label error:", e); }
+
+
 
     // ── 浮动 Tooltip ──
     (function() {
