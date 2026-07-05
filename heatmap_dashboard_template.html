@@ -317,10 +317,16 @@ tailwind.config = {
   <!-- Sidebar Content (scrollable) -->
   <div class="flex-1 overflow-auto px-3 py-3 space-y-4">
 
-    <!-- Nav: Market -->
+    <!-- Ktype ToggleGroup -->
+    <div>
+      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">周期</div>
+      <div id="nav-ktype" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
+    </div>
+
+    <!-- Market ToggleGroup -->
     <div>
       <div class="text-xs font-medium text-muted-foreground px-3 pb-1">市场</div>
-      <div id="nav-market" class="flex flex-col gap-0.5"></div>
+      <div id="nav-market" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
     </div>
 
     <!-- Nav: Chart Types -->
@@ -341,12 +347,6 @@ tailwind.config = {
       </div>
       <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
       <div id="stock-list" class="flex flex-col gap-0.5"></div>
-    </div>
-
-    <!-- Ktype ToggleGroup -->
-    <div>
-      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">周期</div>
-      <div id="nav-ktype" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
     </div>
   </div>
 
@@ -450,12 +450,7 @@ function renderNavs() {
   h="";
   for(var i=0;i<ALL_MARKETS.length;i++) {
     var m=ALL_MARKETS[i];
-    var _ico = m==='us' ? '<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>' :
-      (m==='cc' ? '<rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\" ry=\"2\"/><line x1=\"8\" y1=\"21\" x2=\"16\" y2=\"21\"/><line x1=\"12\" y1=\"17\" x2=\"12\" y2=\"21\"/>' :
-      '<path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/>');
-    h+="<div class=\"sidebar-nav-item\" data-market=\""+m+"\" onclick=\"selectMarket('"+m+"')\">"+
-      "<svg class=\"nav-icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"+_ico+"</svg>"+
-      MK_LABELS[m]+"</div>";
+    h+="<button class=\"flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors text-muted-foreground data-[active=true]:bg-background data-[active=true]:shadow-sm data-[active=true]:text-foreground\" data-market=\""+m+"\" onclick=\"selectMarket('"+m+"')\">"+MK_LABELS[m]+"</button>";
   }
   document.getElementById("nav-market").innerHTML=h;
 }
@@ -500,7 +495,7 @@ function selectKtype(k) {
 
 function selectMarket(m) {
   currentMarket=m;
-  document.querySelectorAll("#nav-market .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.market===m);});
+  document.querySelectorAll("#nav-market button").forEach(function(el){el.dataset.active=el.dataset.market===m ? 'true' : 'false';});
   renderCombination();
 }
 
