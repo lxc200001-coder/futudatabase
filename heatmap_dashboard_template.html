@@ -713,17 +713,51 @@ function renderChart() {
       } catch(e) { console.error("[LWC] ma_pane error:", e); }
     }
 
-    // 用 stretch factor 统一设定所有 pane 高度（setHeight 内部会互相覆盖）
+    // 用 stretch factor 统一设定所有 pane 高度
     try {
       var _allPanes = _lwcChart.panes();
-      // chart总高1100px，3个间隔各30px，实际可用1010px
-      // 比例：主图47 : 各副图18 → 主图470px, 副图各180px
       for(var _pi = 0; _pi < _allPanes.length; _pi++) {
         _allPanes[_pi].setStretchFactor(_pi === 0 ? 47 : 18);
       }
     } catch(e) { console.error("[LWC] pane height error:", e); }
 
     _lwcChart.timeScale().fitContent();
+
+    // ── 浮动 Tooltip ──
+    (function() {
+      var _ttEl = document.createElement('div');
+      _ttEl.style.cssText = 'position:absolute;z-index:100;pointer-events:none;background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.6;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.1);';
+      document.getElementById('chart-container').appendChild(_ttEl);
+      _lwcChart.subscribeCrosshairMove(function(p) {
+        if (!p.time || !p.point) { _ttEl.style.display = 'none'; return; }
+        var t = String(p.time);
+        // 在主图candles中按时间查找
+        var idx = -1, _len = d.candles.length;
+        for (var i = 0; i < _len; i++) {
+          if (d.candles[i].time === t) { idx = i; break; }
+        }
+        if (idx < 0) { _ttEl.style.display = 'none'; return; }
+        var c = d.candles[idx];
+        var vol = d.volumes && d.volumes.length > idx ? d.volumes[idx] : null;
+        var av = (d.account_values || d.equity || [])[idx] || null;
+        var ml = d.ma_len_values && d.ma_len_values.length > idx ? d.ma_len_values[idx] : null;
+        var html = '<div style="font-weight:600;margin-bottom:4px;color:hsl(var(--foreground));">' + t + '</div>';
+        html += '<div style="color:hsl(var(--foreground));">O: ' + c.open.toFixed(2) + ' H: ' + c.high.toFixed(2) + '</div>';
+        html += '<div style="color:hsl(var(--foreground));">C: ' + c.close.toFixed(2) + ' L: ' + c.low.toFixed(2) + '</div>';
+        if (vol) html += '<div style="border-top:1px solid hsl(var(--border));margin-top:4px;padding-top:4px;color:hsl(var(--muted-foreground));">成交量: ' + vol.value.toFixed(0) + '</div>';
+        if (av) html += '<div style="color:hsl(var(--foreground));">资金: ' + av.value.toFixed(2) + '</div>';
+        if (ml) html += '<div style="color:hsl(var(--foreground));">MA参数: ' + ml.value + '</div>';
+        _ttEl.innerHTML = html;
+        _ttEl.style.display = 'block';
+        var rect = document.getElementById('chart-container').getBoundingClientRect();
+        var x = p.point.x + 12, y = p.point.y - 10;
+        if (x + _ttEl.offsetWidth > rect.width) x = p.point.x - _ttEl.offsetWidth - 12;
+        if (y < 4) y = 4;
+        if (y + _ttEl.offsetHeight > rect.height) y = rect.height - _ttEl.offsetHeight - 4;
+        _ttEl.style.left = x + 'px';
+        _ttEl.style.top = y + 'px';
+      });
+    })();
 
     // ── 交易明细表格 ──
     var _tt = document.getElementById('trade-table');
