@@ -5,6 +5,37 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>热力图看板 - __TIMESTAMP__</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' },
+        primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
+        secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
+        muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
+        accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
+        destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
+        profit: 'hsl(var(--profit))',
+        loss: 'hsl(var(--loss))',
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
+      fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'] },
+    },
+  },
+}
+</script>
 <script src="lwc.js"></script>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
@@ -89,136 +120,9 @@
 }
 
 /* ============================
-   Reset & Base
+   Reset & Base (Tailwind 接管了大部分)
    ============================ */
 * { margin:0; padding:0; box-sizing:border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  display: flex;
-  height: 100vh;
-  overflow: hidden;
-  line-height: 1.5;
-}
-
-/* ============================
-   Layout Utilities
-   ============================ */
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.flex-1 { flex: 1; }
-.flex-wrap { flex-wrap: wrap; }
-.flex-shrink-0 { flex-shrink: 0; }
-.items-center { align-items: center; }
-.items-baseline { align-items: baseline; }
-.items-stretch { align-items: stretch; }
-.justify-between { justify-content: space-between; }
-.justify-center { justify-content: center; }
-.gap-0 { gap: 0; }
-.gap-1 { gap: 4px; }
-.gap-2 { gap: 8px; }
-.gap-3 { gap: 12px; }
-.gap-4 { gap: 16px; }
-.gap-6 { gap: 24px; }
-.w-full { width: 100%; }
-.h-screen { height: 100vh; }
-.min-h-0 { min-height: 0; }
-.overflow-hidden { overflow: hidden; }
-.overflow-auto { overflow: auto; }
-.relative { position: relative; }
-.absolute { position: absolute; }
-
-/* ============================
-   Spacing Utilities
-   ============================ */
-.px-3 { padding-left: 12px; padding-right: 12px; }
-.px-4 { padding-left: 16px; padding-right: 16px; }
-.py-1 { padding-top: 4px; padding-bottom: 4px; }
-.py-1\.5 { padding-top: 6px; padding-bottom: 6px; }
-.py-2 { padding-top: 8px; padding-bottom: 8px; }
-.py-3 { padding-top: 12px; padding-bottom: 12px; }
-.py-4 { padding-top: 16px; padding-bottom: 16px; }
-.py-12 { padding-top: 48px; padding-bottom: 48px; }
-.py-16 { padding-top: 64px; padding-bottom: 64px; }
-.p-0 { padding: 0; }
-.p-2 { padding: 8px; }
-.p-3 { padding: 12px; }
-.p-4 { padding: 16px; }
-.p-6 { padding: 24px; }
-.px-3 { padding-left: 12px; padding-right: 12px; }
-.pb-1 { padding-bottom: 4px; }
-.pb-2 { padding-bottom: 8px; }
-.pt-0 { padding-top: 0; }
-.mt-1 { margin-top: 4px; }
-.mt-2 { margin-top: 8px; }
-.mt-4 { margin-top: 16px; }
-.mt-6 { margin-top: 24px; }
-.mb-1 { margin-bottom: 4px; }
-.mb-2 { margin-bottom: 8px; }
-.mb-6 { margin-bottom: 24px; }
-.m-0 { margin: 0; }
-
-/* ============================
-   Typography Utilities
-   ============================ */
-.text-xs { font-size: 11px; }
-.text-sm { font-size: 13px; }
-.text-base { font-size: 15px; }
-.text-lg { font-size: 18px; }
-.text-xl { font-size: 22px; }
-.font-medium { font-weight: 500; }
-.font-semibold { font-weight: 600; }
-.font-bold { font-weight: 700; }
-.text-center { text-align: center; }
-.text-right { text-align: right; }
-.text-left { text-align: left; }
-.whitespace-nowrap { white-space: nowrap; }
-.text-muted-foreground { color: hsl(var(--muted-foreground)); }
-.text-primary { color: hsl(var(--primary)); }
-.text-foreground { color: hsl(var(--foreground)); }
-.text-profit { color: hsl(var(--profit)); }
-.text-loss { color: hsl(var(--loss)); }
-
-/* ============================
-   Background Utilities
-   ============================ */
-.bg-background { background: hsl(var(--background)); }
-.bg-card { background: hsl(var(--card)); }
-.bg-muted { background: hsl(var(--muted)); }
-.bg-primary { background: hsl(var(--primary)); }
-.bg-primary-foreground { background: hsl(var(--primary-foreground)); }
-.bg-accent { background: hsl(var(--accent)); }
-.bg-foreground { background: hsl(var(--foreground)); }
-
-/* ============================
-   Border Utilities
-   ============================ */
-.border { border: 1px solid hsl(var(--border)); }
-.border-b { border-bottom: 1px solid hsl(var(--border)); }
-.border-r { border-right: 1px solid hsl(var(--border)); }
-.border-t { border-top: 1px solid hsl(var(--border)); }
-.border-transparent { border-color: transparent; }
-.border-border { border-color: hsl(var(--border)); }
-.border-input { border-color: hsl(var(--input)); }
-.border-primary { border-color: hsl(var(--primary)); }
-.rounded-md { border-radius: calc(var(--radius) - 2px); }
-.rounded-lg { border-radius: var(--radius); }
-.rounded-full { border-radius: 9999px; }
-.shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-.shadow-md { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-
-/* ============================
-   Interactive Utilities
-   ============================ */
-.cursor-pointer { cursor: pointer; }
-.cursor-not-allowed { cursor: not-allowed; }
-.select-none { -webkit-user-select: none; user-select: none; }
-.pointer-events-none { pointer-events: none; }
-.transition-colors { transition: color 0.15s, background-color 0.15s, border-color 0.15s; }
-.transition-all { transition: all 0.15s; }
-.no-underline { text-decoration: none; }
-.outline-none { outline: none; }
 
 /* ============================
    Component: Sidebar
@@ -395,7 +299,7 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 </style>
 </head>
-<body>
+<body class="flex h-screen overflow-hidden bg-background text-foreground font-sans antialiased">
 <aside id="sidebar" class="bg-card border-r border-border flex flex-col flex-shrink-0">
   <div id="sidebar-header" class="flex items-center justify-between">
     <div>
