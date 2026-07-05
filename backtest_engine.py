@@ -1757,7 +1757,7 @@ def generate_heatmap_dashboard_from_db(db_path):
     """).fetchdf()
     # WF K 线数据（用于看板展示）
     _wf_k = con.execute("""
-        SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec, trade_action
+        SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec, trade_action, trade_price_after_slippage
         FROM backtest_stats_walkforward ORDER BY code, datetime
     """).fetchdf()
     _name_map = {}
@@ -1825,10 +1825,13 @@ def generate_heatmap_dashboard_from_db(db_path):
                         _mv = _dfk["ha_ma_value"].iloc[_i]
                         if pd.notna(_mv): _mal.append({"time":_t,"value":round(float(_mv),2)})
                         _sig_s = _dfk["trade_action"].iloc[_i]
+                        _tp = _dfk["trade_price_after_slippage"].iloc[_i]
                         if _sig_s == "开多":
-                            _sig.append({"time":_t,"position":"aboveBar","color":"#ef5350","shape":"arrowUp","text":"B"})
+                            _sig.append({"time":_t,"position":"inBar","color":"#ef5350","shape":"circle","text":"B","size":1.5})
+                            if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
                         elif _sig_s == "平多":
-                            _sig.append({"time":_t,"position":"belowBar","color":"#26a69a","shape":"arrowDown","text":"S"})
+                            _sig.append({"time":_t,"position":"inBar","color":"#26a69a","shape":"circle","text":"S","size":1.5})
+                            if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
                     if _candles:
