@@ -726,16 +726,14 @@ function renderChart() {
 
     // ── 副图标签 ──
     try {
-      var _paneLabels = ['成交量','资金曲线','MA参数'];
-      var _panes3 = _lwcChart.panes();
-      var _topY = 0;
-      for(var _pi3 = 1; _pi3 < _panes3.length; _pi3++) {
-        var _psize = _lwcChart.paneSize(_pi3 - 1);
-        if(_psize) _topY += _psize.height + 30;
+      var _plc = document.getElementById('lwc-container');
+      _plc.style.position = 'relative';
+      var _labels = [['成交量', 448], ['资金曲线', 560], ['MA参数', 666]];
+      for(var _li = 0; _li < _labels.length; _li++) {
         var _pl = document.createElement('div');
-        _pl.textContent = _paneLabels[_pi3 - 1];
-        _pl.style.cssText = 'position:absolute;top:'+(_topY + 4)+'px;left:8px;z-index:10;pointer-events:none;color:#ffffff;font-size:11px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
-        document.getElementById('chart-container').appendChild(_pl);
+        _pl.textContent = _labels[_li][0];
+        _pl.style.cssText = 'position:absolute;top:'+_labels[_li][1]+'px;left:12px;z-index:100;pointer-events:none;color:#ffffff;font-size:12px;font-weight:500;font-family:sans-serif;text-shadow:0 0 4px rgba(0,0,0,0.8);';
+        _plc.appendChild(_pl);
       }
     } catch(e) { console.error("[LWC] pane label error:", e); }
 
