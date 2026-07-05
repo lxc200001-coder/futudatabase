@@ -1797,7 +1797,7 @@ def generate_heatmap_dashboard_from_db(db_path):
                 _opens = _tdf[_tdf["trade_action"]=="开多"].set_index("trade_id")
                 _closes = _tdf[_tdf["trade_action"]=="平多"].set_index("trade_id")
                 _groups = []
-                for _tid in sorted(set(_opens.index) | set(_closes.index)):
+                for _tid in sorted(set(_opens.index) | set(_closes.index), reverse=True):
                     _or = _opens.loc[_tid] if _tid in _opens.index else None
                     _cr = _closes.loc[_tid] if _tid in _closes.index else None
                     if _or is None: continue  # 没有开多则跳过
