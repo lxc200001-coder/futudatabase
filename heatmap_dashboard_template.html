@@ -425,8 +425,8 @@ var ALL_KTYPES = ["1w","1d"];
 var ALL_MARKETS = ["us","cc","cn"];
 var KT_LABELS = {"1w":"周K","1d":"日K"};
 var MK_LABELS = {"us":"美股","cc":"加密货币","cn":"A股"};
-var CHART_TYPES = ["K线图","参数稳定性评分","参数敏感性分析","策略评分","年化收益率","夏普比率","最大回撤"];
-var currentKtype = null, currentMarket = null, currentType = "策略评分";
+var CHART_TYPES = ["K线图","参数稳定性评分热力图","参数敏感性分析","策略评分热力图","年化收益率热力图","夏普比率热力图","最大回撤热力图"];
+var currentKtype = null, currentMarket = null, currentType = "K线图";
 
 function init() {
   renderNavs();
@@ -456,8 +456,19 @@ function renderNavs() {
 
 function renderChartNav() {
   var h="";
+  var _icons = [
+    '<path d=\"M18 20V10\"/><path d=\"M12 20V4\"/><path d=\"M6 20v-6\"/>',
+    '<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>',
+    '<path d=\"M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7\"/>',
+    '<path d=\"M12 20V10\"/><path d=\"M18 20V4\"/><path d=\"M6 20v-6\"/>',
+    '<path d=\"M12 2v20M2 12h20\"/>',
+    '<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>',
+    '<path d=\"M18 20V10\"/><path d=\"M12 20V4\"/><path d=\"M6 20v-6\"/>',
+  ];
   for(var i=0;i<CHART_TYPES.length;i++) {
-    h+="<button class=\"flex flex-1 items-center justify-center rounded-[4px] text-[13px] font-medium transition-colors text-muted-foreground data-[active=true]:bg-[#404040] data-[active=true]:text-white\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+CHART_TYPES[i]+"</button>";
+    h+="<button class=\"flex flex-1 items-center justify-center gap-1 rounded-[4px] text-[13px] font-medium transition-colors text-muted-foreground data-[active=true]:bg-[#404040] data-[active=true]:text-white\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+
+      "<svg class=\"shrink-0\" xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"+_icons[i]+"</svg>"+
+      CHART_TYPES[i]+"</button>";
   }
   document.getElementById("nav-chart").innerHTML=h;
   document.querySelector("#nav-chart button").dataset.active = "true";
