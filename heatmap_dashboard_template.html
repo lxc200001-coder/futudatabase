@@ -772,6 +772,7 @@ function renderChart() {
     // ── 交易明细表格 ──
     var _tt = document.getElementById('trade-table');
     _tt.style.display = 'none';
+    try {
         if(d.trades && d.trades.length) {
       var _hdr = '<div class="overflow-x-auto"><table class="min-w-full text-xs" style="border-collapse:collapse;">';
       _hdr += '<thead><tr style="background:hsl(var(--muted));">';
@@ -827,6 +828,7 @@ function renderChart() {
       _tt.innerHTML = '<div style="display:flex;align-items:center;height:36px;padding:0 12px;font-size:11px;font-weight:500;color:hsl(var(--muted-foreground));background:hsl(var(--muted));border-bottom:1px solid hsl(var(--border));">交易明细 <span style="margin-left:8px;font-weight:400;color:hsl(var(--muted-foreground));">共 '+d.trades.length+' 笔</span></div>' + _hdr;
       _tt.style.display = 'block';
     }
+    } catch(e) { console.error('[LWC] trade table error:', e); }
     return;
   }
 
