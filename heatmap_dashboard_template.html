@@ -213,7 +213,7 @@ tailwind.config = {
 /* ============================
    Component: Chart Area
    ============================ */
-#chart-area { display: flex; flex-direction: column; flex-shrink:0; min-height:0; }
+#chart-area { display: flex; flex: 1; flex-direction: column; min-height:0; }
 .chart-card { border-radius: var(--radius); border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 #metrics-panel { display: none; }
 #lwc-container { display: none; position: relative; }
@@ -343,7 +343,7 @@ tailwind.config = {
   </div>
 </aside>
 <main id="main" class="flex-1 flex flex-col overflow-auto bg-background p-4">
-  <div class="flex flex-col rounded-xl gap-4 lg:gap-6" style="background:rgb(var(--right-bg));min-height:0;">
+  <div class="flex-1 flex flex-col rounded-xl gap-4 lg:gap-6" style="background:rgb(var(--right-bg));min-height:0;">
     <!-- Header -->
     <header class="flex h-[--header-height] shrink-0 items-center gap-4 border-b border-white/10 px-4" style="color:rgb(210,210,210);">
       <span class="text-xs font-medium text-muted-foreground">周期</span>
