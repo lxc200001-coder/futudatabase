@@ -742,6 +742,21 @@ function renderChart() {
 
     _lwcChart.timeScale().fitContent();
 
+    // ── 副图标签 ──
+    try {
+      var _paneLabels = ['成交量','资金曲线','MA参数'];
+      var _allPanes2 = _lwcChart.panes();
+      for(var _pi2 = 1; _pi2 < _allPanes2.length; _pi2++) {
+        var _pel = _allPanes2[_pi2].getHTMLElement();
+        if(_pel) {
+          var _pl = document.createElement('div');
+          _pl.textContent = _paneLabels[_pi2 - 1];
+          _pl.style.cssText = 'position:absolute;top:4px;left:8px;z-index:5;pointer-events:none;color:#ffffff;font-size:11px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
+          _pel.appendChild(_pl);
+        }
+      }
+    } catch(e) { console.error("[LWC] pane label error:", e); }
+
     // ── 浮动 Tooltip ──
     (function() {
       var _ttEl = document.createElement('div');
