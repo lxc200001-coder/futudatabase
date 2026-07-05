@@ -731,6 +731,7 @@ function renderChart() {
       for(var _pi2 = 1; _pi2 < _allPanes2.length; _pi2++) {
         var _pel = _allPanes2[_pi2].getHTMLElement();
         if(_pel) {
+          _pel.style.position = 'relative';
           var _pl = document.createElement('div');
           _pl.textContent = _paneLabels[_pi2 - 1];
           _pl.style.cssText = 'position:absolute;top:4px;left:8px;z-index:5;pointer-events:none;color:#ffffff;font-size:11px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
