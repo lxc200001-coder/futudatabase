@@ -1776,7 +1776,7 @@ def generate_heatmap_dashboard_from_db(db_path):
     """).fetchdf()
     # WF 交易记录
     _wf_trades = con.execute("""
-        SELECT code, ktype, trade_id, trade_action, trade_price_after_slippage, trade_shares,
+        SELECT code, ktype, datetime, trade_id, trade_action, trade_price_after_slippage, trade_shares,
                slippage, trade_amount, commission, trade_status, close_pnl, close_type, close_pnl_type
         FROM backtest_trades_walkforward
         ORDER BY code, trade_id, datetime
@@ -1802,10 +1802,12 @@ def generate_heatmap_dashboard_from_db(db_path):
                     _cr = _closes.loc[_tid] if _tid in _closes.index else None
                     if _or is None: continue  # 没有开多则跳过
                     _g = {"trade_id": int(_tid), "open": {}, "close": None}
+                    _g["open"]["datetime"] = str(_or["datetime"])[:19] if pd.notna(_or["datetime"]) else ""
                     for _c in ["trade_price_after_slippage","trade_shares","slippage","trade_amount","commission"]:
                         _g["open"][_c] = float(_or[_c])
                     if _cr is not None:
                         _g["close"] = {}
+                        _g["close"]["datetime"] = str(_cr["datetime"])[:19] if pd.notna(_cr["datetime"]) else ""
                         for _c in ["trade_price_after_slippage","trade_shares","slippage","trade_amount","commission"]:
                             _g["close"][_c] = float(_cr[_c])
                         for _c in ["trade_status","close_pnl","close_type","close_pnl_type"]:
