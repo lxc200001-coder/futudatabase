@@ -329,7 +329,7 @@ tailwind.config = {
     <div class="mx-3 h-px bg-border"></div>
 
     <!-- Search -->
-    <div class="px-3">
+    <div>
       <input id="search" type="text" placeholder="搜索股票代码/名称..."
          oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"
          class="w-full h-8 rounded-md bg-muted border border-input px-3 text-xs outline-none transition-[border-color,box-shadow] focus:border-ring focus:ring-2 focus:ring-ring/25">
@@ -341,7 +341,7 @@ tailwind.config = {
     </div>
 
     <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
-    <div id="stock-list" class="flex flex-col gap-0.5 px-3"></div>
+    <div id="stock-list" class="flex flex-col gap-0.5"></div>
   </div>
 
   <!-- Sidebar Footer -->
