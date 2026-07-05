@@ -1774,12 +1774,6 @@ def generate_heatmap_dashboard_from_db(db_path):
                avg_hold_days, avg_hold_bars
         FROM backtest_performance_walkforward
     """).fetchdf()
-    con.close()
-    # 构建 (code, ktype) → perf dict 快速查找
-    _wf_perf_map = {}
-    if not _wf_perf.empty:
-        for _, _r in _wf_perf.iterrows():
-            _wf_perf_map[(_r["code"], _r["ktype"])] = _r.to_dict()
     # WF 交易记录
     _wf_trades = con.execute("""
         SELECT code, ktype, trade_id, trade_action, trade_price_after_slippage, trade_shares,
@@ -1787,6 +1781,12 @@ def generate_heatmap_dashboard_from_db(db_path):
         FROM backtest_trades_walkforward
         ORDER BY code, trade_id, datetime
     """).fetchdf()
+    con.close()
+    # 构建 (code, ktype) → perf dict 快速查找
+    _wf_perf_map = {}
+    if not _wf_perf.empty:
+        for _, _r in _wf_perf.iterrows():
+            _wf_perf_map[(_r["code"], _r["ktype"])] = _r.to_dict()
     # 按 (code, ktype) 分组配对开多/平多
     _trades_map = {}
     if not _wf_trades.empty:
@@ -1801,6 +1801,7 @@ def generate_heatmap_dashboard_from_db(db_path):
                     _or = _opens.loc[_tid] if _tid in _opens.index else None
                     _cr = _closes.loc[_tid] if _tid in _closes.index else None
                     _r = {}
+                    _r["trade_action"] = "开多"
                     for _c in ["trade_price_after_slippage","trade_shares","slippage","trade_amount","commission"]:
                         _r[_c] = float(_or[_c]) if _or is not None else (float(_cr[_c]) if _cr is not None else 0)
                     for _c in ["trade_status","close_pnl","close_type","close_pnl_type"]:
