@@ -184,6 +184,10 @@ tailwind.config = {
 .stock-item.all-stock { font-weight: 600; }
 .stock-item.all-stock:hover { background: hsl(var(--accent)); }
 .stock-item.all-stock.active { color: hsl(var(--background)); background: hsl(var(--foreground)); }
+.dark .stock-item.active { background: rgb(229,229,229); }
+.dark .stock-item.active .code { color: #000; }
+.dark .stock-item.active .name { color: rgba(0,0,0,0.7); }
+.dark .stock-item.all-stock.active { background: rgb(229,229,229); color: #000; }
 
 .stock-status { font-size: 11px; display: inline-flex; align-items: center; }
 
@@ -205,6 +209,7 @@ tailwind.config = {
 }
 .sidebar-nav-item:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
 .sidebar-nav-item.active { color: hsl(var(--background)); background: hsl(var(--foreground)); font-weight: 500; }
+.dark .sidebar-nav-item.active { background: rgb(229,229,229); color: #000; }
 .nav-icon { flex-shrink: 0; opacity: 0.7; }
 .sidebar-nav-item.active .nav-icon { opacity: 1; }
 .sidebar-nav-item.active .nav-icon,
