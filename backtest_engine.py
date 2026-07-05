@@ -1827,11 +1827,14 @@ def generate_heatmap_dashboard_from_db(db_path):
                         _sig_s = _dfk["trade_action"].iloc[_i]
                         _tp = _dfk["trade_price_after_slippage"].iloc[_i]
                         _ts = _dfk["trade_shares"].iloc[_i]
+                        _ts_str = ""
+                        if pd.notna(_ts) and _ts:
+                            _ts_str = f"{_ts:.4f}".rstrip("0").rstrip(".") if isinstance(_ts, float) else str(int(_ts))
                         if _sig_s == "开多":
-                            _sig.append({"time":_t,"position":"inBar","color":"#26a69a","shape":"circle","text":f"B @ {int(_ts)}" if pd.notna(_ts) and _ts else "B","size":1.5})
+                            _sig.append({"time":_t,"position":"inBar","color":"#26a69a","shape":"circle","text":f"B @ {_ts_str}" if _ts_str else "B","size":1.5})
                             if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
                         elif _sig_s == "平多":
-                            _sig.append({"time":_t,"position":"inBar","color":"#ef5350","shape":"circle","text":f"S @ {int(_ts)}" if pd.notna(_ts) and _ts else "S","size":1.5})
+                            _sig.append({"time":_t,"position":"inBar","color":"#ef5350","shape":"circle","text":f"S @ {_ts_str}" if _ts_str else "S","size":1.5})
                             if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
