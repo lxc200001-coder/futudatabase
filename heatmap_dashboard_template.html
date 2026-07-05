@@ -326,17 +326,6 @@ tailwind.config = {
   <!-- Sidebar Content (scrollable) -->
   <div class="flex-1 overflow-auto px-3 py-3 space-y-4">
 
-    <!-- Ktype ToggleGroup -->
-    <div>
-            <div id="nav-ktype" class="flex rounded-md border border-input bg-muted/40 p-[2px] gap-0 h-8"></div>
-    </div>
-
-    <!-- Nav: Chart Types -->
-    <div>
-      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">图表</div>
-      <div id="nav-chart" class="flex flex-col gap-0.5"></div>
-    </div>
-
 
     <!-- Search -->
     <div>
@@ -368,8 +357,12 @@ tailwind.config = {
 <main id="main" class="flex-1 flex flex-col overflow-auto bg-background p-4">
   <div class="flex-1 flex flex-col rounded-xl overflow-hidden" style="background:rgb(var(--right-bg));">
     <!-- Header -->
-    <header class="flex h-[--header-height] shrink-0 items-center gap-2 border-b border-white/10 px-6" style="color:rgb(210,210,210);">
-      <h1 class="text-base font-medium">热力图看板</h1>
+    <header class="flex h-[--header-height] shrink-0 items-center gap-4 border-b border-white/10 px-4" style="color:rgb(210,210,210);">
+      <span class="text-xs font-medium text-muted-foreground">周期</span>
+      <div id="nav-ktype" class="flex rounded-md border border-input bg-muted/40 p-[2px] gap-0 h-8"></div>
+      <div class="w-px h-5 bg-border/40"></div>
+      <span class="text-xs font-medium text-muted-foreground">图表</span>
+      <div id="nav-chart" class="flex rounded-md border border-input bg-muted/40 p-[2px] gap-0 h-8"></div>
     </header>
 
     <!-- Content Area -->
@@ -463,28 +456,16 @@ function renderNavs() {
 
 function renderChartNav() {
   var h="";
-  var _icons = [
-    '<path d=\"M18 20V10\"/><path d=\"M12 20V4\"/><path d=\"M6 20v-6\"/>',
-    '<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>',
-    '<path d=\"M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7\"/>',
-    '<path d=\"M12 20V10\"/><path d=\"M18 20V4\"/><path d=\"M6 20v-6\"/>',
-    '<path d=\"M12 2v20M2 12h20\"/>',
-    '<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>',
-    '<path d=\"M18 20V10\"/><path d=\"M12 20V4\"/><path d=\"M6 20v-6\"/>',
-    '<path d=\"M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7\"/>',
-  ];
   for(var i=0;i<CHART_TYPES.length;i++) {
-    h+="<div class=\"sidebar-nav-item\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+
-      "<svg class=\"nav-icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"+_icons[i % _icons.length]+"</svg>"+
-      CHART_TYPES[i]+"</div>";
+    h+="<button class=\"flex flex-1 items-center justify-center rounded-[4px] text-[13px] font-medium transition-colors text-muted-foreground data-[active=true]:bg-[#404040] data-[active=true]:text-white\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+CHART_TYPES[i]+"</button>";
   }
   document.getElementById("nav-chart").innerHTML=h;
-  document.querySelector("#nav-chart .sidebar-nav-item").classList.add("active");
+  document.querySelector("#nav-chart button").dataset.active = "true";
 }
 
 function selectType(type) {
   currentType=type;
-  document.querySelectorAll("#nav-chart .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.chart===type);});
+  document.querySelectorAll("#nav-chart button").forEach(function(el){el.dataset.active=el.dataset.chart===type ? 'true' : 'false';});
   renderChart();
 }
 
@@ -573,7 +554,7 @@ function selectStock(code) {
   document.querySelectorAll(".stock-item").forEach(function(el){el.classList.toggle("active",el.dataset.code===code);});
   if(code==="__ALL__") { currentType="全股票最优参数变动"; }
   else if(CHART_TYPES.indexOf(currentType)<0) { currentType=CHART_TYPES[0]; }
-  document.querySelectorAll("#nav-chart .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.chart===currentType);});
+  document.querySelectorAll("#nav-chart button").forEach(function(el){el.dataset.active=el.dataset.chart===currentType ? 'true' : 'false';});
   renderChart();
 }
 
