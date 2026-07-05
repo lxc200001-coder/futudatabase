@@ -374,6 +374,7 @@ tailwind.config = {
     <div id="metrics-panel" style="display:none;"></div>
 
     <!-- LWC Chart Container -->
+    <div id="wf-perf-cards" style="display:none;"></div>
     <div id="lwc-container" class="rounded-xl border bg-card overflow-hidden" style="display:none;position:relative;">
       <div id="chart-container" style="height:1100px;position:relative;"></div>
     </div>
@@ -587,6 +588,7 @@ function renderChart() {
   document.getElementById('trade-table').style.display = 'none';
   document.getElementById('lwc-container').style.display = 'none';
   document.getElementById('plotly-container').style.display = 'none';
+  document.getElementById('wf-perf-cards').style.display = 'none';
   if(!currentStock||!currentKtype||!currentMarket) return;
   var combo=D[currentKtype][currentMarket];
   if(!combo||!combo.figures) return;
@@ -606,9 +608,11 @@ function renderChart() {
   if(figs[currentType]._lwc) {
     var d = figs[currentType];
 
-    // ── WF 策略表现指标卡（横排滚动）──
+    // ── WF 策略表现指标卡 ──
     var _wfp = d.wf_perf;
-    if(_wfp) {
+    var _wfc = document.getElementById('wf-perf-cards');
+    _wfc.innerHTML = '';
+    if(_wfp && currentType === 'K线图') {
       var _wfFields = [
         ['策略评分','strategy_score',false],['年化收益率','cagr',true],['总收益率','total_return',true],
         ['买入持有','buy_hold_return',true],['超额收益','excess_return',true],
@@ -617,7 +621,7 @@ function renderChart() {
         ['交易次数','trade_count',false],['胜率','win_rate',true],
         ['连胜','max_win_streak',false],['连败','max_loss_streak',false],['持仓K线','avg_hold_bars',false],
       ];
-      var _wfHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;overflow:hidden;">';
+      var _wfHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;width:100%;">';
       for(var _fi=0;_fi<_wfFields.length;_fi++) {
         var _fl = _wfFields[_fi][0], _fk = _wfFields[_fi][1], _pct = _wfFields[_fi][2];
         var _fv = _wfp[_fk];
@@ -631,9 +635,8 @@ function renderChart() {
           '</div>';
       }
       _wfHtml += '</div>';
-      // Insert before lwc-container
-      var _lwc = document.getElementById('lwc-container');
-      _lwc.parentNode.insertBefore(document.createRange().createContextualFragment(_wfHtml), _lwc);
+      _wfc.innerHTML = _wfHtml;
+      _wfc.style.display = 'block';
     }
 
     document.getElementById('lwc-container').style.display = 'block';
