@@ -317,7 +317,7 @@ tailwind.config = {
     <!-- Ktype ToggleGroup -->
     <div>
       <div class="text-xs font-medium text-muted-foreground px-3 pb-1">周期</div>
-      <div id="nav-ktype" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
+      <div id="nav-ktype" class="flex rounded-lg border border-border/40 bg-muted/40 p-0.5 gap-0"></div>
     </div>
 
     <!-- Nav: Chart Types -->
@@ -338,7 +338,7 @@ tailwind.config = {
 
     <!-- Market ToggleGroup -->
     <div>
-      <div id="nav-market" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
+      <div id="nav-market" class="flex rounded-lg border border-border/40 bg-muted/40 p-0.5 gap-0"></div>
     </div>
 
     <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
@@ -439,13 +439,13 @@ function renderNavs() {
   var h="";
   for(var i=0;i<ALL_KTYPES.length;i++) {
     var k=ALL_KTYPES[i];
-    h+="<button class=\"flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors text-muted-foreground data-[active=true]:bg-background data-[active=true]:shadow-sm data-[active=true]:text-foreground\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+KT_LABELS[k]+"</button>";
+    h+="<button class=\"flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors text-muted-foreground data-[active=true]:bg-[#404040] data-[active=true]:text-white\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+KT_LABELS[k]+"</button>";
   }
   document.getElementById("nav-ktype").innerHTML=h;
   h="";
   for(var i=0;i<ALL_MARKETS.length;i++) {
     var m=ALL_MARKETS[i];
-    h+="<button class=\"flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors text-muted-foreground data-[active=true]:bg-background data-[active=true]:shadow-sm data-[active=true]:text-foreground\" data-market=\""+m+"\" onclick=\"selectMarket('"+m+"')\">"+MK_LABELS[m]+"</button>";
+    h+="<button class=\"flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors text-muted-foreground data-[active=true]:bg-[#404040] data-[active=true]:text-white\" data-market=\""+m+"\" onclick=\"selectMarket('"+m+"')\">"+MK_LABELS[m]+"</button>";
   }
   document.getElementById("nav-market").innerHTML=h;
 }
