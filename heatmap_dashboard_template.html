@@ -224,18 +224,6 @@ tailwind.config = {
 #empty-state { color: hsl(var(--muted-foreground)); font-size: 14px; text-align: center; padding: 48px 0; }
 
 /* ============================
-   Component: MA Label
-   ============================ */
-.ma-label {
-  position: absolute; top: 8px; left: 8px;
-  padding: 3px 8px; border-radius: 4px;
-  font-size: 12px; font-weight: 700;
-  z-index: 10; pointer-events: none;
-  background: hsl(var(--foreground));
-  color: hsl(var(--lwc-ma));
-}
-
-/* ============================
    Component: Panel Header
    ============================ */
 .panel-header {
@@ -663,12 +651,6 @@ function renderChart() {
       });
       ml.setData(d.mas);
     }
-    // 左上角 MA 标签
-    var _maLabel = document.createElement('div');
-    _maLabel.className = 'ma-label';
-    _maLabel.textContent = 'MA' + d.best_ma;
-    document.getElementById('chart-container').appendChild(_maLabel);
-
     // Section Cards（指标卡片网格）
     var _sc = document.getElementById('section-cards');
     _sc.style.display = 'grid';
