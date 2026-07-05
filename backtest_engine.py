@@ -19,6 +19,7 @@ import concurrent.futures
 from datetime import datetime
 from tqdm import tqdm
 import json
+import multiprocessing as _mp
 
 import duckdb
 import pandas as pd
@@ -38,7 +39,7 @@ SLIPPAGE = 0.000
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -1241,7 +1242,9 @@ def _cleanup_all_tmp():
         try: os.remove(_f)
         except: pass
 
-atexit.register(_cleanup_all_tmp)
+# 只在主进程注册退出清理（子进程不触发，避免 multiprocessing 竞态）
+if _mp.current_process().name == 'MainProcess':
+    atexit.register(_cleanup_all_tmp)
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                  trade_mode="close", slippage=0.0, fee_rate=0.001, markets=None):
