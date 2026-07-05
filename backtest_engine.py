@@ -17,12 +17,16 @@ import time
 import concurrent.futures
 from datetime import datetime
 from tqdm import tqdm
+import json
 
 import duckdb
 import pandas as pd
 import numpy as np
 import bottleneck as bn
 from numba import njit
+import plotly.graph_objects as go
+from plotly.io import to_json
+import shutil
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(PROJECT_ROOT, "database", "market.duckdb")
@@ -1584,6 +1588,267 @@ def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
 # =========================================================
 # CLI
 # =========================================================
+
+# =========================================================
+# 热力图看板
+# =========================================================
+
+def _build_metric_heatmap_figure(code, scan_rows, metric_name, metric_title,
+                                  colorscale, center, best_ma=None, stock_name=""):
+    """构建单指标参数扫描热力图"""
+    if not scan_rows: return None
+    df = pd.DataFrame(scan_rows)
+    if df.empty or df["window_label"].nunique() < 2: return None
+    if metric_name not in df.columns: return None
+    pivot = df.pivot_table(index="ma_len", columns="window_label", values=metric_name, aggfunc="first")
+    pivot = pivot[sorted(pivot.columns, key=lambda c: str(c))]
+    if pivot.empty: return None
+    annot_text = [[f"{v:.1f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
+    for col_idx, col_name in enumerate(pivot.columns):
+        col_data = pivot[col_name].dropna()
+        if col_data.empty: continue
+        ranked = col_data.sort_values() if metric_name == "max_drawdown" else col_data.sort_values(ascending=False)
+        for label, _ in ranked.head(1).items():
+            row_idx = list(pivot.index).index(label)
+            if annot_text[row_idx][col_idx]:
+                annot_text[row_idx][col_idx] = f"{annot_text[row_idx][col_idx]}*"
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(z=pivot.values, x=[str(c) for c in pivot.columns],
+        y=[str(ma) for ma in pivot.index],
+        text=annot_text, texttemplate="%{text}", textfont=dict(size=10),
+        colorscale=colorscale, zmid=0 if center else None,
+        hovertemplate="window_label: %{x}<br>ma: %{y}<br>%{text}<extra></extra>"))
+    fig.update_layout(title=f"{code} {stock_name} {metric_title}",
+        xaxis=dict(title="window_label", tickangle=45), yaxis=dict(title="ma_len", dtick=1),
+        height=max(500, len(pivot.index)*26), width=max(700, len(pivot.columns)*110),
+        plot_bgcolor="white")
+    return fig
+
+def _build_sensitivity_figure(code, scan_rows, stock_name=""):
+    """构建参数敏感性折线图"""
+    if not scan_rows: return None
+    df = pd.DataFrame(scan_rows)
+    gb = df.groupby("ma_len")["strategy_score"].agg(["mean","std"]).dropna()
+    if len(gb) < 3: return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=gb.index, y=gb["mean"], mode="lines+markers",
+        error_y=dict(type="data", array=gb["std"], visible=True, color="rgba(0,100,200,0.3)"),
+        name="strategy_score", line=dict(color="rgb(0,100,200)")))
+    fig.add_hline(y=0, line=dict(color="gray", dash="dash", width=1))
+    fig.update_layout(title=f"{code} {stock_name} 参数敏感性分析",
+        xaxis=dict(title="ma_len", dtick=2), yaxis=dict(title="strategy_score"),
+        height=400, width=700, plot_bgcolor="white", showlegend=False)
+    return fig
+
+def _build_stability_figure(code, ws_df, best_ma=None, stock_name=""):
+    """构建稳定性评分热力图"""
+    if ws_df is None or ws_df.empty: return None
+    pivot = ws_df.pivot_table(index="ma_len", columns="window_label", values="stability_score", aggfunc="first")
+    pivot = pivot[sorted(pivot.columns)]
+    if pivot.empty: return None
+    annot_text = [[f"{v:.3f}" if pd.notna(v) else "" for v in row] for row in pivot.values]
+    for col_idx, col_name in enumerate(pivot.columns):
+        col_data = pivot[col_name].dropna()
+        if col_data.empty: continue
+        ranked = col_data.sort_values(ascending=False)
+        for label, _ in ranked.head(1).items():
+            row_idx = list(pivot.index).index(label)
+            if annot_text[row_idx][col_idx]:
+                annot_text[row_idx][col_idx] = f"{annot_text[row_idx][col_idx]}*"
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(z=pivot.values, x=[str(c) for c in pivot.columns],
+        y=[str(ma) for ma in pivot.index],
+        text=annot_text, texttemplate="%{text}", textfont=dict(size=10),
+        colorscale="RdYlGn", zmid=0.5))
+    fig.update_layout(title=f"{code} {stock_name} 稳定性评分",
+        xaxis=dict(title="window_label", tickangle=45), yaxis=dict(title="ma_len", dtick=1),
+        height=max(500, len(pivot.index)*26), width=max(700, len(pivot.columns)*110),
+        plot_bgcolor="white")
+    return fig
+
+def generate_all_stock_best_ma_heatmap(all_ws, save_dir="heatmaps", return_fig=False):
+    """生成全股票最优参数热力图"""
+    if all_ws is None or all_ws.empty: return None if return_fig else None
+    best = all_ws[all_ws["is_best"] == "最优"].copy()
+    if best.empty: return
+    pivot = best.pivot_table(index="code", columns="window_label", values="ma_len", aggfunc="first")
+    pivot = pivot[sorted(pivot.columns)]
+    if pivot.empty: return
+    def _row_personality(r):
+        vals = r.dropna()
+        if len(vals) < 2: return pd.Series([0, 0])
+        return pd.Series([int((np.diff(vals.values) != 0).sum()), vals.std(ddof=0)])
+    metrics_df = pivot.apply(_row_personality, axis=1)
+    score_col = metrics_df.iloc[:,0].combine(metrics_df.iloc[:,1],
+        lambda c,s: round(max(0, 100 - c*5 - s*2), 1))
+    extra_data = pd.DataFrame({
+        "最优param_changes": metrics_df.iloc[:,0],
+        "param_change_std": metrics_df.iloc[:,1].round(2),
+        "personality_score": score_col,
+    }, index=pivot.index)
+    n_windows = pivot.shape[1]
+    extra_cols = list(extra_data.columns)
+    z_full = pivot.copy()
+    for col in extra_cols: z_full[col] = 0.0
+    z_full = z_full.values.astype(float)
+    z_max = max(np.nanmax(pivot.values), 2)
+    annot_text = []
+    for ri in range(len(pivot)):
+        row = [f"{int(v)}" if pd.notna(v) else "" for v in pivot.iloc[ri].values]
+        for ei, col_name in enumerate(extra_cols):
+            v = extra_data.iloc[ri, ei]
+            row.append(f"{int(v)}" if pd.notna(v) and col_name=="最优param_changes"
+                       else f"{v:.1f}" if pd.notna(v) else "")
+        annot_text.append(row)
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(z=z_full, zmin=0, zmax=z_max,
+        colorscale=[[0,"#f0f0f0"],[1/z_max,"#ffffcc"],[1,"#bd0026"]],
+        text=annot_text, texttemplate="%{text}", textfont=dict(size=9),
+        x=[str(c) for c in list(pivot.columns) + extra_cols], y=list(pivot.index),
+        hovertemplate="window_label: %{x}<br>code: %{y}<br>ma: %{text}<extra></extra>"))
+    fig.add_vline(x=n_windows-0.5, line=dict(color="gray", width=1, dash="dash"))
+    fig.update_layout(title="全股票最优参数热力图",
+        xaxis=dict(title="window_label", tickangle=45), yaxis=dict(title="code"),
+        height=max(500, len(pivot.index)*20), width=max(900, (n_windows+len(extra_cols))*100),
+        plot_bgcolor="white")
+    if return_fig: return fig
+    os.makedirs(save_dir, exist_ok=True)
+    fig.write_html(os.path.join(save_dir, "all_stock_best_ma_heatmap.html"))
+
+def _sanitize_json_for_html(data_json):
+    return data_json.replace("</script>", "<\\/script>")
+
+def _build_heatmap_dashboard_html(data_json, timestamp=""):
+    _tmpl = os.path.join(os.path.dirname(__file__), "heatmap_dashboard_template.html")
+    with open(_tmpl, "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("__DATA__", data_json)
+    html = html.replace("__TIMESTAMP__", timestamp)
+    return html
+
+def generate_heatmap_dashboard_from_db(db_path):
+    """从 DuckDB 表读取数据生成统一热力图看板"""
+    import time as _time
+    _t0 = _time.time()
+    print("  生成热力图看板...", end=" ", flush=True)
+    con = duckdb.connect(db_path, read_only=True)
+    perf_df = con.execute("""
+        SELECT code, ktype, ma_len, window_label, total_return, cagr,
+               max_drawdown, sharpe_ratio, strategy_score
+        FROM backtest_performance ORDER BY code, window_label, ma_len
+    """).fetchdf()
+    stab_df = con.execute("""
+        SELECT code, ktype, ma_len, window_label, stability_score, is_best
+        FROM strategy_score_stability ORDER BY code, window_label, ma_len
+    """).fetchdf()
+    kt_map = {"1w": "klines_1w", "1d": "klines_1d"}
+    kline_cache = {}
+    for _kt_str, _tbl in kt_map.items():
+        try:
+            kline_cache[_kt_str] = con.execute(f"""
+                SELECT code, datetime, open, high, low, close, volume
+                FROM {_tbl} ORDER BY code, datetime""").fetchdf()
+        except: kline_cache[_kt_str] = pd.DataFrame()
+    con.close()
+
+    def get_market(code):
+        if code.startswith("CC."): return "cc"
+        if code.startswith(("SH.","SZ.")): return "cn"
+        if code.startswith("US."): return "us"
+        return None
+
+    METRIC_CONFIG = [
+        ("strategy_score","strategy_score","RdYlGn",True),
+        ("cagr","cagr","RdYlGn",True),
+        ("sharpe_ratio","sharpe_ratio","RdYlGn",True),
+        ("max_drawdown","max_drawdown","OrRd",False),
+    ]
+    payload_data = {}
+    for kt in ["1w","1d"]:
+        payload_data[kt] = {}
+        _pk = perf_df[perf_df["ktype"]==kt]
+        _sk = stab_df[stab_df["ktype"]==kt]
+        for mkt in ["us","cc","cn"]:
+            _pm = _pk[_pk["code"].apply(lambda c: get_market(c)==mkt)]
+            if _pm.empty: payload_data[kt][mkt] = None; continue
+            codes = sorted(_pm["code"].unique())
+            stock_list = [{"code":c,"name":""} for c in codes]
+            figures_data = {}
+            all_ws_list = []
+            for code in codes:
+                sr = _pm[_pm["code"]==code].to_dict("records")
+                wr = _sk[_sk["code"]==code]
+                figs = {}
+                for label,metric,cs,center in METRIC_CONFIG:
+                    fig = _build_metric_heatmap_figure(code,sr,metric,label,cs,center)
+                    if fig:
+                        d = json.loads(to_json(fig))
+                        if "layout" in d and "template" in d["layout"]: del d["layout"]["template"]
+                        figs[label] = d
+                fig2 = _build_sensitivity_figure(code,sr)
+                if fig2:
+                    d = json.loads(to_json(fig2))
+                    if "layout" in d and "template" in d["layout"]: del d["layout"]["template"]
+                    figs["参数敏感性分析"] = d
+                if not wr.empty:
+                    fig3 = _build_stability_figure(code,wr)
+                    if fig3:
+                        d = json.loads(to_json(fig3))
+                        if "layout" in d and "template" in d["layout"]: del d["layout"]["template"]
+                        figs["稳定性评分"] = d
+                # K线图
+                _kl = kline_cache.get(kt, pd.DataFrame())
+                _dfk = _kl[_kl["code"]==code].sort_values("datetime")
+                if not _dfk.empty and len(_dfk) > 20:
+                    _ha = (_dfk["open"]+_dfk["high"]+_dfk["low"]+_dfk["close"])/4
+                    _best = wr[wr["is_best"]=="最优"]
+                    if not _best.empty:
+                        _bm = int(_best.iloc[-1]["ma_len"])
+                        _ma = _ha.rolling(_bm,min_periods=_bm).mean()
+                        _md = _ma.diff().fillna(0)
+                        _buy = (_md>0) & (_md.shift(1)<=0)
+                        _sell = (_md<0) & (_md.shift(1)>=0)
+                        _candles, _mal = [], []
+                        for _i in range(len(_dfk)):
+                            _t = pd.to_datetime(_dfk["datetime"].iloc[_i]).strftime("%Y-%m-%d")
+                            _candles.append({"time":_t,"open":float(_dfk["open"].iloc[_i]),
+                                "high":float(_dfk["high"].iloc[_i]),"low":float(_dfk["low"].iloc[_i]),
+                                "close":float(_dfk["close"].iloc[_i])})
+                            _mv = _ma.iloc[_i]
+                            if pd.notna(_mv): _mal.append({"time":_t,"value":round(float(_mv),2)})
+                        _sig = []
+                        for _i in range(len(_dfk)):
+                            _t = pd.to_datetime(_dfk["datetime"].iloc[_i]).strftime("%Y-%m-%d")
+                            if _buy.iloc[_i]: _sig.append({"time":_t,"position":"above","color":"#ef5350","shape":"arrowUp","text":"B"})
+                            if _sell.iloc[_i]: _sig.append({"time":_t,"position":"below","color":"#26a69a","shape":"arrowDown","text":"S"})
+                        figs["_lwc"] = True
+                        figs["_lwc_data"] = {"candles":_candles,"ma_line":_mal,"buy_sell":_sig,"best_ma":_bm}
+                figures_data[code] = figs
+            if not wr.empty: all_ws_list.append(wr)
+            if all_ws_list:
+                _all = pd.concat(all_ws_list, ignore_index=True)
+                _all_fig = generate_all_stock_best_ma_heatmap(_all, return_fig=True)
+                if _all_fig:
+                    d = json.loads(to_json(_all_fig))
+                    if "layout" in d and "template" in d["layout"]: del d["layout"]["template"]
+                    figures_data["__ALL__"] = {"全股票最优参数变动": d}
+            payload_data[kt][mkt] = {"stocks":stock_list, "figures":figures_data}
+
+    data_json = json.dumps(payload_data)
+    data_json = _sanitize_json_for_html(data_json)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    html = _build_heatmap_dashboard_html(data_json, timestamp=ts)
+    out_dir = os.path.join(os.path.dirname(os.path.dirname(db_path)),"results_uscncc")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "统一热力图看板.html")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    _lwc = os.path.join(os.path.dirname(os.path.dirname(db_path)),"lwc.js")
+    if os.path.exists(_lwc):
+        shutil.copy2(_lwc, os.path.join(out_dir, "lwc.js"))
+    print(f"看板: {out_path} ({_time.time()-_t0:.0f}s)")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="逐K线策略回测引擎")
     parser.add_argument("--ktype", default=DEFAULT_KTYPE,
@@ -1604,6 +1869,8 @@ if __name__ == "__main__":
                         help="滑点比例 (默认 0.0)")
     parser.add_argument("--fee-rate", type=float, default=FEE_RATE,
                         help="佣金比例 (默认 0.001)")
+    parser.add_argument("--heatmaps", action="store_true",
+                        help="回测完成后生成统一热力图看板")
     args = parser.parse_args()
 
     # 应用前置配置项
@@ -1646,3 +1913,8 @@ if __name__ == "__main__":
             markets=args.market,
         )
     print(f"总耗时: {time.time() - t0:.0f}s")
+    if args.heatmaps and os.path.exists(DB_PATH):
+        try:
+            generate_heatmap_dashboard_from_db(DB_PATH)
+        except Exception as e:
+            print(f"  热力图看板生成失败: {e}")
