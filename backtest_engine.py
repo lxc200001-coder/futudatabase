@@ -39,7 +39,7 @@ SLIPPAGE = 0.000
 TRADE_MODE = "open"   # close / open
 MA_MODE = "continuous" # continuous / jump
 DEFAULT_KTYPE = "1w"   # 默认ktype: 1w(周K) / 1d(日K) / all(两者全部) / 1w,1d(逗号拼接)
-DEFAULT_MARKET = "CC" # 默认market: all / US / CN / CC / US,CC
+DEFAULT_MARKET = "US,CC" # 默认market: all / US / CN / CC / US,CC
 WINDOW_START_DATE = "2000-01-03"
 
 # =========================================================
@@ -1796,11 +1796,16 @@ def generate_heatmap_dashboard_from_db(db_path):
                 if _tdf.empty: continue
                 _opens = _tdf[_tdf["trade_action"]=="开多"].set_index("trade_id")
                 _closes = _tdf[_tdf["trade_action"]=="平多"].set_index("trade_id")
+                # 确保 trade_id 唯一（处理重复）
+                if _opens.index.duplicated().any(): _opens = _opens[~_opens.index.duplicated(keep='first')]
+                if _closes.index.duplicated().any(): _closes = _closes[~_closes.index.duplicated(keep='first')]
                 _groups = []
                 for _tid in sorted(set(_opens.index) | set(_closes.index), reverse=True):
                     _or = _opens.loc[_tid] if _tid in _opens.index else None
                     _cr = _closes.loc[_tid] if _tid in _closes.index else None
                     if _or is None: continue  # 没有开多则跳过
+                    if isinstance(_or, pd.DataFrame): _or = _or.iloc[0]  # 降维
+                    if isinstance(_cr, pd.DataFrame): _cr = _cr.iloc[0]
                     _g = {"trade_id": int(_tid), "open": {}, "close": None}
                     _g["open"]["datetime"] = str(_or["datetime"])[:19] if pd.notna(_or["datetime"]) else ""
                     for _c in ["trade_price_after_slippage","trade_shares","slippage","trade_amount","commission"]:
