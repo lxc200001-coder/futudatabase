@@ -294,7 +294,7 @@ body {
 .chart-card { border-radius: var(--radius); border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 #metrics-panel { display: none; }
 #lwc-container { display: none; position: relative; }
-#chart-container { width: 100%; height: 750px; position: relative; }
+#chart-container { width: 100%; height: 1100px; position: relative; }
 #plotly-container { display: none; position: relative; }
 #equity-container { display: none; }
 #trade-table { display: none; }
@@ -420,7 +420,7 @@ body {
   <nav id="nav-chart" class="nav-bar"></nav>
   <div id="chart-area">
     <div id="metrics-panel" class="chart-card p-4 mb-6" style="display:none;"></div>
-    <div id="lwc-container" class="chart-card overflow-hidden" style="display:none;position:relative;"><div id="chart-container" style="height:750px;position:relative;"></div></div>
+    <div id="lwc-container" class="chart-card overflow-hidden" style="display:none;position:relative;"><div id="chart-container" style="height:1100px;position:relative;"></div></div>
     <div id="plotly-container" class="chart-card" style="display:none;position:relative;"></div>
     <div id="equity-container" class="chart-card" style="display:none;margin-top:24px;"></div>
     <div id="trade-table" class="chart-card overflow-auto" style="display:none;margin-top:24px;"></div>
@@ -629,7 +629,7 @@ function renderChart() {
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       timeScale: { borderColor: _c('--lwc-border','#ddd') },
       rightPriceScale: { borderColor: _c('--lwc-border','#ddd') },
-      height: 750,
+      height: 1100,
     });
     var d = figs[currentType];
     // ── 主图：K线 ──
@@ -684,7 +684,7 @@ function renderChart() {
     if(d.volumes && d.volumes.length) {
       try {
         var _volPane = _lwcChart.addPane();
-        _volPane.setHeight(80);
+        _volPane.setHeight(180);
         _volPane.addSeries(LightweightCharts.HistogramSeries, {
           color: '#26a69a', priceFormat: { type: 'volume' },
         }).setData(d.volumes);
@@ -696,7 +696,7 @@ function renderChart() {
     if(_eq_data && _eq_data.length) {
       try {
         var _eqPane = _lwcChart.addPane();
-        _eqPane.setHeight(100);
+        _eqPane.setHeight(180);
         _eqPane.addSeries(LightweightCharts.AreaSeries, {
           lineColor: _c('--lwc-equity-line','#2196f3'),
           topColor: _c('--lwc-equity-top','rgba(33,150,243,0.15)'),
@@ -710,7 +710,7 @@ function renderChart() {
     if(d.ma_len_values && d.ma_len_values.length) {
       try {
         var _maPane = _lwcChart.addPane();
-        _maPane.setHeight(50);
+        _maPane.setHeight(180);
         _maPane.addSeries(LightweightCharts.LineSeries, {
           color: '#9b59b6', lineWidth: 1.5, priceLineVisible: false,
           lastValueVisible: true,
