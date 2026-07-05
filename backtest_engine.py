@@ -1840,7 +1840,7 @@ def generate_heatmap_dashboard_from_db(db_path):
     html = _build_heatmap_dashboard_html(data_json, timestamp=ts)
     out_dir = os.path.join(os.path.dirname(os.path.dirname(db_path)),"results_uscncc")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "统一热力图看板.html")
+    out_path = os.path.join(out_dir, "看板.html")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     _lwc = os.path.join(os.path.dirname(os.path.dirname(db_path)),"lwc.js")
