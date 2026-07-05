@@ -456,9 +456,9 @@ function _c(varName, fallback) {
 
 try {
 var D = JSON.parse(document.getElementById('heatmap-data').textContent);
-var ALL_KTYPES = ["1W","1D"];
+var ALL_KTYPES = ["1w","1d"];
 var ALL_MARKETS = ["us","cc","cn"];
-var KT_LABELS = {"1W":"周K","1D":"日K"};
+var KT_LABELS = {"1w":"周K","1d":"日K"};
 var MK_LABELS = {"us":"US","cc":"CC","cn":"CN"};
 var CHART_TYPES = ["K线图","参数稳定性评分","参数敏感性分析","策略评分","年化收益率","夏普比率","最大回撤"];
 var currentKtype = null, currentMarket = null, currentType = "策略评分";
