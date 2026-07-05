@@ -610,12 +610,12 @@ function renderChart() {
     var _wfp = d.wf_perf;
     if(_wfp) {
       var _wfFields = [
-        ['策略评分','strategy_score',false],['总收益率','total_return',true],['年化收益率','cagr',true],
+        ['策略评分','strategy_score',false],['年化收益率','cagr',true],['总收益率','total_return',true],
         ['买入持有','buy_hold_return',true],['超额收益','excess_return',true],
         ['最大回撤','max_drawdown',true],['夏普比率','sharpe_ratio',false],['卡尔玛','calmar_ratio',false],
-        ['交易次数','trade_count',false],['胜率','win_rate',true],['盈利因子','profit_factor',false],
-        ['盈亏比','payoff_ratio',false],['连胜','max_win_streak',false],['连败','max_loss_streak',false],
-        ['持仓K线','avg_hold_bars',false],
+        ['盈利因子','profit_factor',false],['盈亏比','payoff_ratio',false],
+        ['交易次数','trade_count',false],['胜率','win_rate',true],
+        ['连胜','max_win_streak',false],['连败','max_loss_streak',false],['持仓K线','avg_hold_bars',false],
       ];
       var _wfHtml = '<div class="flex gap-2 overflow-x-auto pb-2" style="scrollbar-width:thin;">';
       for(var _fi=0;_fi<_wfFields.length;_fi++) {
