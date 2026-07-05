@@ -1774,10 +1774,10 @@ def generate_heatmap_dashboard_from_db(db_path):
         return None
 
     METRIC_CONFIG = [
-        ("strategy_score","strategy_score","RdYlGn",True),
-        ("cagr","cagr","RdYlGn",True),
-        ("sharpe_ratio","sharpe_ratio","RdYlGn",True),
-        ("max_drawdown","max_drawdown","OrRd",False),
+        ("策略评分","strategy_score","RdYlGn",True),
+        ("年化收益率","cagr","RdYlGn",True),
+        ("夏普比率","sharpe_ratio","RdYlGn",True),
+        ("最大回撤","max_drawdown","OrRd",False),
     ]
     payload_data = {}
     for kt in ["1w","1d"]:
@@ -1811,7 +1811,7 @@ def generate_heatmap_dashboard_from_db(db_path):
                     if fig3:
                         d = json.loads(to_json(fig3))
                         if "layout" in d and "template" in d["layout"]: del d["layout"]["template"]
-                        figs["稳定性评分"] = d
+                        figs["参数稳定性评分"] = d
                 # K线图（使用 WF 回测数据）
                 _dfk = _wf_k[(_wf_k["code"]==code) & (_wf_k["ktype"]==kt)].sort_values("datetime")
                 if not _dfk.empty and len(_dfk) > 5:
@@ -1832,8 +1832,13 @@ def generate_heatmap_dashboard_from_db(db_path):
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
                     if _candles:
-                        figs["_lwc"] = True
-                        figs["_lwc_data"] = {"candles":_candles,"ma_line":_mal,"buy_sell":_sig,"best_ma":_bm}
+                        figs["K线图"] = {
+                            "_lwc": True,
+                            "candles": _candles,
+                            "mas": _mal,
+                            "signals": _sig,
+                            "best_ma": _bm,
+                        }
                 figures_data[code] = figs
             if not wr.empty: all_ws_list.append(wr)
             if all_ws_list:

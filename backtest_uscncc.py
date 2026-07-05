@@ -1285,13 +1285,13 @@ def generate_heatmap_dashboard(cache_data):
         return
 
     METRIC_CONFIG = [
-        ("strategy_score", "strategy_score", "RdYlGn", True),
-        ("cagr", "cagr", "RdYlGn", True),
-        ("sharpe_ratio", "sharpe_ratio", "RdYlGn", True),
-        ("max_drawdown", "max_drawdown", "OrRd", False),
+        ("策略评分", "strategy_score", "RdYlGn", True),
+        ("年化收益率", "cagr", "RdYlGn", True),
+        ("夏普比率", "sharpe_ratio", "RdYlGn", True),
+        ("最大回撤", "max_drawdown", "OrRd", False),
     ]
     SENSITIVITY_KEY = "参数敏感性分析"
-    STABILITY_KEY = "stability_score"
+    STABILITY_KEY = "参数稳定性评分"
 
     ALL_KTYPES = ["1W", "1D"]
     ALL_MARKETS = ["us", "cc", "cn"]
