@@ -355,14 +355,15 @@ tailwind.config = {
     </div>
   </div>
 </aside>
-<main id="main" class="flex-1 flex flex-col overflow-auto">
-  <!-- Header -->
-  <header class="flex h-[--header-height] shrink-0 items-center gap-2 border-b px-6">
-    <h1 class="text-base font-medium">热力图看板</h1>
-  </header>
+<main id="main" class="flex-1 flex flex-col overflow-auto bg-background p-4">
+  <div class="flex-1 flex flex-col rounded-xl overflow-hidden" style="background:rgb(10,10,10);">
+    <!-- Header -->
+    <header class="flex h-[--header-height] shrink-0 items-center gap-2 border-b border-white/10 px-6" style="color:rgb(210,210,210);">
+      <h1 class="text-base font-medium">热力图看板</h1>
+    </header>
 
-  <!-- Content Area -->
-  <div id="chart-area" class="flex-1 flex flex-col p-4 lg:p-6 gap-4 lg:gap-6">
+    <!-- Content Area -->
+    <div id="chart-area" class="flex-1 flex flex-col p-4 lg:p-6 gap-4 lg:gap-6">
     <!-- Section Cards (metrics grid) -->
     <div id="section-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" style="display:none;"></div>
 
@@ -386,6 +387,7 @@ tailwind.config = {
     <!-- Empty State -->
     <div id="empty-state" class="flex items-center justify-center py-16 text-sm text-muted-foreground">请选择周期和市场</div>
   </div>
+</div>
 </main>
 <script id="heatmap-data" type="application/json">__DATA__</script>
 <script>
