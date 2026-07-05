@@ -186,10 +186,10 @@ tailwind.config = {
 .stock-item.all-stock.active { color: hsl(var(--background)); background: hsl(var(--foreground)); }
 .dark .stock-item { color: rgb(250,250,250) !important; }
 .dark .stock-item .name { color: rgba(250,250,250,0.6) !important; }
-.dark .stock-item.active { background: rgb(229,229,229); }
-.dark .stock-item.active .code { color: #000; }
-.dark .stock-item.active .name { color: #000; }
-.dark .stock-item.all-stock.active { background: rgb(229,229,229); color: #000; }
+.dark .stock-item.active { background: rgb(229,229,229); color: #000 !important; }
+.dark .stock-item.active .code { color: #000 !important; }
+.dark .stock-item.active .name { color: #000 !important; }
+.dark .stock-item.all-stock.active { background: rgb(229,229,229); color: #000 !important; }
 
 .stock-status { font-size: 11px; display: inline-flex; align-items: center; }
 
