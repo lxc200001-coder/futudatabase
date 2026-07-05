@@ -1880,8 +1880,10 @@ if __name__ == "__main__":
                         help="滑点比例 (默认 0.0)")
     parser.add_argument("--fee-rate", type=float, default=FEE_RATE,
                         help="佣金比例 (默认 0.001)")
-    parser.add_argument("--heatmaps", action="store_true",
-                        help="回测完成后生成统一热力图看板")
+    parser.add_argument("--heatmaps", action="store_true", default=True,
+                        help="回测完成后生成统一热力图看板（默认开启）")
+    parser.add_argument("--no-heatmaps", action="store_false", dest="heatmaps",
+                        help="不生成热力图看板")
     args = parser.parse_args()
 
     # 应用前置配置项
