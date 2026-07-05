@@ -1741,14 +1741,11 @@ def generate_heatmap_dashboard_from_db(db_path):
         SELECT code, ktype, ma_len, window_label, stability_score, is_best
         FROM strategy_score_stability ORDER BY code, window_label, ma_len
     """).fetchdf()
-    kt_map = {"1w": "klines_1w", "1d": "klines_1d"}
-    kline_cache = {}
-    for _kt_str, _tbl in kt_map.items():
-        try:
-            kline_cache[_kt_str] = con.execute(f"""
-                SELECT code, datetime, open, high, low, close, volume
-                FROM {_tbl} ORDER BY code, datetime""").fetchdf()
-        except: kline_cache[_kt_str] = pd.DataFrame()
+    # WF K 线数据（用于看板展示）
+    _wf_k = con.execute("""
+        SELECT code, ktype, datetime, open, high, low, close, ha_ma_value, signal, signal_exec
+        FROM backtest_stats_walkforward ORDER BY code, datetime
+    """).fetchdf()
     con.close()
 
     def get_market(code):
@@ -1796,31 +1793,26 @@ def generate_heatmap_dashboard_from_db(db_path):
                         d = json.loads(to_json(fig3))
                         if "layout" in d and "template" in d["layout"]: del d["layout"]["template"]
                         figs["稳定性评分"] = d
-                # K线图
-                _kl = kline_cache.get(kt, pd.DataFrame())
-                _dfk = _kl[_kl["code"]==code].sort_values("datetime")
-                if not _dfk.empty and len(_dfk) > 20:
-                    _ha = (_dfk["open"]+_dfk["high"]+_dfk["low"]+_dfk["close"])/4
+                # K线图（使用 WF 回测数据）
+                _dfk = _wf_k[(_wf_k["code"]==code) & (_wf_k["ktype"]==kt)].sort_values("datetime")
+                if not _dfk.empty and len(_dfk) > 5:
+                    _candles, _mal, _sig = [], [], []
+                    _bm = None
+                    for _i in range(len(_dfk)):
+                        _t = pd.to_datetime(_dfk["datetime"].iloc[_i]).strftime("%Y-%m-%d")
+                        _candles.append({"time":_t,"open":float(_dfk["open"].iloc[_i]),
+                            "high":float(_dfk["high"].iloc[_i]),"low":float(_dfk["low"].iloc[_i]),
+                            "close":float(_dfk["close"].iloc[_i])})
+                        _mv = _dfk["ha_ma_value"].iloc[_i]
+                        if pd.notna(_mv): _mal.append({"time":_t,"value":round(float(_mv),2)})
+                        _sig_s = _dfk["signal"].iloc[_i]
+                        if _sig_s == "买入":
+                            _sig.append({"time":_t,"position":"above","color":"#ef5350","shape":"arrowUp","text":"B"})
+                        elif _sig_s == "卖出":
+                            _sig.append({"time":_t,"position":"below","color":"#26a69a","shape":"arrowDown","text":"S"})
                     _best = wr[wr["is_best"]=="最优"]
-                    if not _best.empty:
-                        _bm = int(_best.iloc[-1]["ma_len"])
-                        _ma = _ha.rolling(_bm,min_periods=_bm).mean()
-                        _md = _ma.diff().fillna(0)
-                        _buy = (_md>0) & (_md.shift(1)<=0)
-                        _sell = (_md<0) & (_md.shift(1)>=0)
-                        _candles, _mal = [], []
-                        for _i in range(len(_dfk)):
-                            _t = pd.to_datetime(_dfk["datetime"].iloc[_i]).strftime("%Y-%m-%d")
-                            _candles.append({"time":_t,"open":float(_dfk["open"].iloc[_i]),
-                                "high":float(_dfk["high"].iloc[_i]),"low":float(_dfk["low"].iloc[_i]),
-                                "close":float(_dfk["close"].iloc[_i])})
-                            _mv = _ma.iloc[_i]
-                            if pd.notna(_mv): _mal.append({"time":_t,"value":round(float(_mv),2)})
-                        _sig = []
-                        for _i in range(len(_dfk)):
-                            _t = pd.to_datetime(_dfk["datetime"].iloc[_i]).strftime("%Y-%m-%d")
-                            if _buy.iloc[_i]: _sig.append({"time":_t,"position":"above","color":"#ef5350","shape":"arrowUp","text":"B"})
-                            if _sell.iloc[_i]: _sig.append({"time":_t,"position":"below","color":"#26a69a","shape":"arrowDown","text":"S"})
+                    if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
+                    if _candles:
                         figs["_lwc"] = True
                         figs["_lwc_data"] = {"candles":_candles,"ma_line":_mal,"buy_sell":_sig,"best_ma":_bm}
                 figures_data[code] = figs
