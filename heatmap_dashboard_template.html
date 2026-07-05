@@ -1,69 +1,459 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+<script>(function(){try{var t=localStorage.getItem('kanban-theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark');}catch(e){}})();</script>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>统一热力图看板 - __TIMESTAMP__</title>
+<title>热力图看板 - __TIMESTAMP__</title>
 <script src="lwc.js"></script>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
+/* ============================
+   Design Tokens (shadcn/ui HSL)
+   ============================ */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 9%;
+  --primary: 211 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 0 0% 9%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 45%;
+  --accent: 211 100% 97%;
+  --accent-foreground: 211 100% 40%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+  --ring: 211 100% 50%;
+  --radius: 0.5rem;
+  --profit: 142 71% 45%;
+  --loss: 0 84% 60%;
+  --chart-1: 211 80% 55%;
+  --chart-2: 142 60% 50%;
+  --chart-3: 35 90% 55%;
+  --chart-4: 42 90% 61%;
+  --chart-5: 280 65% 60%;
+  --lwc-text: 0 0% 20%;
+  --lwc-bg: 0 0% 100%;
+  --lwc-grid: 0 0% 88%;
+  --lwc-border: 0 0% 87%;
+  --lwc-up: 0 0% 0%;
+  --lwc-down: 0 0% 69%;
+  --lwc-ma: 42 90% 61%;
+  --lwc-equity-line: 210 90% 54%;
+  --lwc-equity-top: 33 150 243 0.15;
+  --lwc-equity-bottom: 33 150 243 0.01;
+  --all-stock-bg: 211 100% 97%;
+}
+
+.dark {
+  --background: 0 0% 7%;
+  --foreground: 0 0% 93%;
+  --card: 0 0% 10%;
+  --card-foreground: 0 0% 93%;
+  --primary: 211 100% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 15%;
+  --secondary-foreground: 0 0% 93%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 63%;
+  --accent: 211 50% 15%;
+  --accent-foreground: 211 100% 70%;
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 20%;
+  --input: 0 0% 20%;
+  --ring: 211 100% 55%;
+  --profit: 142 50% 55%;
+  --loss: 0 63% 50%;
+  --chart-1: 211 70% 65%;
+  --chart-2: 142 60% 65%;
+  --chart-3: 35 90% 65%;
+  --chart-4: 42 90% 61%;
+  --chart-5: 280 65% 70%;
+  --lwc-text: 0 0% 75%;
+  --lwc-bg: 0 0% 10%;
+  --lwc-grid: 0 0% 20%;
+  --lwc-border: 0 0% 24%;
+  --lwc-up: 120 50% 55%;
+  --lwc-down: 0 50% 55%;
+  --lwc-ma: 42 90% 61%;
+  --lwc-equity-line: 210 70% 65%;
+  --lwc-equity-top: 100 180 255 0.15;
+  --lwc-equity-bottom: 100 180 255 0.01;
+  --all-stock-bg: 211 50% 12%;
+}
+
+/* ============================
+   Reset & Base
+   ============================ */
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; height:100vh; overflow:hidden; background:#f5f5f5; }
-#sidebar { width:280px; min-width:280px; background:#fff; border-right:1px solid #e0e0e0; display:flex; flex-direction:column; }
-#sidebar-header { padding:14px 16px; border-bottom:1px solid #e0e0e0; }
-#sidebar-header h2 { font-size:15px; color:#333; }
-#search-wrap { padding:10px 16px; }
-#search { width:100%; padding:7px 10px; border:1px solid #ddd; border-radius:5px; font-size:13px; outline:none; }
-#search:focus { border-color:#007bff; }
-#stock-count { padding:2px 16px 8px; font-size:11px; color:#999; }
-#stock-list { flex:1; overflow-y:auto; }
-.stock-item { padding:7px 16px; cursor:pointer; border-bottom:1px solid #f0f0f0; display:flex; justify-content:space-between; }
-.stock-item:hover { background:#f0f7ff; }
-.stock-item.active { background:#007bff; color:#fff; }
-.stock-item .code-name { display:flex; align-items:baseline; gap:6px; }
-.stock-item .code { font-weight:600; font-size:13px; }
-.stock-item .name { font-size:11px; color:#999; }
-.stock-item.active .name { color:#cce5ff; }
-#main { flex:1; display:flex; flex-direction:column; overflow:auto; }
-#nav-chart, #nav-market, #nav-ktype { background:#fff; border-bottom:1px solid #e0e0e0; padding:0 16px; display:flex; }
-.tab { padding:8px 16px; cursor:pointer; font-size:13px; color:#666; border-bottom:2px solid transparent; transition:all 0.2s; white-space:nowrap; }
-.tab:hover { color:#333; background:#f8f9fa; }
-.tab.active { color:#007bff; border-bottom-color:#007bff; font-weight:500; }
-.tab.no-data { color:#ccc; cursor:not-allowed; }
-#chart-area { flex:1; padding:16px; overflow:auto; display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; }
-#lwc-container { width:100%; background:#fff; border:1px solid #e0e0e0; border-radius:4px; }
-#chart-container { width:100%; height:500px; position:relative; }
-#plotly-container { width:100%; background:#fff; border:1px solid #e0e0e0; border-radius:4px; overflow:auto; }
-#chart-container { width:100%; height:530px; position:relative; }
-#metrics-panel { display:none; width:100%; padding:8px 16px; background:#fff; border:1px solid #e0e0e0; border-radius:4px; margin-bottom:8px; }
-#equity-container { width:100%; background:#fff; border:1px solid #e0e0e0; border-radius:4px; }
-#trade-table { width:100%; background:#fff; border:1px solid #e0e0e0; }
-#empty-state { color:#999; font-size:14px; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* ============================
+   Layout Utilities
+   ============================ */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-1 { flex: 1; }
+.flex-wrap { flex-wrap: wrap; }
+.flex-shrink-0 { flex-shrink: 0; }
+.items-center { align-items: center; }
+.items-baseline { align-items: baseline; }
+.items-stretch { align-items: stretch; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.gap-0 { gap: 0; }
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.gap-6 { gap: 24px; }
+.w-full { width: 100%; }
+.h-screen { height: 100vh; }
+.min-h-0 { min-height: 0; }
+.overflow-hidden { overflow: hidden; }
+.overflow-auto { overflow: auto; }
+.relative { position: relative; }
+.absolute { position: absolute; }
+
+/* ============================
+   Spacing Utilities
+   ============================ */
+.px-3 { padding-left: 12px; padding-right: 12px; }
+.px-4 { padding-left: 16px; padding-right: 16px; }
+.py-1 { padding-top: 4px; padding-bottom: 4px; }
+.py-1\.5 { padding-top: 6px; padding-bottom: 6px; }
+.py-2 { padding-top: 8px; padding-bottom: 8px; }
+.py-3 { padding-top: 12px; padding-bottom: 12px; }
+.py-4 { padding-top: 16px; padding-bottom: 16px; }
+.py-12 { padding-top: 48px; padding-bottom: 48px; }
+.py-16 { padding-top: 64px; padding-bottom: 64px; }
+.p-0 { padding: 0; }
+.p-2 { padding: 8px; }
+.p-3 { padding: 12px; }
+.p-4 { padding: 16px; }
+.p-6 { padding: 24px; }
+.px-3 { padding-left: 12px; padding-right: 12px; }
+.pb-1 { padding-bottom: 4px; }
+.pb-2 { padding-bottom: 8px; }
+.pt-0 { padding-top: 0; }
+.mt-1 { margin-top: 4px; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.mt-6 { margin-top: 24px; }
+.mb-1 { margin-bottom: 4px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-6 { margin-bottom: 24px; }
+.m-0 { margin: 0; }
+
+/* ============================
+   Typography Utilities
+   ============================ */
+.text-xs { font-size: 11px; }
+.text-sm { font-size: 13px; }
+.text-base { font-size: 15px; }
+.text-lg { font-size: 18px; }
+.text-xl { font-size: 22px; }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+.text-left { text-align: left; }
+.whitespace-nowrap { white-space: nowrap; }
+.text-muted-foreground { color: hsl(var(--muted-foreground)); }
+.text-primary { color: hsl(var(--primary)); }
+.text-foreground { color: hsl(var(--foreground)); }
+.text-profit { color: hsl(var(--profit)); }
+.text-loss { color: hsl(var(--loss)); }
+
+/* ============================
+   Background Utilities
+   ============================ */
+.bg-background { background: hsl(var(--background)); }
+.bg-card { background: hsl(var(--card)); }
+.bg-muted { background: hsl(var(--muted)); }
+.bg-primary { background: hsl(var(--primary)); }
+.bg-primary-foreground { background: hsl(var(--primary-foreground)); }
+.bg-accent { background: hsl(var(--accent)); }
+.bg-foreground { background: hsl(var(--foreground)); }
+
+/* ============================
+   Border Utilities
+   ============================ */
+.border { border: 1px solid hsl(var(--border)); }
+.border-b { border-bottom: 1px solid hsl(var(--border)); }
+.border-r { border-right: 1px solid hsl(var(--border)); }
+.border-t { border-top: 1px solid hsl(var(--border)); }
+.border-transparent { border-color: transparent; }
+.border-border { border-color: hsl(var(--border)); }
+.border-input { border-color: hsl(var(--input)); }
+.border-primary { border-color: hsl(var(--primary)); }
+.rounded-md { border-radius: calc(var(--radius) - 2px); }
+.rounded-lg { border-radius: var(--radius); }
+.rounded-full { border-radius: 9999px; }
+.shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.shadow-md { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+
+/* ============================
+   Interactive Utilities
+   ============================ */
+.cursor-pointer { cursor: pointer; }
+.cursor-not-allowed { cursor: not-allowed; }
+.select-none { -webkit-user-select: none; user-select: none; }
+.pointer-events-none { pointer-events: none; }
+.transition-colors { transition: color 0.15s, background-color 0.15s, border-color 0.15s; }
+.transition-all { transition: all 0.15s; }
+.no-underline { text-decoration: none; }
+.outline-none { outline: none; }
+
+/* ============================
+   Component: Sidebar
+   ============================ */
+#sidebar { width: 280px; min-width: 280px; }
+#sidebar-header { padding: 14px 16px; }
+#sidebar-header h2 { font-size: 15px; }
+#search-wrap { padding: 8px 16px; }
+#search {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--input));
+  border-radius: calc(var(--radius) - 2px);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#search:focus {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsla(var(--ring), 0.25);
+}
+#stock-count { padding: 2px 16px 8px; font-size: 11px; }
+#stock-list { flex: 1; overflow-y: auto; }
+
+.stock-item {
+  padding: 6px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid hsla(var(--border), 0.5);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.15s;
+}
+.stock-item:hover { background: hsl(var(--accent)); }
+.stock-item.active { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.stock-item .code-name { display: flex; align-items: baseline; gap: 6px; }
+.stock-item .code { font-weight: 600; font-size: 13px; }
+.stock-item .name { font-size: 11px; color: hsl(var(--muted-foreground)); }
+.stock-item.active .name { color: hsla(var(--primary-foreground), 0.7); }
+.stock-item.all-stock { background: hsl(var(--all-stock-bg)); font-weight: 600; }
+.stock-item.all-stock:hover { background: hsl(var(--accent)); }
+.stock-item.all-stock.active { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+
+.stock-status { font-size: 11px; }
+.stock-status.has-data { color: hsl(var(--profit)); }
+.stock-status.no-data { color: hsla(var(--muted-foreground), 0.5); }
+
+/* ============================
+   Component: Navigation Tabs
+   ============================ */
+.nav-bar { background: hsl(var(--card)); border-bottom: 1px solid hsl(var(--border)); padding: 0 16px; display: flex; }
+.tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.tab:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
+.tab.active { color: hsl(var(--primary)); border-bottom-color: hsl(var(--primary)); font-weight: 500; }
+.tab.no-data { color: hsla(var(--muted-foreground), 0.3); cursor: not-allowed; }
+.tab.no-data:hover { background: transparent; }
+
+/* ============================
+   Component: Chart Area
+   ============================ */
+#chart-area { flex: 1; padding: 24px; overflow: auto; display: flex; flex-direction: column; align-items: stretch; }
+.chart-card { border-radius: var(--radius); border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+#metrics-panel { display: none; }
+#lwc-container { display: none; position: relative; }
+#chart-container { width: 100%; height: 500px; position: relative; }
+#plotly-container { display: none; position: relative; }
+#equity-container { display: none; }
+#trade-table { display: none; }
+#empty-state { color: hsl(var(--muted-foreground)); font-size: 14px; text-align: center; padding: 48px 0; }
+
+/* ============================
+   Component: Metric Items
+   ============================ */
+.metric-item { flex: 1; min-width: 120px; padding: 6px 10px; text-align: center; }
+.metric-label { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 2px; }
+.metric-value { font-size: 18px; font-weight: 700; color: hsl(var(--foreground)); }
+
+/* ============================
+   Component: MA Label
+   ============================ */
+.ma-label {
+  position: absolute; top: 8px; left: 8px;
+  padding: 3px 8px; border-radius: 4px;
+  font-size: 12px; font-weight: 700;
+  z-index: 10; pointer-events: none;
+  background: hsl(var(--foreground));
+  color: hsl(var(--lwc-ma));
+}
+
+/* ============================
+   Component: Panel Header
+   ============================ */
+.panel-header {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+/* ============================
+   Component: Trade Table
+   ============================ */
+.trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.trade-table thead tr { background: hsl(var(--muted)); font-weight: 500; position: sticky; top: 0; z-index: 1; }
+.trade-table th {
+  padding: 4px 8px; text-align: right;
+  border-bottom: 1px solid hsl(var(--border));
+  font-size: 10px; color: hsl(var(--muted-foreground));
+}
+.trade-table td { padding: 3px 8px; text-align: right; font-size: 11px; }
+.trade-table tbody tr { transition: background 0.15s; }
+.trade-table tbody tr:hover { background: hsl(var(--accent)); }
+.trade-row-profit { background: hsla(var(--profit), 0.08); }
+.trade-row-loss { background: hsla(var(--loss), 0.08); }
+.trade-table .td-id { color: hsl(var(--muted-foreground)); }
+
+/* ============================
+   Component: Theme Toggle
+   ============================ */
+.theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  transition: color 0.15s, background-color 0.15s;
+  flex-shrink: 0;
+}
+.theme-btn:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+.theme-btn svg { width: 16px; height: 16px; }
+
+/* dark mode icon visibility */
+.light-icon { display: block; }
+.dark-icon { display: none; }
+.dark .light-icon { display: none; }
+.dark .dark-icon { display: block; }
+
+/* ============================
+   Component: Stock Count Badge
+   ============================ */
+.stock-badge {
+  display: inline-block;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+}
+
+/* ============================
+   Scrollbar Styling
+   ============================ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 </style>
 </head>
 <body>
-<div id="sidebar">
-  <div id="sidebar-header"><h2>热力图看板</h2><div style="font-size:11px;color:#999;margin-top:4px;">__TIMESTAMP__</div></div>
+<aside id="sidebar" class="bg-card border-r border-border flex flex-col flex-shrink-0">
+  <div id="sidebar-header" class="flex items-center justify-between">
+    <div>
+      <h2 class="text-base font-bold" style="color:hsl(var(--foreground));">热力图看板</h2>
+      <div class="text-xs text-muted-foreground" style="margin-top:4px;">__TIMESTAMP__</div>
+    </div>
+    <button class="theme-btn" onclick="toggleTheme()" aria-label="切换主题" title="切换暗色/亮色主题">
+      <!-- sun icon (light mode) -->
+      <svg class="light-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <!-- moon icon (dark mode) -->
+      <svg class="dark-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
   <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..."
        oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"></div>
-  <div id="stock-count"></div>
-  <div id="stock-list"></div>
-</div>
-<div id="main">
-  <div id="nav-market"></div>
-  <div id="nav-ktype"></div>
-  <div id="nav-chart"></div>
+  <div id="stock-count" class="text-xs text-muted-foreground"></div>
+  <div id="stock-list" class="flex-1 overflow-auto"></div>
+</aside>
+<main id="main" class="flex-1 flex flex-col overflow-auto">
+  <nav id="nav-market" class="nav-bar"></nav>
+  <nav id="nav-ktype" class="nav-bar"></nav>
+  <nav id="nav-chart" class="nav-bar"></nav>
   <div id="chart-area">
-    <div id="metrics-panel"></div>
-    <div id="lwc-container" style="display:none;position:relative;"><div id="chart-container" style="height:500px;position:relative;"></div></div>
-    <div id="plotly-container" style="display:none;position:relative;"></div>
-    <div id="equity-container" style="display:none;margin-top:8px;border-radius:4px;"></div>
-    <div id="trade-table" style="display:none;margin-top:8px;border-radius:4px;overflow:auto;"></div>
+    <div id="metrics-panel" class="chart-card p-4 mb-6" style="display:none;"></div>
+    <div id="lwc-container" class="chart-card overflow-hidden" style="display:none;position:relative;"><div id="chart-container" style="height:500px;position:relative;"></div></div>
+    <div id="plotly-container" class="chart-card" style="display:none;position:relative;"></div>
+    <div id="equity-container" class="chart-card" style="display:none;margin-top:24px;"></div>
+    <div id="trade-table" class="chart-card overflow-auto" style="display:none;margin-top:24px;"></div>
     <div id="empty-state">请选择周期和市场</div>
   </div>
-</div>
+</main>
 <script id="heatmap-data" type="application/json">__DATA__</script>
 <script>
+// ── Theme toggle ──
+function toggleTheme() {
+  var d = document.documentElement;
+  d.classList.toggle('dark');
+  localStorage.setItem('kanban-theme', d.classList.contains('dark') ? 'dark' : 'light');
+  // Refresh charts to use new theme colors
+  if (typeof renderChart === 'function') renderChart();
+}
+
+// ── CSS variable reader for LWC chart colors ──
+function _c(varName, fallback) {
+  try {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    if (!v) return fallback;
+    // Handle rgba() format for equity top/bottom
+    if (varName.indexOf('equity') >= 0) {
+      var parts = v.split(' ');
+      if (parts.length === 4) {
+        return 'rgba(' + parts[0] + ',' + parts[1] + ',' + parts[2] + ',' + parts[3] + ')';
+      }
+    }
+    return 'hsl(' + v + ')';
+  } catch(e) { return fallback; }
+}
+
 try {
 var D = JSON.parse(document.getElementById('heatmap-data').textContent);
 var ALL_KTYPES = ["1W","1D"];
@@ -159,13 +549,13 @@ function renderStockList(stocks, figs) {
   for(var i=0;i<stocks.length;i++) {
     var s=stocks[i], f=figs[s.code], ok=f&&Object.keys(f).length;
     if(s.code==="__ALL__") {
-      h+="<div class=\"stock-item\" data-code=\"__ALL__\" onclick=\"selectStock('__ALL__')\" style=\"background:#fff3cd;font-weight:600;\">"+
+      h+="<div class=\"stock-item all-stock\" data-code=\"__ALL__\" onclick=\"selectStock('__ALL__')\">"+
           "<div class=\"code-name\"><span class=\"code\">📊 "+s.name+"</span></div>"+
-          "<span style=\"font-size:10px;color:#27ae60;\">全市场</span></div>";
+          "<span class=\"stock-status has-data\">全市场</span></div>";
     } else {
       h+="<div class=\"stock-item\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
           "<div class=\"code-name\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
-          "<span style=\"font-size:10px;color:"+(ok?"#27ae60":"#ccc")+";\">"+(ok?"有数据":"无数据")+"</span></div>";
+          "<span class=\"stock-status "+(ok?"has-data":"no-data")+"\">"+(ok?"有数据":"无数据")+"</span></div>";
     }
   }
   document.getElementById("stock-list").innerHTML=h;
@@ -234,29 +624,29 @@ function renderChart() {
   if(figs[currentType]._lwc) {
     document.getElementById('lwc-container').style.display = 'block';
     _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
-      layout: { textColor: '#333', background: { type: 'solid', color: '#fff' } },
-      grid: { vertLines: { color: '#e0e0e0' }, horzLines: { color: '#e0e0e0' } },
+      layout: { textColor: _c('--lwc-text','#333'), background: { type: 'solid', color: _c('--lwc-bg','#fff') } },
+      grid: { vertLines: { color: _c('--lwc-grid','#e0e0e0') }, horzLines: { color: _c('--lwc-grid','#e0e0e0') } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-      timeScale: { borderColor: '#ddd' },
-      rightPriceScale: { borderColor: '#ddd' },
+      timeScale: { borderColor: _c('--lwc-border','#ddd') },
+      rightPriceScale: { borderColor: _c('--lwc-border','#ddd') },
       height: 500,
     });
     var d = figs[currentType];
     var cs = _lwcChart.addSeries(LightweightCharts.CandlestickSeries, {
-      upColor: '#000000', downColor: '#b0b0b0',
-      borderUpColor: '#000000', borderDownColor: '#b0b0b0',
-      wickUpColor: '#000000', wickDownColor: '#b0b0b0',
+      upColor: _c('--lwc-up','#000000'), downColor: _c('--lwc-down','#b0b0b0'),
+      borderUpColor: _c('--lwc-up','#000000'), borderDownColor: _c('--lwc-down','#b0b0b0'),
+      wickUpColor: _c('--lwc-up','#000000'), wickDownColor: _c('--lwc-down','#b0b0b0'),
     });
     cs.setData(d.candles);
     if(d.mas && d.mas.length) {
       var ml = _lwcChart.addSeries(LightweightCharts.LineSeries, {
-        color: '#f5c542', lineWidth: 1.5, priceLineVisible: false,
+        color: _c('--lwc-ma','#f5c542'), lineWidth: 1.5, priceLineVisible: false,
       });
       ml.setData(d.mas);
     }
     // 左上角 MA 标签
     var _maLabel = document.createElement('div');
-    _maLabel.style.cssText = 'position:absolute;top:8px;left:8px;background:#333;color:#f5c542;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:bold;z-index:10;pointer-events:none;';
+    _maLabel.className = 'ma-label';
     _maLabel.textContent = 'MA' + d.best_ma;
     document.getElementById('chart-container').appendChild(_maLabel);
 
@@ -264,7 +654,7 @@ function renderChart() {
     var _mp = document.getElementById('metrics-panel');
     _mp.style.display = 'block';
     if(d.metrics && Object.keys(d.metrics).length) {
-      var _html = '<div style="display:flex;flex-wrap:wrap;">';
+      var _html = '<div class="flex flex-wrap">';
       var _items = [
         '收益率','年化收益率','买入持有收益率','超额收益率',
         '最大回撤','夏普比率','盈利因子','盈亏比',
@@ -273,9 +663,9 @@ function renderChart() {
       _items.forEach(function(k) {
         var v = d.metrics[k];
         if(v !== undefined) {
-          _html += '<div style="flex:1;min-width:120px;padding:6px 10px;text-align:center;">';
-          _html += '<div style="font-size:11px;color:#999;margin-bottom:2px;">' + k + '</div>';
-          _html += '<div style="font-size:18px;font-weight:bold;color:#333;">' + _fmt(k, v) + '</div>';
+          _html += '<div class="metric-item">';
+          _html += '<div class="metric-label">' + k + '</div>';
+          _html += '<div class="metric-value">' + _fmt(k, v) + '</div>';
           _html += '</div>';
         }
       });
@@ -293,17 +683,17 @@ function renderChart() {
     if(d.equity && d.equity.length) {
       var _eqc = document.getElementById('equity-container');
       _eqc.style.display = 'block';
-      _eqc.innerHTML = '<div style="padding:4px 10px;font-size:11px;color:#999;background:#fafafa;border-bottom:1px solid #e0e0e0;">资金曲线</div>';
+      _eqc.innerHTML = '<div class="panel-header">资金曲线</div>';
       _eqChart = LightweightCharts.createChart(_eqc, {
-        layout: { textColor: '#555', background: { type: 'solid', color: '#fff' }, fontSize: 10 },
-        grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
-        rightPriceScale: { borderColor: '#e0e0e0', scaleMargins: { top: 0.1, bottom: 0.2 } },
-        timeScale: { borderColor: '#e0e0e0', timeVisible: false },
+        layout: { textColor: _c('--lwc-text','#555'), background: { type: 'solid', color: _c('--lwc-bg','#fff') }, fontSize: 10 },
+        grid: { vertLines: { color: _c('--lwc-grid','#f0f0f0') }, horzLines: { color: _c('--lwc-grid','#f0f0f0') } },
+        rightPriceScale: { borderColor: _c('--lwc-border','#e0e0e0'), scaleMargins: { top: 0.1, bottom: 0.2 } },
+        timeScale: { borderColor: _c('--lwc-border','#e0e0e0'), timeVisible: false },
         height: 140,
         handleScroll: false, handleScale: false,
       });
       var _eqSeries = _eqChart.addSeries(LightweightCharts.AreaSeries, {
-        lineColor: '#2196f3', topColor: 'rgba(33,150,243,0.15)', bottomColor: 'rgba(33,150,243,0.01)',
+        lineColor: _c('--lwc-equity-line','#2196f3'), topColor: _c('--lwc-equity-top','rgba(33,150,243,0.15)'), bottomColor: _c('--lwc-equity-bottom','rgba(33,150,243,0.01)'),
         lineWidth: 2, priceLineVisible: false,
       });
       _eqSeries.setData(d.equity);
@@ -314,35 +704,35 @@ function renderChart() {
     var _tt = document.getElementById('trade-table');
     _tt.style.display = 'none';
     if(d.trade_table && d.trade_table.length) {
-      var _tbl = '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
-      _tbl += '<thead><tr style="background:#f5f5f5;font-weight:bold;position:sticky;top:0;z-index:1;">';
-      ['订单ID','开仓时间','开仓价格','买入股数','平仓时间','平仓价格','卖出股数','交易状态','盈亏类型','收益金额','收益率','买入手续费','卖出手续费','开仓前现金','开仓后现金','平仓前现金','平仓后现金','持仓K线数'].forEach(function(h) { _tbl += '<th style="padding:4px 6px;text-align:right;border-bottom:1px solid #e0e0e0;font-size:10px;">' + h + '</th>'; });
+      var _tbl = '<table class="trade-table">';
+      _tbl += '<thead><tr>';
+      ['订单ID','开仓时间','开仓价格','买入股数','平仓时间','平仓价格','卖出股数','交易状态','盈亏类型','收益金额','收益率','买入手续费','卖出手续费','开仓前现金','开仓后现金','平仓前现金','平仓后现金','持仓K线数'].forEach(function(h) { _tbl += '<th>' + h + '</th>'; });
       _tbl += '</tr></thead><tbody>';
       d.trade_table.forEach(function(r) {
-        var cls = r['订单盈亏类型'] === '盈利' ? '#eef7ee' : '#fdecec';
-        _tbl += '<tr style="background:' + cls + ';">';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;color:#999;">' + (r['订单ID']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['开仓时间']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['开仓价格']||0).toFixed(2) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['买入股数']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['平仓时间']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['平仓价格']||0).toFixed(2) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['卖出股数']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['交易状态']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['订单盈亏类型']||'') + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['收益金额']||0).toFixed(2) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['收益率(%)']||0).toFixed(2) + '%</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['买入手续费']||0).toFixed(4) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['卖出手续费']||0).toFixed(4) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['开仓前可用现金']||0)===0?'':(r['开仓前可用现金']||0).toFixed(2)) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['开仓后可用现金']||0)===0?'':(r['开仓后可用现金']||0).toFixed(2)) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['平仓前可用现金']||0).toFixed(2)) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + ((r['平仓后可用现金']||0).toFixed(2)) + '</td>';
-        _tbl += '<td style="padding:3px 6px;text-align:right;font-size:11px;">' + (r['持仓K线数']||'') + '</td>';
+        var cls = r['订单盈亏类型'] === '盈利' ? 'trade-row-profit' : 'trade-row-loss';
+        _tbl += '<tr class="' + cls + '">';
+        _tbl += '<td class="td-id">' + (r['订单ID']||'') + '</td>';
+        _tbl += '<td>' + (r['开仓时间']||'') + '</td>';
+        _tbl += '<td>' + (r['开仓价格']||0).toFixed(2) + '</td>';
+        _tbl += '<td>' + (r['买入股数']||'') + '</td>';
+        _tbl += '<td>' + (r['平仓时间']||'') + '</td>';
+        _tbl += '<td>' + (r['平仓价格']||0).toFixed(2) + '</td>';
+        _tbl += '<td>' + (r['卖出股数']||'') + '</td>';
+        _tbl += '<td>' + (r['交易状态']||'') + '</td>';
+        _tbl += '<td>' + (r['订单盈亏类型']||'') + '</td>';
+        _tbl += '<td>' + (r['收益金额']||0).toFixed(2) + '</td>';
+        _tbl += '<td>' + (r['收益率(%)']||0).toFixed(2) + '%</td>';
+        _tbl += '<td>' + (r['买入手续费']||0).toFixed(4) + '</td>';
+        _tbl += '<td>' + (r['卖出手续费']||0).toFixed(4) + '</td>';
+        _tbl += '<td>' + ((r['开仓前可用现金']||0)===0?'':(r['开仓前可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td>' + ((r['开仓后可用现金']||0)===0?'':(r['开仓后可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td>' + ((r['平仓前可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td>' + ((r['平仓后可用现金']||0).toFixed(2)) + '</td>';
+        _tbl += '<td>' + (r['持仓K线数']||'') + '</td>';
         _tbl += '</tr>';
       });
       _tbl += '</tbody></table>';
-      _tt.innerHTML = '<div style="padding:4px 10px;font-size:11px;color:#999;background:#fafafa;border-bottom:1px solid #e0e0e0;">交易明细</div>' + _tbl;
+      _tt.innerHTML = '<div class="panel-header">交易明细</div>' + _tbl;
       _tt.style.display = 'block';
     }
     return;

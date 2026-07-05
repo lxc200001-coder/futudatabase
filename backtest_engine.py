@@ -12,6 +12,7 @@ backtest_engine.py - 逐K线策略回测引擎（独立于现有框架）
 
 import os
 import sys
+import atexit
 import argparse
 import time
 import concurrent.futures
@@ -1231,6 +1232,16 @@ def _worker_stock_walkforward(code, ktype, windows, ma_range, trade_mode, slippa
     except Exception as e:
         return code, None, None, None, str(e)
 
+
+def _cleanup_all_tmp():
+    """清理所有残留的 _tmp_*.parquet 临时文件"""
+    import glob as _glob
+    _pat = os.path.join(PROJECT_ROOT, "results_uscncc", "_tmp_*.parquet")
+    for _f in _glob.glob(_pat):
+        try: os.remove(_f)
+        except: pass
+
+atexit.register(_cleanup_all_tmp)
 
 def run_backtest(ktype="1w", ma_list=None, ma_start=2, ma_end=61, ma_step=1,
                  trade_mode="close", slippage=0.0, fee_rate=0.001, markets=None):
