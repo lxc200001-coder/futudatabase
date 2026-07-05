@@ -643,7 +643,7 @@ function renderChart() {
     // 图表容器边框与 ToggleGroup 一致
     document.getElementById('lwc-container').style.border = '1px solid hsl(var(--input))';
     _lwcChart = LightweightCharts.createChart(document.getElementById("chart-container"), {
-      layout: { textColor: _c('--lwc-text','#333'), background: { type: 'solid', color: _c('--lwc-bg','#fff') } },
+      layout: { textColor: _c('--lwc-text','#333'), background: { type: 'solid', color: _c('--lwc-bg','#fff') }, panes: { separatorColor: 'transparent' } },
       grid: { vertLines: { color: _c('--lwc-grid','#e0e0e0') }, horzLines: { color: _c('--lwc-grid','#e0e0e0') } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
       timeScale: { borderColor: _c('--lwc-border','#ddd') },
