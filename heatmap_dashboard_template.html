@@ -646,9 +646,9 @@ function renderChart() {
     });
     // ── 主图：K线 ──
     var cs = _lwcChart.addSeries(LightweightCharts.CandlestickSeries, {
-      upColor: _c('--lwc-up','#000000'), downColor: _c('--lwc-down','#b0b0b0'),
-      borderUpColor: _c('--lwc-up','#000000'), borderDownColor: _c('--lwc-down','#b0b0b0'),
-      wickUpColor: _c('--lwc-up','#000000'), wickDownColor: _c('--lwc-down','#b0b0b0'),
+      upColor: '#22c55e', downColor: '#ef4444',
+      borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
     });
     cs.setData(d.candles);
     if(d.mas && d.mas.length) {
