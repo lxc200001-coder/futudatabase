@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<script>(function(){try{var t=localStorage.getItem('kanban-theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark');}catch(e){}})();</script>
+<script>(function(){try{var t=localStorage.getItem('kanban-theme');if(t==='dark'||!t||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark');}catch(e){}})();</script>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -80,7 +80,6 @@ tailwind.config = {
   --lwc-equity-line: 210 90% 54%;
   --lwc-equity-top: 33 150 243 0.15;
   --lwc-equity-bottom: 33 150 243 0.01;
-  --all-stock-bg: 211 100% 97%;
 }
 
 .dark {
@@ -118,7 +117,6 @@ tailwind.config = {
   --lwc-equity-line: 210 70% 65%;
   --lwc-equity-top: 100 180 255 0.15;
   --lwc-equity-bottom: 100 180 255 0.01;
-  --all-stock-bg: 211 50% 12%;
   --sidebar-width: 280px;
   --header-height: 52px;
 }
@@ -167,14 +165,14 @@ tailwind.config = {
   user-select: none;
 }
 .stock-item:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
-.stock-item.active { color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); }
+.stock-item.active { color: hsl(var(--background)); background: hsl(var(--foreground)); }
 .stock-item .code-name { display: flex; align-items: baseline; gap: 6px; }
 .stock-item .code { font-weight: 600; font-size: 13px; }
 .stock-item .name { font-size: 11px; color: hsl(var(--muted-foreground)); }
-.stock-item.active .name { color: hsla(var(--primary-foreground), 0.7); }
+.stock-item.active .name { color: hsla(var(--background), 0.7); }
 .stock-item.all-stock { font-weight: 600; }
 .stock-item.all-stock:hover { background: hsl(var(--accent)); }
-.stock-item.all-stock.active { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.stock-item.all-stock.active { color: hsl(var(--background)); background: hsl(var(--foreground)); }
 
 .stock-status { font-size: 11px; }
 .stock-status.has-data { color: hsl(var(--profit)); }
@@ -197,9 +195,11 @@ tailwind.config = {
   user-select: none;
 }
 .sidebar-nav-item:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
-.sidebar-nav-item.active { color: hsl(var(--primary)); background: hsl(var(--accent)); font-weight: 500; }
+.sidebar-nav-item.active { color: hsl(var(--background)); background: hsl(var(--foreground)); font-weight: 500; }
 .nav-icon { flex-shrink: 0; opacity: 0.7; }
 .sidebar-nav-item.active .nav-icon { opacity: 1; }
+.sidebar-nav-item.active .nav-icon,
+.stock-item.active .nav-icon { opacity: 1; }
 
 /* ============================
    Component: Chart Area
