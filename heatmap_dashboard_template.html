@@ -809,7 +809,7 @@ function renderChart() {
         }
         if(_ct) {
           _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(_ct.trade_status||'')+'</td>';
-          _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;'+(Number(_ct.close_pnl)>0?'color:#22c55e;':(Number(_ct.close_pnl)<0?'color:#ef4444;':''))+'" rowspan="2">'+(Number(_ct.close_pnl)||0).toFixed(2)+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:right;vertical-align:middle;'+(Number(_ct.close_pnl)>0?'color:#22c55e;':(Number(_ct.close_pnl)<0?'color:#ef4444;':''))+'" rowspan="2">'+(Number(_ct.close_pnl)||0).toFixed(2)+'</td>';
           _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(_ct.close_type||'')+'</td>';
           _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(_ct.close_pnl_type||'')+'</td>';
         } else {
