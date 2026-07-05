@@ -1787,7 +1787,7 @@ def generate_heatmap_dashboard_from_db(db_path):
     if not _wf_perf.empty:
         for _, _r in _wf_perf.iterrows():
             _wf_perf_map[(_r["code"], _r["ktype"])] = _r.to_dict()
-    # 按 (code, ktype) 分组配对开多/平多
+    # 按 (code, ktype) 分组配对开多/平多（每组含 open+close 两行）
     _trades_map = {}
     if not _wf_trades.empty:
         for _code in _wf_trades["code"].unique():
@@ -1796,19 +1796,22 @@ def generate_heatmap_dashboard_from_db(db_path):
                 if _tdf.empty: continue
                 _opens = _tdf[_tdf["trade_action"]=="开多"].set_index("trade_id")
                 _closes = _tdf[_tdf["trade_action"]=="平多"].set_index("trade_id")
-                _rows = []
+                _groups = []
                 for _tid in sorted(set(_opens.index) | set(_closes.index)):
                     _or = _opens.loc[_tid] if _tid in _opens.index else None
                     _cr = _closes.loc[_tid] if _tid in _closes.index else None
-                    _r = {}
-                    _r["trade_action"] = "开多"
+                    if _or is None: continue  # 没有开多则跳过
+                    _g = {"trade_id": int(_tid), "open": {}, "close": None}
                     for _c in ["trade_price_after_slippage","trade_shares","slippage","trade_amount","commission"]:
-                        _r[_c] = float(_or[_c]) if _or is not None else (float(_cr[_c]) if _cr is not None else 0)
-                    for _c in ["trade_status","close_pnl","close_type","close_pnl_type"]:
-                        _r[_c] = str(_cr[_c]) if _cr is not None else ""
-                    _r["trade_id"] = int(_tid)
-                    _rows.append(_r)
-                _trades_map[(_code, _kt)] = _rows
+                        _g["open"][_c] = float(_or[_c])
+                    if _cr is not None:
+                        _g["close"] = {}
+                        for _c in ["trade_price_after_slippage","trade_shares","slippage","trade_amount","commission"]:
+                            _g["close"][_c] = float(_cr[_c])
+                        for _c in ["trade_status","close_pnl","close_type","close_pnl_type"]:
+                            _g["close"][_c] = str(_cr[_c])
+                    _groups.append(_g)
+                _trades_map[(_code, _kt)] = _groups
 
     def get_market(code):
         if code.startswith("CC."): return "cc"

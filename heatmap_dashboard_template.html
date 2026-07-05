@@ -772,34 +772,55 @@ function renderChart() {
     // ── 交易明细表格 ──
     var _tt = document.getElementById('trade-table');
     _tt.style.display = 'none';
-    if(d.trades && d.trades.length) {
-      var _colDefs = [
-        ['订单ID','trade_id','right'],['方向','trade_action','center'],
-        ['成交价','trade_price_after_slippage','right'],['股数','trade_shares','right'],
-        ['滑点','slippage','right'],['成交额','trade_amount','right'],
-        ['手续费','commission','right'],['状态','trade_status','center'],
-        ['盈亏','close_pnl','center'],['平仓类型','close_type','center'],
-        ['盈亏类型','close_pnl_type','center'],
-      ];
+        if(d.trades && d.trades.length) {
       var _hdr = '<div class="overflow-x-auto"><table class="min-w-full text-xs" style="border-collapse:collapse;">';
       _hdr += '<thead><tr style="background:hsl(var(--muted));">';
-      _colDefs.forEach(function(c){_hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:'+c[2]+';">'+c[0]+'</th>';});
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:center;">订单ID</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:center;">方向</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:right;">成交价</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:right;">股数</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:right;">滑点</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:right;">成交额</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:right;">手续费</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:center;">状态</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:center;">盈亏</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:center;">平仓</th>';
+      _hdr += '<th class="px-3 py-2 font-medium whitespace-nowrap" style="color:hsl(var(--muted-foreground));text-align:center;">盈亏类型</th>';
       _hdr += '</tr></thead><tbody>';
       for(var _ti=0;_ti<d.trades.length;_ti++) {
-        var r=d.trades[_ti];
-        var _pclass = r.close_pnl_type === '盈利' ? 'trade-row-profit' : (r.close_pnl_type === '亏损' ? 'trade-row-loss' : '');
-        _hdr += '<tr class="'+_pclass+'" style="border-bottom:1px solid hsla(var(--border),0.5);">';
-        _hdr += '<td class="px-3 py-2 td-id" style="text-align:right;">'+r.trade_id+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(r.trade_action||'')+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(r.trade_price_after_slippage||0).toFixed(2)+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+r.trade_shares+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(r.slippage||0).toFixed(2)+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(r.trade_amount||0).toFixed(2)+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(r.commission||0).toFixed(2)+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(r.trade_status||'')+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(r.close_pnl ? Number(r.close_pnl).toFixed(2) : '')+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(r.close_type||'')+'</td>';
-        _hdr += '<td class="px-3 py-2" style="text-align:center;">'+(r.close_pnl_type||'')+'</td>';
+        var g=d.trades[_ti];
+        var _o = g.open, _c = g.close;
+        var _cls = (_c && _c.close_pnl_type === '盈利') ? 'trade-row-profit' : ((_c && _c.close_pnl_type === '亏损') ? 'trade-row-loss' : '');
+        // Row 1: open
+        _hdr += '<tr class="'+_cls+'" style="border-bottom:none;">';
+        _hdr += '<td class="px-3 py-2 td-id" style="text-align:center;vertical-align:middle;" rowspan="2">'+g.trade_id+'</td>';
+        _hdr += '<td class="px-3 py-2" style="text-align:center;">开多</td>';
+        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_o.trade_price_after_slippage||0).toFixed(2)+'</td>';
+        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+_o.trade_shares+'</td>';
+        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_o.slippage||0).toFixed(2)+'</td>';
+        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_o.trade_amount||0).toFixed(2)+'</td>';
+        _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_o.commission||0).toFixed(2)+'</td>';
+        if(_c) {
+          _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(_c.trade_status||'')+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(Number(_c.close_pnl)||0).toFixed(2)+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(_c.close_type||'')+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:center;vertical-align:middle;" rowspan="2">'+(_c.close_pnl_type||'')+'</td>';
+        } else {
+          for(var _xx=0;_xx<4;_xx++) _hdr += '<td style="display:none;"></td>';
+        }
+        _hdr += '</tr>';
+        // Row 2: close
+        _hdr += '<tr class="'+_cls+'" style="border-bottom:1px solid hsla(var(--border),0.5);">';
+        _hdr += '<td class="px-3 py-2" style="text-align:center;">平多</td>';
+        if(_c) {
+          _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_c.trade_price_after_slippage||0).toFixed(2)+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:right;">'+_c.trade_shares+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_c.slippage||0).toFixed(2)+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_c.trade_amount||0).toFixed(2)+'</td>';
+          _hdr += '<td class="px-3 py-2" style="text-align:right;">'+(_c.commission||0).toFixed(2)+'</td>';
+        } else {
+          _hdr += '<td colspan="5" class="px-3 py-2" style="text-align:center;color:hsl(var(--muted-foreground));">持股中</td>';
+        }
         _hdr += '</tr>';
       }
       _hdr += '</tbody></table></div>';
