@@ -65,6 +65,12 @@ tailwind.config = {
   --loss: 0 84% 60%;
   --sidebar-width: 280px;
   --header-height: 52px;
+  --sidebar-bg: 250 250 250;
+  --sidebar-fg: 30 30 30;
+  --sidebar-muted: 120 120 120;
+  --sidebar-border: 220 220 220;
+  --sidebar-accent: 235 235 235;
+  --right-bg: 255 255 255;
   --chart-1: 211 80% 55%;
   --chart-2: 142 60% 50%;
   --chart-3: 35 90% 55%;
@@ -119,6 +125,12 @@ tailwind.config = {
   --lwc-equity-bottom: 100 180 255 0.01;
   --sidebar-width: 280px;
   --header-height: 52px;
+  --sidebar-bg: 23 23 23;
+  --sidebar-fg: 210 210 210;
+  --sidebar-muted: 140 140 140;
+  --sidebar-border: 46 46 46;
+  --sidebar-accent: 40 40 40;
+  --right-bg: 10 10 10;
 }
 
 /* ============================
@@ -300,7 +312,7 @@ tailwind.config = {
 </style>
 </head>
 <body class="flex h-screen overflow-hidden bg-background text-foreground font-sans antialiased">
-<aside id="sidebar" class="flex flex-col" style="width:var(--sidebar-width);min-width:var(--sidebar-width);--background:0 0% 9%;--foreground:0 0% 82%;--muted-foreground:0 0% 56%;--border:0 0% 18%;--input:0 0% 18%;--accent:0 0% 14%;--ring:211 100% 55%;--primary:211 100% 55%;--primary-foreground:0 0% 100%;--profit:142 50% 55%;--loss:0 63% 50%;background:hsl(0,0%,9%);border-right:1px solid hsl(0,0%,18%);color:hsl(0,0%,82%);">
+<aside id="sidebar" class="flex flex-col" style="width:var(--sidebar-width);min-width:var(--sidebar-width);--background:0 0% 9%;--foreground:0 0% 82%;--muted-foreground:0 0% 56%;--border:0 0% 18%;--input:0 0% 18%;--accent:0 0% 14%;--ring:211 100% 55%;--primary:211 100% 55%;--primary-foreground:0 0% 100%;--profit:142 50% 55%;--loss:0 63% 50%;background:rgb(var(--sidebar-bg));border-right:1px solid rgb(var(--sidebar-border));color:rgb(var(--sidebar-fg));">
   <!-- Sidebar Header -->
   <div class="flex h-[--header-height] shrink-0 items-center gap-2 border-b px-4">
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
@@ -356,7 +368,7 @@ tailwind.config = {
   </div>
 </aside>
 <main id="main" class="flex-1 flex flex-col overflow-auto bg-background p-4">
-  <div class="flex-1 flex flex-col rounded-xl overflow-hidden" style="background:rgb(10,10,10);">
+  <div class="flex-1 flex flex-col rounded-xl overflow-hidden" style="background:rgb(var(--right-bg));">
     <!-- Header -->
     <header class="flex h-[--header-height] shrink-0 items-center gap-2 border-b border-white/10 px-6" style="color:rgb(210,210,210);">
       <h1 class="text-base font-medium">热力图看板</h1>
