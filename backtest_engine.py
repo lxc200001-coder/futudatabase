@@ -1883,10 +1883,10 @@ def generate_heatmap_dashboard_from_db(db_path):
                         if pd.notna(_ts) and _ts:
                             _ts_str = f"{_ts:.4f}".rstrip("0").rstrip(".") if isinstance(_ts, float) else str(int(_ts))
                         if _sig_s == "开多":
-                            _sig.append({"time":_t,"position":"inBar","color":"#fafafa","shape":"circle","text":"🅑","size":1.5})
+                            _sig.append({"time":_t,"position":"inBar","color":"#fafafa","shape":"circle","text":"B","size":1.5})
                             if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
                         elif _sig_s == "平多":
-                            _sig.append({"time":_t,"position":"inBar","color":"#888888","shape":"circle","text":"🅢","size":1.5})
+                            _sig.append({"time":_t,"position":"inBar","color":"#888888","shape":"circle","text":"S","size":1.5})
                             if pd.notna(_tp): _sig[-1]["price"] = round(float(_tp), 2)
                         # 副图数据（不设 >0 过滤，避免背景数据大量缺失导致只显示零星数据点）
                         _vol = _dfk["volume"].iloc[_i]
