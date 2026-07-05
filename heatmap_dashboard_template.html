@@ -179,6 +179,9 @@ tailwind.config = {
    Component: Sidebar Nav Items
    ============================ */
 .sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
@@ -190,6 +193,8 @@ tailwind.config = {
 }
 .sidebar-nav-item:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
 .sidebar-nav-item.active { color: hsl(var(--primary)); background: hsl(var(--accent)); font-weight: 500; }
+.nav-icon { flex-shrink: 0; opacity: 0.7; }
+.sidebar-nav-item.active .nav-icon { opacity: 1; }
 
 /* ============================
    Component: Chart Area
@@ -295,50 +300,61 @@ tailwind.config = {
 <body class="flex h-screen overflow-hidden bg-background text-foreground font-sans antialiased">
 <aside id="sidebar" class="flex flex-col bg-card border-r border-border" style="width:var(--sidebar-width);min-width:var(--sidebar-width);">
   <!-- Sidebar Header -->
-  <div class="flex h-[--header-height] items-center justify-between border-b px-4">
-    <div class="flex items-center gap-2">
-      <span class="text-base font-semibold">热力图看板</span>
-    </div>
-    <button class="theme-btn" onclick="toggleTheme()" aria-label="切换主题" title="切换暗色/亮色主题">
+  <div class="flex h-[--header-height] shrink-0 items-center gap-2 border-b px-4">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+    <span class="text-base font-semibold">热力图看板</span>
+    <button class="theme-btn ml-auto" onclick="toggleTheme()" aria-label="切换主题" title="切换暗色/亮色主题">
       <svg class="light-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="dark-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
   </div>
 
-  <!-- Nav: Ktype -->
-  <div class="px-3 pt-3 pb-1">
-    <div class="text-xs font-medium text-muted-foreground mb-1 px-3">周期</div>
-    <div id="nav-ktype" class="flex flex-col gap-0.5"></div>
+  <!-- Sidebar Content (scrollable) -->
+  <div class="flex-1 overflow-auto px-3 py-3 space-y-4">
+
+    <!-- Nav: Ktype -->
+    <div>
+      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">周期</div>
+      <div id="nav-ktype" class="flex flex-col gap-0.5"></div>
+    </div>
+
+    <!-- Nav: Market -->
+    <div>
+      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">市场</div>
+      <div id="nav-market" class="flex flex-col gap-0.5"></div>
+    </div>
+
+    <!-- Nav: Chart Types -->
+    <div>
+      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">图表</div>
+      <div id="nav-chart" class="flex flex-col gap-0.5"></div>
+    </div>
+
+    <!-- Separator -->
+    <div class="mx-3 h-px bg-border"></div>
+
+    <!-- Search -->
+    <div>
+      <div class="px-3 pb-2">
+        <input id="search" type="text" placeholder="搜索股票代码/名称..."
+           oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"
+           class="w-full h-8 rounded-md bg-muted border border-input px-3 text-xs outline-none transition-[border-color,box-shadow] focus:border-ring focus:ring-2 focus:ring-ring/25">
+      </div>
+      <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
+      <div id="stock-list" class="flex flex-col gap-0.5"></div>
+    </div>
   </div>
-
-  <!-- Nav: Market -->
-  <div class="px-3 pb-1">
-    <div class="text-xs font-medium text-muted-foreground mb-1 px-3">市场</div>
-    <div id="nav-market" class="flex flex-col gap-0.5"></div>
-  </div>
-
-  <!-- Nav: Chart Types -->
-  <div class="px-3 pb-1">
-    <div class="text-xs font-medium text-muted-foreground mb-1 px-3">图表</div>
-    <div id="nav-chart" class="flex flex-col gap-0.5"></div>
-  </div>
-
-  <!-- Separator -->
-  <div class="mx-3 my-2 h-px bg-border"></div>
-
-  <!-- Search -->
-  <div class="px-3 pb-2">
-    <input id="search" type="text" placeholder="搜索股票代码/名称..."
-       oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"
-       class="w-full h-8 rounded-md bg-muted border border-input px-3 text-xs outline-none transition-[border-color,box-shadow] focus:border-ring focus:ring-2 focus:ring-ring/25">
-  </div>
-  <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
-
-  <!-- Stock List -->
-  <div id="stock-list" class="flex-1 overflow-auto px-3"></div>
 
   <!-- Sidebar Footer -->
-  <div class="border-t p-3 text-xs text-muted-foreground">__TIMESTAMP__</div>
+  <div class="border-t p-3">
+    <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-accent/50">
+      <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">S</div>
+      <div class="flex flex-col text-xs">
+        <span class="font-medium text-foreground">回测系统</span>
+        <span class="text-muted-foreground">__TIMESTAMP__</span>
+      </div>
+    </div>
+  </div>
 </aside>
 <main id="main" class="flex-1 flex flex-col overflow-auto">
   <!-- Header -->
@@ -423,20 +439,40 @@ function renderNavs() {
   var h="";
   for(var i=0;i<ALL_KTYPES.length;i++) {
     var k=ALL_KTYPES[i];
-    h+="<div class=\"sidebar-nav-item\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+KT_LABELS[k]+"</div>";
+    h+="<div class=\"sidebar-nav-item\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+
+      "<svg class=\"nav-icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"/><line x1=\"16\" y1=\"2\" x2=\"16\" y2=\"6\"/><line x1=\"8\" y1=\"2\" x2=\"8\" y2=\"6\"/><line x1=\"3\" y1=\"10\" x2=\"21\" y2=\"10\"/></svg>"+
+      KT_LABELS[k]+"</div>";
   }
   document.getElementById("nav-ktype").innerHTML=h;
   h="";
   for(var i=0;i<ALL_MARKETS.length;i++) {
-    h+="<div class=\"sidebar-nav-item\" data-market=\""+ALL_MARKETS[i]+"\" onclick=\"selectMarket('"+ALL_MARKETS[i]+"')\">"+MK_LABELS[ALL_MARKETS[i]]+"</div>";
+    var m=ALL_MARKETS[i];
+    var _ico = m==='us' ? '<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>' :
+      (m==='cc' ? '<rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\" ry=\"2\"/><line x1=\"8\" y1=\"21\" x2=\"16\" y2=\"21\"/><line x1=\"12\" y1=\"17\" x2=\"12\" y2=\"21\"/>' :
+      '<path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/>');
+    h+="<div class=\"sidebar-nav-item\" data-market=\""+m+"\" onclick=\"selectMarket('"+m+"')\">"+
+      "<svg class=\"nav-icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"+_ico+"</svg>"+
+      MK_LABELS[m]+"</div>";
   }
   document.getElementById("nav-market").innerHTML=h;
 }
 
 function renderChartNav() {
   var h="";
+  var _icons = [
+    '<path d=\"M18 20V10\"/><path d=\"M12 20V4\"/><path d=\"M6 20v-6\"/>',
+    '<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>',
+    '<path d=\"M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7\"/>',
+    '<path d=\"M12 20V10\"/><path d=\"M18 20V4\"/><path d=\"M6 20v-6\"/>',
+    '<path d=\"M12 2v20M2 12h20\"/>',
+    '<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>',
+    '<path d=\"M18 20V10\"/><path d=\"M12 20V4\"/><path d=\"M6 20v-6\"/>',
+    '<path d=\"M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7\"/>',
+  ];
   for(var i=0;i<CHART_TYPES.length;i++) {
-    h+="<div class=\"sidebar-nav-item\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+CHART_TYPES[i]+"</div>";
+    h+="<div class=\"sidebar-nav-item\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+
+      "<svg class=\"nav-icon\" xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"+_icons[i % _icons.length]+"</svg>"+
+      CHART_TYPES[i]+"</div>";
   }
   document.getElementById("nav-chart").innerHTML=h;
   document.querySelector("#nav-chart .sidebar-nav-item").classList.add("active");
