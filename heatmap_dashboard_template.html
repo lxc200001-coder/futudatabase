@@ -173,9 +173,7 @@ tailwind.config = {
 .stock-item.all-stock:hover { background: hsl(var(--accent)); }
 .stock-item.all-stock.active { color: hsl(var(--background)); background: hsl(var(--foreground)); }
 
-.stock-status { font-size: 11px; }
-.stock-status.has-data { color: hsl(var(--profit)); }
-.stock-status.no-data { color: hsla(var(--muted-foreground), 0.5); }
+.stock-status { font-size: 11px; display: inline-flex; align-items: center; }
 
 /* ============================
    Component: Sidebar Nav Items
@@ -523,6 +521,7 @@ function renderCombination() {
 }
 
 var currentStock=null;
+var _SIG_COLORS = {"买入":"#22c55e","卖出":"#ef4444","持有":"#3b82f6","等待":"#9ca3af"};
 function renderStockList(stocks, figs) {
   var h="";
   for(var i=0;i<stocks.length;i++) {
@@ -530,11 +529,13 @@ function renderStockList(stocks, figs) {
     if(s.code==="__ALL__") {
       h+="<div class=\"stock-item all-stock\" data-code=\"__ALL__\" onclick=\"selectStock('__ALL__')\">"+
           "<div class=\"flex flex-col\"><span class=\"code\">📊 "+s.name+"</span></div>"+
-          "<span class=\"stock-status has-data\">全市场</span></div>";
+          "<span class=\"stock-status\" style=\"color:hsl(var(--muted-foreground));\">全市场</span></div>";
     } else {
-      h+="<div class=\"stock-item\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
+      var _sig = s.signal || "";
+      var _dot = _sig && _SIG_COLORS[_sig] ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+_SIG_COLORS[_sig]+';margin-right:4px;vertical-align:middle;"></span>' : '';
+      h+="<div class=\"stock-item"+(ok?"":" no-data")+"\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
           "<div class=\"flex flex-col\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
-          "<span class=\"stock-status "+(ok?"has-data":"no-data")+"\">"+(ok?"有数据":"无数据")+"</span></div>";
+          "<span class=\"stock-status\">"+_dot+_sig+"</span></div>";
     }
   }
   document.getElementById("stock-list").innerHTML=h;

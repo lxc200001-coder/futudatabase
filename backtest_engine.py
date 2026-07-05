@@ -1788,7 +1788,10 @@ def generate_heatmap_dashboard_from_db(db_path):
             _pm = _pk[_pk["code"].apply(lambda c: get_market(c)==mkt)]
             if _pm.empty: payload_data[kt][mkt] = None; continue
             codes = sorted(_pm["code"].unique())
-            stock_list = [{"code":c,"name":_name_map.get(c,"")} for c in codes]
+            # 最新 signal（来自 WF 数据）
+            _wf_sig = _wf_k[_wf_k["ktype"]==kt].sort_values("datetime").groupby("code").last()
+            _sig_map = _wf_sig["signal"].to_dict() if not _wf_sig.empty else {}
+            stock_list = [{"code":c,"name":_name_map.get(c,""),"signal":_sig_map.get(c,"")} for c in codes]
             figures_data = {}
             all_ws_list = []
             for code in codes:
