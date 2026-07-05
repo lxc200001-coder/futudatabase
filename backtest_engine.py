@@ -1826,9 +1826,9 @@ def generate_heatmap_dashboard_from_db(db_path):
                         if pd.notna(_mv): _mal.append({"time":_t,"value":round(float(_mv),2)})
                         _sig_s = _dfk["trade_action"].iloc[_i]
                         if _sig_s == "开多":
-                            _sig.append({"time":_t,"position":"above","color":"#ef5350","shape":"arrowUp","text":"B"})
+                            _sig.append({"time":_t,"position":"aboveBar","color":"#ef5350","shape":"arrowUp","text":"B"})
                         elif _sig_s == "平多":
-                            _sig.append({"time":_t,"position":"below","color":"#26a69a","shape":"arrowDown","text":"S"})
+                            _sig.append({"time":_t,"position":"belowBar","color":"#26a69a","shape":"arrowDown","text":"S"})
                     _best = wr[wr["is_best"]=="最优"]
                     if not _best.empty: _bm = int(_best.iloc[-1]["ma_len"])
                     if _candles:
