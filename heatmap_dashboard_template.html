@@ -63,6 +63,8 @@ tailwind.config = {
   --radius: 0.5rem;
   --profit: 142 71% 45%;
   --loss: 0 84% 60%;
+  --sidebar-width: 280px;
+  --header-height: 52px;
   --chart-1: 211 80% 55%;
   --chart-2: 142 60% 50%;
   --chart-3: 35 90% 55%;
@@ -117,6 +119,8 @@ tailwind.config = {
   --lwc-equity-top: 100 180 255 0.15;
   --lwc-equity-bottom: 100 180 255 0.01;
   --all-stock-bg: 211 50% 12%;
+  --sidebar-width: 280px;
+  --header-height: 52px;
 }
 
 /* ============================
@@ -172,29 +176,25 @@ tailwind.config = {
 .stock-status.no-data { color: hsla(var(--muted-foreground), 0.5); }
 
 /* ============================
-   Component: Navigation Tabs
+   Component: Sidebar Nav Items
    ============================ */
-.nav-bar { background: hsl(var(--card)); border-bottom: 1px solid hsl(var(--border)); padding: 0 16px; display: flex; }
-.tab {
-  padding: 8px 16px;
+.sidebar-nav-item {
+  padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
+  border-radius: calc(var(--radius) - 2px);
   color: hsl(var(--muted-foreground));
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
-  white-space: nowrap;
+  transition: color 0.15s, background-color 0.15s;
   -webkit-user-select: none;
   user-select: none;
 }
-.tab:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
-.tab.active { color: hsl(var(--primary)); border-bottom-color: hsl(var(--primary)); font-weight: 500; }
-.tab.no-data { color: hsla(var(--muted-foreground), 0.3); cursor: not-allowed; }
-.tab.no-data:hover { background: transparent; }
+.sidebar-nav-item:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
+.sidebar-nav-item.active { color: hsl(var(--primary)); background: hsl(var(--accent)); font-weight: 500; }
 
 /* ============================
    Component: Chart Area
    ============================ */
-#chart-area { flex: 1; padding: 24px; overflow: auto; display: flex; flex-direction: column; align-items: stretch; }
+#chart-area { flex: 1; overflow: auto; display: flex; flex-direction: column; }
 .chart-card { border-radius: var(--radius); border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 #metrics-panel { display: none; }
 #lwc-container { display: none; position: relative; }
@@ -203,13 +203,6 @@ tailwind.config = {
 #equity-container { display: none; }
 #trade-table { display: none; }
 #empty-state { color: hsl(var(--muted-foreground)); font-size: 14px; text-align: center; padding: 48px 0; }
-
-/* ============================
-   Component: Metric Items
-   ============================ */
-.metric-item { flex: 1; min-width: 120px; padding: 6px 10px; text-align: center; }
-.metric-label { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 2px; }
-.metric-value { font-size: 18px; font-weight: 700; color: hsl(var(--foreground)); }
 
 /* ============================
    Component: MA Label
@@ -300,35 +293,83 @@ tailwind.config = {
 </style>
 </head>
 <body class="flex h-screen overflow-hidden bg-background text-foreground font-sans antialiased">
-<aside id="sidebar" class="bg-card border-r border-border flex flex-col flex-shrink-0">
-  <div id="sidebar-header" class="flex items-center justify-between">
-    <div>
-      <h2 class="text-base font-bold" style="color:hsl(var(--foreground));">热力图看板</h2>
-      <div class="text-xs text-muted-foreground" style="margin-top:4px;">__TIMESTAMP__</div>
+<aside id="sidebar" class="flex flex-col bg-card border-r border-border" style="width:var(--sidebar-width);min-width:var(--sidebar-width);">
+  <!-- Sidebar Header -->
+  <div class="flex h-[--header-height] items-center justify-between border-b px-4">
+    <div class="flex items-center gap-2">
+      <span class="text-base font-semibold">热力图看板</span>
     </div>
     <button class="theme-btn" onclick="toggleTheme()" aria-label="切换主题" title="切换暗色/亮色主题">
-      <!-- sun icon (light mode) -->
       <svg class="light-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      <!-- moon icon (dark mode) -->
       <svg class="dark-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
   </div>
-  <div id="search-wrap"><input id="search" type="text" placeholder="搜索股票代码/名称..."
-       oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"></div>
-  <div id="stock-count" class="text-xs text-muted-foreground"></div>
-  <div id="stock-list" class="flex-1 overflow-auto"></div>
+
+  <!-- Nav: Ktype -->
+  <div class="px-3 pt-3 pb-1">
+    <div class="text-xs font-medium text-muted-foreground mb-1 px-3">周期</div>
+    <div id="nav-ktype" class="flex flex-col gap-0.5"></div>
+  </div>
+
+  <!-- Nav: Market -->
+  <div class="px-3 pb-1">
+    <div class="text-xs font-medium text-muted-foreground mb-1 px-3">市场</div>
+    <div id="nav-market" class="flex flex-col gap-0.5"></div>
+  </div>
+
+  <!-- Nav: Chart Types -->
+  <div class="px-3 pb-1">
+    <div class="text-xs font-medium text-muted-foreground mb-1 px-3">图表</div>
+    <div id="nav-chart" class="flex flex-col gap-0.5"></div>
+  </div>
+
+  <!-- Separator -->
+  <div class="mx-3 my-2 h-px bg-border"></div>
+
+  <!-- Search -->
+  <div class="px-3 pb-2">
+    <input id="search" type="text" placeholder="搜索股票代码/名称..."
+       oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"
+       class="w-full h-8 rounded-md bg-muted border border-input px-3 text-xs outline-none transition-[border-color,box-shadow] focus:border-ring focus:ring-2 focus:ring-ring/25">
+  </div>
+  <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
+
+  <!-- Stock List -->
+  <div id="stock-list" class="flex-1 overflow-auto px-3"></div>
+
+  <!-- Sidebar Footer -->
+  <div class="border-t p-3 text-xs text-muted-foreground">__TIMESTAMP__</div>
 </aside>
 <main id="main" class="flex-1 flex flex-col overflow-auto">
-  <nav id="nav-market" class="nav-bar"></nav>
-  <nav id="nav-ktype" class="nav-bar"></nav>
-  <nav id="nav-chart" class="nav-bar"></nav>
-  <div id="chart-area">
-    <div id="metrics-panel" class="chart-card p-4 mb-6" style="display:none;"></div>
-    <div id="lwc-container" class="chart-card overflow-hidden" style="display:none;position:relative;"><div id="chart-container" style="height:1100px;position:relative;"></div></div>
-    <div id="plotly-container" class="chart-card" style="display:none;position:relative;"></div>
-    <div id="equity-container" class="chart-card" style="display:none;margin-top:24px;"></div>
-    <div id="trade-table" class="chart-card overflow-auto" style="display:none;margin-top:24px;"></div>
-    <div id="empty-state">请选择周期和市场</div>
+  <!-- Header -->
+  <header class="flex h-[--header-height] shrink-0 items-center gap-2 border-b px-6">
+    <h1 class="text-base font-medium">热力图看板</h1>
+  </header>
+
+  <!-- Content Area -->
+  <div id="chart-area" class="flex-1 flex flex-col p-4 lg:p-6 gap-4 lg:gap-6">
+    <!-- Section Cards (metrics grid) -->
+    <div id="section-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" style="display:none;"></div>
+
+    <!-- Metrics panel (kept as hidden; rendered by JS in chart cards) -->
+    <div id="metrics-panel" style="display:none;"></div>
+
+    <!-- LWC Chart Container -->
+    <div id="lwc-container" class="rounded-xl border bg-card overflow-hidden" style="display:none;position:relative;">
+      <div id="chart-container" style="height:1100px;position:relative;"></div>
+    </div>
+
+    <!-- Plotly Chart Container -->
+    <div id="plotly-container" class="rounded-xl border bg-card" style="display:none;position:relative;"></div>
+
+    <!-- Equity Container -->
+    <div id="equity-container" class="rounded-xl border bg-card" style="display:none;"></div>
+
+    <!-- Trade Table -->
+    <div id="trade-table" class="rounded-xl border bg-card overflow-auto" style="display:none;"></div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="flex items-center justify-center py-16 text-sm text-muted-foreground">请选择周期和市场</div>
   </div>
 </main>
 <script id="heatmap-data" type="application/json">__DATA__</script>
@@ -382,12 +423,12 @@ function renderNavs() {
   var h="";
   for(var i=0;i<ALL_KTYPES.length;i++) {
     var k=ALL_KTYPES[i];
-    h+="<div class=\"tab\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+KT_LABELS[k]+"</div>";
+    h+="<div class=\"sidebar-nav-item\" data-ktype=\""+k+"\" onclick=\"selectKtype('"+k+"')\">"+KT_LABELS[k]+"</div>";
   }
   document.getElementById("nav-ktype").innerHTML=h;
   h="";
   for(var i=0;i<ALL_MARKETS.length;i++) {
-    h+="<div class=\"tab\" data-market=\""+ALL_MARKETS[i]+"\" onclick=\"selectMarket('"+ALL_MARKETS[i]+"')\">"+MK_LABELS[ALL_MARKETS[i]]+"</div>";
+    h+="<div class=\"sidebar-nav-item\" data-market=\""+ALL_MARKETS[i]+"\" onclick=\"selectMarket('"+ALL_MARKETS[i]+"')\">"+MK_LABELS[ALL_MARKETS[i]]+"</div>";
   }
   document.getElementById("nav-market").innerHTML=h;
 }
@@ -395,15 +436,15 @@ function renderNavs() {
 function renderChartNav() {
   var h="";
   for(var i=0;i<CHART_TYPES.length;i++) {
-    h+="<div class=\"tab\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+CHART_TYPES[i]+"</div>";
+    h+="<div class=\"sidebar-nav-item\" data-chart=\""+CHART_TYPES[i]+"\" onclick=\"selectType('"+CHART_TYPES[i]+"')\">"+CHART_TYPES[i]+"</div>";
   }
   document.getElementById("nav-chart").innerHTML=h;
-  document.querySelector("#nav-chart .tab").classList.add("active");
+  document.querySelector("#nav-chart .sidebar-nav-item").classList.add("active");
 }
 
 function selectType(type) {
   currentType=type;
-  document.querySelectorAll("#nav-chart .tab").forEach(function(el){el.classList.toggle("active",el.dataset.chart===type);});
+  document.querySelectorAll("#nav-chart .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.chart===type);});
   renderChart();
 }
 
@@ -414,13 +455,13 @@ function getCombination() {
 
 function selectKtype(k) {
   currentKtype=k;
-  document.querySelectorAll("#nav-ktype .tab").forEach(function(el){el.classList.toggle("active",el.dataset.ktype===k);});
+  document.querySelectorAll("#nav-ktype .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.ktype===k);});
   renderCombination();
 }
 
 function selectMarket(m) {
   currentMarket=m;
-  document.querySelectorAll("#nav-market .tab").forEach(function(el){el.classList.toggle("active",el.dataset.market===m);});
+  document.querySelectorAll("#nav-market .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.market===m);});
   renderCombination();
 }
 
@@ -433,6 +474,7 @@ function renderCombination() {
     document.getElementById("empty-state").textContent="请先进行回测";
     document.getElementById("lwc-container").style.display="none";
     document.getElementById("plotly-container").style.display="none";
+    document.getElementById("section-cards").style.display="none";
     return;
   }
   document.getElementById("empty-state").textContent="";
@@ -488,7 +530,7 @@ function selectStock(code) {
   document.querySelectorAll(".stock-item").forEach(function(el){el.classList.toggle("active",el.dataset.code===code);});
   if(code==="__ALL__") { currentType="全股票最优参数变动"; }
   else if(CHART_TYPES.indexOf(currentType)<0) { currentType=CHART_TYPES[0]; }
-  document.querySelectorAll("#nav-chart .tab").forEach(function(el){el.classList.toggle("active",el.dataset.chart===currentType);});
+  document.querySelectorAll("#nav-chart .sidebar-nav-item").forEach(function(el){el.classList.toggle("active",el.dataset.chart===currentType);});
   renderChart();
 }
 
@@ -504,6 +546,7 @@ function _fmt(key, v) {
 }
 var _eqChart = null;
 function renderChart() {
+  document.getElementById('section-cards').style.display = 'none';
   document.getElementById('metrics-panel').style.display = 'none';
   document.getElementById('equity-container').style.display = 'none';
   document.getElementById('trade-table').style.display = 'none';
@@ -555,27 +598,28 @@ function renderChart() {
     _maLabel.textContent = 'MA' + d.best_ma;
     document.getElementById('chart-container').appendChild(_maLabel);
 
-    // 回测指标面板
-    var _mp = document.getElementById('metrics-panel');
-    _mp.style.display = 'block';
+    // Section Cards（指标卡片网格）
+    var _sc = document.getElementById('section-cards');
+    _sc.style.display = 'grid';
     if(d.metrics && Object.keys(d.metrics).length) {
-      var _html = '<div class="flex flex-wrap">';
-      var _items = [
-        '收益率','年化收益率','买入持有收益率','超额收益率',
-        '最大回撤','夏普比率','盈利因子','盈亏比',
-        '交易次数','盈利交易率','平均每笔收益率','卡尔玛比率'
+      var _cardDefs = [
+        {label:'年化收益率',key:'年化收益率',desc:'Compound Annual Growth Rate'},
+        {label:'夏普比率',key:'夏普比率',desc:'Risk-adjusted Return'},
+        {label:'最大回撤',key:'最大回撤',desc:'Peak-to-Trough Drawdown'},
+        {label:'策略评分',key:'策略评分',desc:'Composite Score'},
       ];
-      _items.forEach(function(k) {
-        var v = d.metrics[k];
-        if(v !== undefined) {
-          _html += '<div class="metric-item">';
-          _html += '<div class="metric-label">' + k + '</div>';
-          _html += '<div class="metric-value">' + _fmt(k, v) + '</div>';
-          _html += '</div>';
-        }
+      var _html = '';
+      _cardDefs.forEach(function(cd) {
+        var v = d.metrics[cd.key];
+        if(v === undefined) v = '-';
+        else v = _fmt(cd.key, v);
+        _html += '<div class="relative flex flex-col gap-2 rounded-xl border bg-linear-to-t from-primary/5 to-card p-4 dark:bg-card">';
+        _html += '<div class="text-xs text-muted-foreground">' + cd.label + '</div>';
+        _html += '<div class="text-2xl font-semibold tabular-nums">' + v + '</div>';
+        _html += '<div class="text-xs text-muted-foreground">' + cd.desc + '</div>';
+        _html += '</div>';
       });
-      _html += '</div>';
-      _mp.innerHTML = _html;
+      _sc.innerHTML = _html;
     }
 
     // 买卖信号（LWC v5 API: createSeriesMarkers）
