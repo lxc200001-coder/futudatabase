@@ -832,6 +832,8 @@ function renderChart() {
       _hdr += '</tbody></table>';
       _tt.innerHTML = _hdr;
       _tt.style.display = 'block';
+      _tt.addEventListener('mouseover',function(e){var r=e.target.closest('[data-group]');if(r){var g=r.dataset.group;document.querySelectorAll('#trade-table [data-group="'+g+'"]').forEach(function(r2){r2.style.background='rgb(24,24,24)';})}});
+      _tt.addEventListener('mouseout',function(e){var r=e.target.closest('[data-group]');if(r){var g=r.dataset.group;document.querySelectorAll('#trade-table [data-group="'+g+'"]').forEach(function(r2){r2.style.background='rgb(10,10,10)';})}});
     }
     } catch(e) { console.error('[LWC] trade table error:', e); }
     return;
