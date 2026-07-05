@@ -355,7 +355,7 @@ tailwind.config = {
   </div>
 </aside>
 <main id="main" class="flex-1 flex flex-col overflow-auto bg-background p-4">
-  <div class="flex-1 flex flex-col rounded-xl overflow-hidden" style="background:rgb(var(--right-bg));">
+  <div class="flex-1 flex flex-col rounded-xl overflow-hidden gap-4 lg:gap-6" style="background:rgb(var(--right-bg));">
     <!-- Header -->
     <header class="flex h-[--header-height] shrink-0 items-center gap-4 border-b border-white/10 px-4" style="color:rgb(210,210,210);">
       <span class="text-xs font-medium text-muted-foreground">周期</span>
@@ -366,7 +366,7 @@ tailwind.config = {
     </header>
 
     <!-- Content Area -->
-    <div id="chart-area" class="flex-1 flex flex-col p-4 lg:p-6 gap-4 lg:gap-6">
+    <div id="chart-area" class="flex-1 flex flex-col px-4 lg:px-6 pb-4 lg:pb-6 gap-4 lg:gap-6">
     <!-- Section Cards (metrics grid) -->
     <div id="section-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" style="display:none;"></div>
 
