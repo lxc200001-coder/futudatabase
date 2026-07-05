@@ -320,12 +320,6 @@ tailwind.config = {
       <div id="nav-ktype" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
     </div>
 
-    <!-- Market ToggleGroup -->
-    <div>
-      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">市场</div>
-      <div id="nav-market" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
-    </div>
-
     <!-- Nav: Chart Types -->
     <div>
       <div class="text-xs font-medium text-muted-foreground px-3 pb-1">图表</div>
@@ -336,15 +330,20 @@ tailwind.config = {
     <div class="mx-3 h-px bg-border"></div>
 
     <!-- Search -->
-    <div>
-      <div class="px-3 pb-2">
-        <input id="search" type="text" placeholder="搜索股票代码/名称..."
-           oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"
-           class="w-full h-8 rounded-md bg-muted border border-input px-3 text-xs outline-none transition-[border-color,box-shadow] focus:border-ring focus:ring-2 focus:ring-ring/25">
-      </div>
-      <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
-      <div id="stock-list" class="flex flex-col gap-0.5"></div>
+    <div class="px-3">
+      <input id="search" type="text" placeholder="搜索股票代码/名称..."
+         oninput="filterStocks(this.value)" onkeydown="if(event.key==='Enter')selectFirstVisible()"
+         class="w-full h-8 rounded-md bg-muted border border-input px-3 text-xs outline-none transition-[border-color,box-shadow] focus:border-ring focus:ring-2 focus:ring-ring/25">
     </div>
+
+    <!-- Market ToggleGroup -->
+    <div>
+      <div class="text-xs font-medium text-muted-foreground px-3 pb-1">市场</div>
+      <div id="nav-market" class="flex rounded-lg border bg-muted p-0.5 gap-0"></div>
+    </div>
+
+    <div id="stock-count" class="px-6 pb-1 text-xs text-muted-foreground"></div>
+    <div id="stock-list" class="flex flex-col gap-0.5 px-3"></div>
   </div>
 
   <!-- Sidebar Footer -->
