@@ -152,12 +152,11 @@ tailwind.config = {
 
 .stock-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   cursor: pointer;
-  font-size: 13px;
   border-radius: calc(var(--radius) - 2px);
   color: hsl(var(--muted-foreground));
   transition: color 0.15s, background-color 0.15s;
@@ -166,9 +165,9 @@ tailwind.config = {
 }
 .stock-item:hover { color: hsl(var(--foreground)); background: hsl(var(--accent)); }
 .stock-item.active { color: hsl(var(--background)); background: hsl(var(--foreground)); }
-.stock-item .code-name { display: flex; align-items: baseline; gap: 6px; }
-.stock-item .code { font-weight: 600; font-size: 13px; }
-.stock-item .name { font-size: 11px; color: hsl(var(--muted-foreground)); }
+.stock-item .code { font-weight: 700; font-size: 13px; color: hsl(var(--foreground)); }
+.stock-item .name { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 1px; }
+.stock-item.active .code { color: hsl(var(--background)); }
 .stock-item.active .name { color: hsla(var(--background), 0.7); }
 .stock-item.all-stock { font-weight: 600; }
 .stock-item.all-stock:hover { background: hsl(var(--accent)); }
@@ -530,11 +529,11 @@ function renderStockList(stocks, figs) {
     var s=stocks[i], f=figs[s.code], ok=f&&Object.keys(f).length;
     if(s.code==="__ALL__") {
       h+="<div class=\"stock-item all-stock\" data-code=\"__ALL__\" onclick=\"selectStock('__ALL__')\">"+
-          "<div class=\"code-name\"><span class=\"code\">📊 "+s.name+"</span></div>"+
+          "<div class=\"flex flex-col\"><span class=\"code\">📊 "+s.name+"</span></div>"+
           "<span class=\"stock-status has-data\">全市场</span></div>";
     } else {
       h+="<div class=\"stock-item\" data-code=\""+s.code+"\" onclick=\"selectStock('"+s.code+"')\">"+
-          "<div class=\"code-name\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
+          "<div class=\"flex flex-col\"><span class=\"code\">"+s.code+"</span>"+(s.name?"<span class=\"name\">"+s.name+"</span>":"")+"</div>"+
           "<span class=\"stock-status "+(ok?"has-data":"no-data")+"\">"+(ok?"有数据":"无数据")+"</span></div>";
     }
   }
