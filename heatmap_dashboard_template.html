@@ -314,7 +314,7 @@ tailwind.config = {
 <body class="flex h-screen overflow-hidden bg-background text-foreground font-sans antialiased">
 <aside id="sidebar" class="flex flex-col" style="width:var(--sidebar-width);min-width:var(--sidebar-width);--background:0 0% 9%;--foreground:0 0% 82%;--muted-foreground:0 0% 56%;--border:0 0% 18%;--input:0 0% 18%;--accent:0 0% 14%;--ring:211 100% 55%;--primary:211 100% 55%;--primary-foreground:0 0% 100%;--profit:142 50% 55%;--loss:0 63% 50%;background:rgb(var(--sidebar-bg));border-right:1px solid rgb(var(--sidebar-border));color:rgb(var(--sidebar-fg));">
   <!-- Sidebar Header -->
-  <div class="flex h-[--header-height] shrink-0 items-center gap-2 border-b px-4">
+  <div class="flex h-[--header-height] shrink-0 items-center gap-2 px-4">
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
     <span class="text-base font-semibold">热力图看板</span>
     <button class="theme-btn ml-auto" onclick="toggleTheme()" aria-label="切换主题" title="切换暗色/亮色主题">
@@ -337,8 +337,6 @@ tailwind.config = {
       <div id="nav-chart" class="flex flex-col gap-0.5"></div>
     </div>
 
-    <!-- Separator -->
-    <div class="mx-3 h-px bg-border"></div>
 
     <!-- Search -->
     <div>
